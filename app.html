@@ -2230,8 +2230,8 @@ async function saveRating(playerId, source, value, designation, isManual, direct
   };
   if (designation) payload.designation = designation;
   if (isManual) {
-    payload.manual_by_director_id = directorId;
-    payload.manual_by_club_id = clubId;
+    if (directorId) payload.manual_by_director_id = directorId;
+    if (clubId) payload.manual_by_club_id = clubId;
   }
   const { error } = await supabaseClient.from('player_ratings').insert(payload);
   if (error) throw error;
@@ -2444,8 +2444,8 @@ async function saveManualRating() {
   }
   
   try {
-    const dirId = currentUser?.director_id || null;
-    const clubId = currentUser?.club_id || null;
+    const dirId = (currentUser?.director_id && currentUser.director_id !== 'undefined') ? currentUser.director_id : null;
+    const clubId = (currentUser?.club_id && currentUser.club_id !== 'undefined') ? currentUser.club_id : null;
     
     if (ntrp) await saveRating(playerId, 'NTRP', ntrp, desig || null, true, dirId, clubId);
     if (trr) await saveRating(playerId, 'TRR', trr, null, true, dirId, clubId);
