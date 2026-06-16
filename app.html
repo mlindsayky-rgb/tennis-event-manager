@@ -1605,7 +1605,7 @@ async function loadPlayers(containerId) {
         else if (hasRating) statusHtml = `<span class="lookup-status found">✓ Rated</span>`;
         else statusHtml = `<span class="lookup-status not-found" onclick="openManualRating('${p.id}','${p.roster_name}')">No rating</span>`;
 
-        return `<tr data-player-id="${p.id}">
+        return `<tr data-player-id="${p.id}" data-player-name="${p.roster_name.replace(/"/g, '&quot;')}">
           <td>
             <strong>${p.roster_name}</strong>
             ${p.alias_memory?.length ? `<div style="font-size:11px;color:var(--baseline-muted)">aka ${p.alias_memory[0]}</div>` : ''}
@@ -1617,8 +1617,8 @@ async function loadPlayers(containerId) {
           <td class="lookup-status-cell">${statusHtml}</td>
           <td>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-ghost" onclick="lookupAndRefresh('${p.id}','${p.roster_name}','${containerId}',this)" title="Look up on TennisRecord">🔍</button>
-              <button class="btn btn-sm btn-ghost" onclick="openManualRating('${p.id}','${p.roster_name}')" title="Enter manually">✎</button>
+              <button class="btn btn-sm btn-ghost" onclick="lookupFromRow(this)" title="Look up on TennisRecord">🔍</button>
+              <button class="btn btn-sm btn-ghost" onclick="manualFromRow(this)" title="Enter manually">✎</button>
             </div>
           </td>
         </tr>`;
@@ -2406,6 +2406,21 @@ function updateLookupProgress(pct, current, total, found, failed) {
 }
 
 // ── MANUAL RATING ───────────────────────────────
+
+// Row action helpers — read player ID/name from data attributes to avoid quoting issues
+function lookupFromRow(btn) {
+  const row = btn.closest('tr');
+  const id = row.dataset.playerId;
+  const name = row.dataset.playerName;
+  const containerId = row.closest('table').closest('[id]')?.id || 'players-list';
+  lookupAndRefresh(id, name, containerId, btn);
+}
+function manualFromRow(btn) {
+  const row = btn.closest('tr');
+  const id = row.dataset.playerId;
+  const name = row.dataset.playerName;
+  openManualRating(id, name);
+}
 function openManualRating(playerId, playerName) {
   manualRatingPlayerId = playerId;
   document.getElementById('manual-rating-title').textContent = `Enter Rating — ${playerName}`;
