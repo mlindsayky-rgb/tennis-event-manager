@@ -1092,7 +1092,7 @@ async function attemptLogin() {
     const { data: adminData } = await supabaseClient
       .from('admin_config')
       .select('pin_hash')
-      .single();
+      .maybeSingle();
 
     if (adminData && adminData.pin_hash === hash) {
       currentUser = { role: 'admin' };
@@ -1111,7 +1111,7 @@ async function attemptLogin() {
       .select('*, clubs(name, primary_color, secondary_color, accent_color)')
       .eq('pin_hash', hash)
       .eq('is_active', true)
-      .single();
+      .maybeSingle();
 
     if (error || !dirData) {
       // Wrong PIN
