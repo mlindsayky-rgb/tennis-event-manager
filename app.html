@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tennis Event Manager</title>
+<script src="app_files/supabase-js@2"></script>
+<style>
+:root {
+  --court-green: #1B5E20;
+  --court-green-mid: #2E7D32;
+  --court-green-light: #4CAF50;
+  --court-green-pale: #E8F5E9;
+  --court-green-ghost: #F1F8F1;
+  --net-white: #FAFAFA;
+  --baseline: #212121;
+  --baseline-mid: #424242;
+  --baseline-muted: #757575;
+  --baseline-ghost: #BDBDBD;
+  --clay: #BF360C;
+  --clay-light: #FFCCBC;
+  --gold: #F57F17;
+  --gold-light: #FFF9C4;
+  --sky: #1565C0;
+  --sky-light: #E3F2FD;
+  --border: #E0E0E0;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--court-green-ghost); color: var(--baseline); min-height: 100vh; }
+
+/* ── SCREENS ── */
+.screen { display: none; min-height: 100vh; }
+.screen.active { display: flex; flex-direction: column; }
+
+/* ── PIN SCREEN ── */
+#pin-screen {
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, var(--court-green) 0%, var(--court-green-mid) 60%, #1a3a1a 100%);
+}
+.pin-card {
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+}
+.pin-logo {
+  width: 64px; height: 64px;
+  background: var(--court-green);
+  border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px;
+  font-size: 28px;
+}
+.pin-title { font-size: 22px; font-weight: 700; color: var(--baseline); margin-bottom: 6px; }
+.pin-sub { font-size: 14px; color: var(--baseline-muted); margin-bottom: 32px; }
+.pin-dots { display: flex; justify-content: center; gap: 12px; margin-bottom: 28px; }
+.pin-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--border); border: 2px solid var(--baseline-ghost);
+  transition: all 0.15s;
+}
+.pin-dot.filled { background: var(--court-green); border-color: var(--court-green); }
+.pin-dot.error { background: var(--clay); border-color: var(--clay); animation: shake 0.3s; }
+@keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
+.pin-keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.pin-key {
+  height: 60px; border: none; border-radius: var(--radius);
+  background: var(--court-green-ghost); color: var(--baseline);
+  font-size: 22px; font-weight: 600; cursor: pointer;
+  transition: all 0.1s; -webkit-tap-highlight-color: transparent;
+  border: 1.5px solid var(--border);
+}
+.pin-key:hover { background: var(--court-green-pale); border-color: var(--court-green-light); }
+.pin-key:active { transform: scale(0.94); background: var(--court-green-pale); }
+.pin-key.delete { font-size: 16px; color: var(--baseline-muted); }
+.pin-key.zero { grid-column: 2; }
+.pin-status { font-size: 13px; color: var(--clay); margin-top: 16px; min-height: 18px; }
+.pin-hint { font-size: 12px; color: var(--baseline-ghost); margin-top: 8px; }
+
+/* ── APP SHELL ── */
+#admin-screen, #director-screen {
+  flex-direction: column;
+}
+.app-header {
+  background: var(--court-green);
+  color: white;
+  padding: 0 24px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+.app-header-left { display: flex; align-items: center; gap: 12px; }
+.app-header-logo { font-size: 20px; }
+.app-header-title { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
+.app-header-sub { font-size: 12px; opacity: 0.75; }
+.header-btn {
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.2);
+  color: white; padding: 6px 14px; border-radius: 6px; font-size: 13px;
+  cursor: pointer; transition: background 0.15s;
+}
+.header-btn:hover { background: rgba(255,255,255,0.25); }
+
+/* ── ADMIN NAV ── */
+.admin-nav {
+  background: white;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  padding: 0 24px;
+  gap: 4px;
+}
+.admin-nav-tab {
+  padding: 14px 18px; font-size: 14px; font-weight: 500;
+  color: var(--baseline-muted); border: none; background: none;
+  cursor: pointer; border-bottom: 3px solid transparent;
+  transition: all 0.15s; position: relative; top: 1px;
+}
+.admin-nav-tab.active { color: var(--court-green); border-bottom-color: var(--court-green); }
+.admin-nav-tab:hover:not(.active) { color: var(--baseline); }
+
+/* ── CONTENT ── */
+.content { padding: 28px 24px; max-width: 1100px; margin: 0 auto; width: 100%; flex: 1; }
+
+/* ── SECTION HEADERS ── */
+.section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+}
+.section-title { font-size: 20px; font-weight: 700; color: var(--baseline); }
+.section-sub { font-size: 14px; color: var(--baseline-muted); margin-top: 2px; }
+
+/* ── CARDS ── */
+.card {
+  background: white; border-radius: var(--radius-lg);
+  border: 1px solid var(--border); box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.card-header {
+  padding: 18px 24px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--court-green-ghost);
+}
+.card-title { font-size: 15px; font-weight: 600; color: var(--baseline); }
+.card-body { padding: 24px; }
+
+/* ── GRID ── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+/* ── STAT TILES ── */
+.stat-tile {
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px 24px;
+  box-shadow: var(--shadow);
+}
+.stat-value { font-size: 32px; font-weight: 800; color: var(--court-green); line-height: 1; }
+.stat-label { font-size: 13px; color: var(--baseline-muted); margin-top: 4px; }
+
+/* ── FORMS ── */
+.form-group { margin-bottom: 18px; }
+.form-label { font-size: 13px; font-weight: 600; color: var(--baseline-mid); margin-bottom: 6px; display: block; }
+.form-label .required { color: var(--clay); margin-left: 2px; }
+.form-input, .form-select {
+  width: 100%; padding: 10px 14px; border: 1.5px solid var(--border);
+  border-radius: var(--radius); font-size: 14px; color: var(--baseline);
+  background: white; transition: border-color 0.15s;
+  appearance: none;
+}
+.form-input:focus, .form-select:focus {
+  outline: none; border-color: var(--court-green);
+  box-shadow: 0 0 0 3px rgba(27,94,32,0.1);
+}
+.form-input::placeholder { color: var(--baseline-ghost); }
+.form-hint { font-size: 12px; color: var(--baseline-muted); margin-top: 5px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+/* ── COLOR PICKER ── */
+.color-row { display: flex; align-items: center; gap: 10px; }
+.color-preview { width: 36px; height: 36px; border-radius: 8px; border: 1.5px solid var(--border); flex-shrink: 0; }
+.color-input-wrap { flex: 1; }
+
+/* ── BUTTONS ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 10px 20px; border-radius: var(--radius); font-size: 14px;
+  font-weight: 600; cursor: pointer; border: none; transition: all 0.15s;
+  text-decoration: none;
+}
+.btn-primary { background: var(--court-green); color: white; }
+.btn-primary:hover { background: var(--court-green-mid); }
+.btn-secondary { background: white; color: var(--court-green); border: 1.5px solid var(--court-green); }
+.btn-secondary:hover { background: var(--court-green-pale); }
+.btn-danger { background: white; color: var(--clay); border: 1.5px solid var(--clay); }
+.btn-danger:hover { background: var(--clay-light); }
+.btn-ghost { background: none; color: var(--baseline-muted); border: 1.5px solid var(--border); }
+.btn-ghost:hover { background: var(--court-green-ghost); color: var(--baseline); }
+.btn-sm { padding: 6px 14px; font-size: 13px; }
+.btn-lg { padding: 14px 28px; font-size: 16px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── TABLE ── */
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th {
+  text-align: left; font-size: 12px; font-weight: 700;
+  color: var(--baseline-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; padding: 10px 16px;
+  border-bottom: 1px solid var(--border); background: var(--court-green-ghost);
+}
+.data-table td {
+  padding: 14px 16px; font-size: 14px; color: var(--baseline);
+  border-bottom: 1px solid var(--border);
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--court-green-ghost); }
+
+/* ── BADGES ── */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 3px 10px; border-radius: 20px;
+  font-size: 12px; font-weight: 600;
+}
+.badge-green { background: var(--court-green-pale); color: var(--court-green); }
+.badge-red { background: var(--clay-light); color: var(--clay); }
+.badge-gold { background: var(--gold-light); color: var(--gold); }
+.badge-blue { background: var(--sky-light); color: var(--sky); }
+.badge-gray { background: #F5F5F5; color: var(--baseline-muted); }
+
+/* ── MODAL ── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; padding: 20px;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+.modal-overlay.open { opacity: 1; pointer-events: all; }
+.modal {
+  background: white; border-radius: var(--radius-lg);
+  width: 100%; max-width: 560px; max-height: 90vh;
+  overflow-y: auto; box-shadow: var(--shadow-lg);
+  transform: translateY(20px); transition: transform 0.2s;
+}
+.modal-overlay.open .modal { transform: translateY(0); }
+.modal-header {
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; background: white; z-index: 1;
+}
+.modal-title { font-size: 17px; font-weight: 700; }
+.modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--baseline-muted); padding: 4px; line-height: 1; }
+.modal-close:hover { color: var(--baseline); }
+.modal-body { padding: 24px; }
+.modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ── ALERTS ── */
+.alert {
+  padding: 12px 16px; border-radius: var(--radius);
+  font-size: 13px; margin-bottom: 16px;
+  display: flex; align-items: flex-start; gap: 10px;
+}
+.alert-error { background: var(--clay-light); color: var(--clay); border: 1px solid #FFAB91; }
+.alert-success { background: var(--court-green-pale); color: var(--court-green); border: 1px solid #A5D6A7; }
+.alert-info { background: var(--sky-light); color: var(--sky); border: 1px solid #90CAF9; }
+
+/* ── EMPTY STATE ── */
+.empty-state {
+  text-align: center; padding: 60px 24px;
+  color: var(--baseline-muted);
+}
+.empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
+.empty-title { font-size: 16px; font-weight: 600; color: var(--baseline-mid); margin-bottom: 6px; }
+.empty-sub { font-size: 14px; margin-bottom: 20px; }
+
+/* ── BRANDING PREVIEW ── */
+.brand-preview {
+  border-radius: var(--radius); overflow: hidden;
+  border: 1.5px solid var(--border);
+}
+.brand-preview-bar {
+  height: 40px; display: flex; align-items: center; padding: 0 16px;
+  font-size: 13px; font-weight: 600; color: white;
+}
+.brand-preview-body {
+  background: white; padding: 12px 16px;
+  font-size: 12px; color: var(--baseline-muted);
+}
+
+/* ── DIRECTOR DASHBOARD ── */
+.dir-nav {
+  background: white; border-bottom: 1px solid var(--border);
+  display: flex; overflow-x: auto;
+  padding: 0 24px; gap: 4px;
+  scrollbar-width: none;
+}
+.dir-nav::-webkit-scrollbar { display: none; }
+.dir-nav-tab {
+  padding: 14px 16px; font-size: 14px; font-weight: 500;
+  color: var(--baseline-muted); border: none; background: none;
+  cursor: pointer; border-bottom: 3px solid transparent;
+  white-space: nowrap; transition: all 0.15s;
+  position: relative; top: 1px;
+}
+.dir-nav-tab.active { color: var(--court-green); border-bottom-color: var(--court-green); }
+.dir-nav-tab:hover:not(.active) { color: var(--baseline); }
+
+/* ── EVENT CARD ── */
+.event-card {
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 20px 24px;
+  cursor: pointer; transition: all 0.15s; box-shadow: var(--shadow);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.event-card:hover { border-color: var(--court-green); box-shadow: 0 4px 16px rgba(27,94,32,0.1); }
+.event-card-info { flex: 1; }
+.event-card-name { font-size: 16px; font-weight: 700; color: var(--baseline); margin-bottom: 4px; }
+.event-card-meta { font-size: 13px; color: var(--baseline-muted); display: flex; gap: 16px; }
+.event-card-arrow { color: var(--baseline-ghost); font-size: 20px; }
+.events-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* ── PROGRESS STEPS ── */
+.progress-steps {
+  display: flex; align-items: center; gap: 0;
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+  box-shadow: var(--shadow); margin-bottom: 24px;
+}
+.progress-step {
+  flex: 1; padding: 14px 12px; text-align: center;
+  font-size: 12px; font-weight: 600; color: var(--baseline-muted);
+  border-right: 1px solid var(--border); position: relative;
+}
+.progress-step:last-child { border-right: none; }
+.progress-step.done { background: var(--court-green-pale); color: var(--court-green); }
+.progress-step.active { background: var(--court-green); color: white; }
+.progress-step-icon { font-size: 16px; margin-bottom: 2px; }
+
+/* ── LOADING ── */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px; color: var(--baseline-muted); gap: 12px;
+}
+.spinner {
+  width: 20px; height: 20px; border: 2px solid var(--border);
+  border-top-color: var(--court-green); border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── TOAST ── */
+#toast-container {
+  position: fixed; bottom: 24px; right: 24px;
+  z-index: 2000; display: flex; flex-direction: column; gap: 8px;
+}
+.toast {
+  background: var(--baseline); color: white;
+  padding: 12px 18px; border-radius: var(--radius);
+  font-size: 14px; box-shadow: var(--shadow-lg);
+  animation: slideIn 0.2s ease;
+  max-width: 320px;
+}
+.toast.success { background: var(--court-green); }
+.toast.error { background: var(--clay); }
+@keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ── SETUP PROMPT ── */
+.setup-card {
+  background: white; border-radius: var(--radius-lg);
+  padding: 40px; max-width: 520px; margin: 60px auto;
+  text-align: center; box-shadow: var(--shadow-lg);
+  border: 1px solid var(--border);
+}
+.setup-icon { font-size: 48px; margin-bottom: 16px; }
+.setup-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.setup-sub { font-size: 14px; color: var(--baseline-muted); margin-bottom: 28px; line-height: 1.6; }
+
+/* ── CONFIG WARNING ── */
+.config-banner {
+  background: var(--gold-light); border: 1px solid var(--gold);
+  border-radius: var(--radius); padding: 12px 18px; margin-bottom: 20px;
+  font-size: 13px; color: #5D4037;
+  display: flex; align-items: center; gap: 10px;
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 640px) {
+  .content { padding: 16px; }
+  .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  .form-row, .form-row-3 { grid-template-columns: 1fr; }
+  .pin-card { padding: 36px 24px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     PIN LOGIN SCREEN
+══════════════════════════════════════════════════ -->
+<div id="pin-screen" class="screen active">
+  <div class="pin-card">
+    <div class="pin-logo">🎾</div>
+    <div class="pin-title">Tennis Event Manager</div>
+    <div class="pin-sub">Enter your PIN to continue</div>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot" id="dot-0"></div>
+      <div class="pin-dot" id="dot-1"></div>
+      <div class="pin-dot" id="dot-2"></div>
+      <div class="pin-dot" id="dot-3"></div>
+    </div>
+    <div class="pin-keypad">
+      <button class="pin-key" onclick="pinKey('1')">1</button>
+      <button class="pin-key" onclick="pinKey('2')">2</button>
+      <button class="pin-key" onclick="pinKey('3')">3</button>
+      <button class="pin-key" onclick="pinKey('4')">4</button>
+      <button class="pin-key" onclick="pinKey('5')">5</button>
+      <button class="pin-key" onclick="pinKey('6')">6</button>
+      <button class="pin-key" onclick="pinKey('7')">7</button>
+      <button class="pin-key" onclick="pinKey('8')">8</button>
+      <button class="pin-key" onclick="pinKey('9')">9</button>
+      <button class="pin-key zero" onclick="pinKey('0')">0</button>
+      <button class="pin-key delete" onclick="pinDelete()">⌫</button>
+    </div>
+    <div class="pin-status" id="pin-status"></div>
+    <div class="pin-hint" id="pin-hint"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     ADMIN SCREEN
+══════════════════════════════════════════════════ -->
+<div id="admin-screen" class="screen">
+  <header class="app-header">
+    <div class="app-header-left">
+      <span class="app-header-logo">🎾</span>
+      <div>
+        <div class="app-header-title">Tennis Event Manager</div>
+        <div class="app-header-sub">Admin Panel</div>
+      </div>
+    </div>
+    <button class="header-btn" onclick="logout()">Sign Out</button>
+  </header>
+
+  <nav class="admin-nav">
+    <button class="admin-nav-tab active" onclick="adminTab('overview', this)">Overview</button>
+    <button class="admin-nav-tab" onclick="adminTab('clubs', this)">Clubs</button>
+    <button class="admin-nav-tab" onclick="adminTab('directors', this)">Directors</button>
+    <button class="admin-nav-tab" onclick="adminTab('players', this)">Players</button>
+    <button class="admin-nav-tab" onclick="adminTab('settings', this)">Settings</button>
+  </nav>
+
+  <div class="content">
+    <!-- OVERVIEW TAB -->
+    <div id="tab-overview">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Welcome back</div>
+          <div class="section-sub">Here's what's happening across all clubs</div>
+        </div>
+      </div>
+      <div class="grid-3" id="admin-stats">
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-clubs">—</div>
+          <div class="stat-label">Clubs</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-directors">—</div>
+          <div class="stat-label">Directors</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-value" id="stat-players">—</div>
+          <div class="stat-label">Players in DB</div>
+        </div>
+      </div>
+      <div style="margin-top: 24px;">
+        <div class="section-header">
+          <div class="section-title" style="font-size:16px">Recent Events</div>
+        </div>
+        <div class="card">
+          <div id="admin-recent-events">
+            <div class="loading"><div class="spinner"></div> Loading events…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CLUBS TAB -->
+    <div id="tab-clubs" style="display:none">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Clubs</div>
+          <div class="section-sub">Manage clubs and their branding</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('club-modal')">+ New Club</button>
+      </div>
+      <div class="card">
+        <div id="clubs-list">
+          <div class="loading"><div class="spinner"></div> Loading clubs…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DIRECTORS TAB -->
+    <div id="tab-directors" style="display:none">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Directors</div>
+          <div class="section-sub">Assign directors to clubs and manage PINs</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('director-modal')">+ New Director</button>
+      </div>
+      <div class="card">
+        <div id="directors-list">
+          <div class="loading"><div class="spinner"></div> Loading directors…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLAYERS TAB -->
+    <div id="tab-players" style="display:none">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Player Database</div>
+          <div class="section-sub">Global player pool — shared across all clubs</div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary" onclick="openModal('player-import-modal')">↑ Import xlsx</button>
+          <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        </div>
+      </div>
+      <div style="margin-bottom:16px">
+        <input class="form-input" type="text" placeholder="Search players by name…" oninput="searchPlayers(this.value)" style="max-width:360px">
+      </div>
+      <div class="card">
+        <div id="players-list">
+          <div class="loading"><div class="spinner"></div> Loading players…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS TAB -->
+    <div id="tab-settings" style="display:none">
+      <div class="section-title" style="margin-bottom:20px">Admin Settings</div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><div class="card-title">Change Admin PIN</div></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Current PIN</label>
+              <input class="form-input" type="password" id="current-pin" placeholder="Enter current PIN">
+            </div>
+            <div class="form-group">
+              <label class="form-label">New PIN</label>
+              <input class="form-input" type="password" id="new-pin" placeholder="4-6 digits">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm New PIN</label>
+              <input class="form-input" type="password" id="confirm-pin" placeholder="Repeat new PIN">
+            </div>
+            <button class="btn btn-primary" onclick="changeAdminPin()">Update PIN</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">System Info</div></div>
+          <div class="card-body">
+            <div style="font-size:13px;color:var(--baseline-muted);line-height:2">
+              <div><strong>Version:</strong> 1.0.0 — Phase 1</div>
+              <div><strong>Schema:</strong> v5.0</div>
+              <div><strong>Tables:</strong> 20</div>
+              <div><strong>Enums:</strong> 21</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     DIRECTOR SCREEN
+══════════════════════════════════════════════════ -->
+<div id="director-screen" class="screen">
+  <header class="app-header" id="dir-header">
+    <div class="app-header-left">
+      <span class="app-header-logo">🎾</span>
+      <div>
+        <div class="app-header-title" id="dir-club-name">Loading…</div>
+        <div class="app-header-sub" id="dir-name">Director</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div id="tv-live-dot" style="display:none;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,0.8)">
+        <div style="width:8px;height:8px;border-radius:50%;background:#69F0AE"></div> TV Live
+      </div>
+      <button class="header-btn" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+
+  <nav class="dir-nav">
+    <button class="dir-nav-tab active" onclick="dirTab('events', this)">Events</button>
+    <button class="dir-nav-tab" onclick="dirTab('players', this)">Players</button>
+    <button class="dir-nav-tab" onclick="dirTab('notes', this)">Notes</button>
+  </nav>
+
+  <div class="content">
+    <!-- EVENTS TAB -->
+    <div id="dir-tab-events">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Your Events</div>
+          <div class="section-sub">Manage events at your club</div>
+        </div>
+        <button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button>
+      </div>
+
+      <!-- Status filter -->
+      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-primary" onclick="filterEvents('all', this)">All</button>
+        <button class="btn btn-sm btn-ghost" onclick="filterEvents('DRAFT', this)">Draft</button>
+        <button class="btn btn-sm btn-ghost" onclick="filterEvents('LIVE', this)">Live</button>
+        <button class="btn btn-sm btn-ghost" onclick="filterEvents('COMPLETE', this)">Complete</button>
+      </div>
+
+      <div class="events-list" id="dir-events-list">
+        <div class="loading"><div class="spinner"></div> Loading events…</div>
+      </div>
+    </div>
+
+    <!-- PLAYERS TAB -->
+    <div id="dir-tab-players" style="display:none">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Player Database</div>
+          <div class="section-sub">Global pool — search and add players anytime</div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary" onclick="openModal('player-import-modal')">↑ Import xlsx</button>
+          <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        </div>
+      </div>
+      <div style="margin-bottom:16px">
+        <input class="form-input" type="text" placeholder="Search by name…" oninput="searchPlayers(this.value)" style="max-width:360px">
+      </div>
+      <div class="card">
+        <div id="dir-players-list">
+          <div class="loading"><div class="spinner"></div> Loading players…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NOTES TAB -->
+    <div id="dir-tab-notes" style="display:none">
+      <div class="section-header">
+        <div class="section-title">Event Notes</div>
+        <div class="section-sub">Private scratchpad — saved per event</div>
+      </div>
+      <div class="card">
+        <div class="card-body">
+          <div class="empty-state">
+            <div class="empty-icon">📝</div>
+            <div class="empty-title">No active event</div>
+            <div class="empty-sub">Select a live event to add notes</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════════ -->
+
+<!-- CLUB MODAL -->
+<div class="modal-overlay" id="club-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="club-modal-title">New Club</div>
+      <button class="modal-close" onclick="closeModal('club-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Club Name <span class="required">*</span></label>
+        <input class="form-input" id="club-name" placeholder="e.g. Lakeside Tennis Club">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tagline</label>
+        <input class="form-input" id="club-tagline" placeholder="Short description shown in the app">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Club Motto</label>
+        <input class="form-input" id="club-motto" placeholder="Optional — shown on TV display between rounds">
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin:20px 0;padding-top:20px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:16px">🎨 Brand Colors</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Primary Color</label>
+            <div class="color-row">
+              <input type="color" id="club-primary" value="#1b5e20" style="width:36px;height:36px;border:none;cursor:pointer;border-radius:8px;">
+              <div class="color-input-wrap">
+                <input class="form-input" id="club-primary-hex" value="#1B5E20" placeholder="#000000" oninput="syncColor('club-primary','club-primary-hex')">
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Secondary Color</label>
+            <div class="color-row">
+              <input type="color" id="club-secondary" value="#4caf50" style="width:36px;height:36px;border:none;cursor:pointer;border-radius:8px;">
+              <div class="color-input-wrap">
+                <input class="form-input" id="club-secondary-hex" value="#4CAF50" placeholder="#000000" oninput="syncColor('club-secondary','club-secondary-hex')">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Accent Color</label>
+            <div class="color-row">
+              <input type="color" id="club-accent" value="#f57f17" style="width:36px;height:36px;border:none;cursor:pointer;border-radius:8px;">
+              <div class="color-input-wrap">
+                <input class="form-input" id="club-accent-hex" value="#F57F17" placeholder="#000000" oninput="syncColor('club-accent','club-accent-hex')">
+              </div>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:22px">
+            <div class="brand-preview">
+              <div class="brand-preview-bar" id="brand-preview-bar" style="background:#1B5E20">Club Name Preview</div>
+              <div class="brand-preview-body">Scorecard · Round display · TV banner</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin:20px 0;padding-top:20px">
+        <div style="font-size:14px;font-weight:700;margin-bottom:16px">📺 TV Display</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Background Style</label>
+            <select class="form-select" id="club-bg-style">
+              <option value="WHITE_WITH_ACCENTS" selected="selected">White with color accents</option>
+              <option value="SOLID">Solid color</option>
+              <option value="GRADIENT">Gradient</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Logo Position</label>
+            <select class="form-select" id="club-logo-pos">
+              <option value="TOP_CENTER" selected="selected">Top center</option>
+              <option value="TOP_LEFT">Top left</option>
+              <option value="WATERMARK_CENTER">Watermark (centered)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Logo Opacity: <span id="opacity-val">100</span>%</label>
+            <input type="range" id="club-opacity" min="10" max="100" value="100" style="width:100%" oninput="document.getElementById('opacity-val').textContent=this.value">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Font Style</label>
+            <select class="form-select" id="club-font">
+              <option value="MODERN" selected="selected">Modern (sans-serif)</option>
+              <option value="CLASSIC">Classic (serif)</option>
+              <option value="BOLD">Bold (heavy weight)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('club-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClub()" id="save-club-btn">Create Club</button>
+    </div>
+  </div>
+</div>
+
+<!-- DIRECTOR MODAL -->
+<div class="modal-overlay" id="director-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="director-modal-title">New Director</div>
+      <button class="modal-close" onclick="closeModal('director-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Director Name <span class="required">*</span></label>
+        <input class="form-input" id="director-name" placeholder="Full name">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Assign to Club <span class="required">*</span></label>
+        <select class="form-select" id="director-club">
+          <option value="" selected="selected">Select a club…</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">PIN <span class="required">*</span></label>
+        <input class="form-input" id="director-pin" type="password" placeholder="4-6 digits" maxlength="6">
+        <div class="form-hint">The director will use this PIN to log in. Share it with them directly.</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Confirm PIN <span class="required">*</span></label>
+        <input class="form-input" id="director-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6">
+      </div>
+      <div id="director-modal-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('director-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDirector()">Create Director</button>
+    </div>
+  </div>
+</div>
+
+<!-- PLAYER MODAL -->
+<div class="modal-overlay" id="player-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">Add Player</div>
+      <button class="modal-close" onclick="closeModal('player-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info">
+        After saving, the system will automatically look up this player's rating on TennisRecord.com, UTR, and WTN.
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">First Name <span class="required">*</span></label>
+          <input class="form-input" id="player-first" placeholder="First name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Last Name <span class="required">*</span></label>
+          <input class="form-input" id="player-last" placeholder="Last name">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Gender <span class="required">*</span></label>
+          <select class="form-select" id="player-gender">
+            <option value="" selected="selected">Select…</option>
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Player Type <span class="required">*</span></label>
+          <select class="form-select" id="player-type">
+            <option value="AD" selected="selected">Adult (AD)</option>
+            <option value="JR">Junior (JR)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('player-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="savePlayer()">Add Player</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW EVENT MODAL -->
+<div class="modal-overlay" id="new-event-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">New Event</div>
+      <button class="modal-close" onclick="closeModal('new-event-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Event Name <span class="required">*</span></label>
+        <input class="form-input" id="event-name" placeholder="e.g. Summer Social 2026">
+        <div class="form-hint">Used in the TV banner and auto-names your PDF: EventName_YYYY-MM-DD.pdf</div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Event Date <span class="required">*</span></label>
+          <input class="form-input" id="event-date" type="date">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Event Type <span class="required">*</span></label>
+          <select class="form-select" id="event-type">
+            <option value="AD" selected="selected">Adult Team (AD)</option>
+            <option value="JR">Junior Team (JR)</option>
+            <option value="BOTH">Mixed — Adults + Juniors</option>
+            <option value="INDIVIDUAL">Individual Draw</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row" id="team-fields">
+        <div class="form-group">
+          <label class="form-label">Number of Courts <span class="required">*</span></label>
+          <input class="form-input" id="event-courts" type="number" min="1" max="20" value="4">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Number of Teams <span class="required">*</span></label>
+          <input class="form-input" id="event-teams" type="number" min="2" max="16" placeholder="Enter number of teams">
+          <div class="form-hint">Required — enter intentionally, no default</div>
+        </div>
+      </div>
+      <div class="form-row" id="individual-fields" style="display:none">
+        <div class="form-group">
+          <label class="form-label">Draw Size <span class="required">*</span></label>
+          <select class="form-select" id="event-draw-size">
+            <option value="16" selected="selected">16</option>
+            <option value="32">32</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Elimination Type <span class="required">*</span></label>
+          <select class="form-select" id="event-elim-type">
+            <option value="SINGLE" selected="selected">Single elimination</option>
+            <option value="SINGLE_WITH_CONSOLATION">Single + consolation bracket</option>
+          </select>
+        </div>
+      </div>
+      <div id="event-modal-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('new-event-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createEvent()">Create Event Draft</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST CONTAINER -->
+<div id="toast-container"></div>
+
+<!-- SETUP PROMPT (shown if no Supabase config) -->
+<div class="modal-overlay" id="setup-modal" style="display: flex; opacity: 1; pointer-events: all; background: rgba(27, 94, 32, 0.95);">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-body" style="text-align:center;padding:40px">
+      <div style="font-size:52px;margin-bottom:16px">🎾</div>
+      <div style="font-size:22px;font-weight:800;margin-bottom:10px">Tennis Event Manager</div>
+      <div style="font-size:14px;color:var(--baseline-muted);margin-bottom:28px;line-height:1.7">
+        Welcome to Phase 1. To connect to your Supabase project, enter your credentials below.
+        These are saved in your browser — you only need to do this once.
+      </div>
+      <div style="text-align:left">
+        <div class="form-group">
+          <label class="form-label">Supabase Project URL <span class="required">*</span></label>
+          <input class="form-input" id="setup-url" placeholder="https://xxxxxxxxxxxx.supabase.co">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Supabase Anon Key <span class="required">*</span></label>
+          <input class="form-input" id="setup-key" placeholder="eyJhbGciOi…" type="password">
+          <div class="form-hint">Found in your Supabase project → Settings → API</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Set Admin PIN <span class="required">*</span></label>
+          <input class="form-input" id="setup-pin" placeholder="Choose a 4-6 digit PIN" type="password" maxlength="6">
+          <div class="form-hint">This is the master PIN for full admin access. Store it safely.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Admin PIN <span class="required">*</span></label>
+          <input class="form-input" id="setup-pin-confirm" placeholder="Repeat PIN" type="password" maxlength="6">
+        </div>
+        <div id="setup-error" class="alert alert-error" style="display:none"></div>
+        <button class="btn btn-primary btn-lg" style="width:100%" onclick="setupApp()">Connect &amp; Launch</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════
+const CONFIG_KEY = 'tem_config';
+let supabaseClient = null;
+let currentUser = null; // { role: 'admin'|'director', director_id, club_id, club_name, director_name }
+
+function getConfig() {
+  try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}'); } catch { return {}; }
+}
+function saveConfig(data) {
+  localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...getConfig(), ...data }));
+}
+
+// ═══════════════════════════════════════════════
+// SUPABASE INIT
+// ═══════════════════════════════════════════════
+function initSupabase() {
+  const cfg = getConfig();
+  if (!cfg.url || !cfg.key) return false;
+  try {
+    supabaseClient = window.supabase.createClient(cfg.url, cfg.key);
+    return true;
+  } catch(e) { return false; }
+}
+
+// ═══════════════════════════════════════════════
+// SETUP
+// ═══════════════════════════════════════════════
+async function setupApp() {
+  const url = document.getElementById('setup-url').value.trim();
+  const key = document.getElementById('setup-key').value.trim();
+  const pin = document.getElementById('setup-pin').value.trim();
+  const pinConfirm = document.getElementById('setup-pin-confirm').value.trim();
+  const errEl = document.getElementById('setup-error');
+  errEl.style.display = 'none';
+
+  if (!url || !key) return showSetupError('Please enter your Supabase URL and key.');
+  if (!pin || pin.length < 4) return showSetupError('PIN must be at least 4 digits.');
+  if (!/^\d+$/.test(pin)) return showSetupError('PIN must contain digits only.');
+  if (pin !== pinConfirm) return showSetupError('PINs do not match.');
+
+  try {
+    supabaseClient = window.supabase.createClient(url, key);
+    // Test connection
+    const { error } = await supabaseClient.from('admin_config').select('id').limit(1);
+    if (error && error.code !== 'PGRST116') throw error;
+
+    // Hash PIN and save admin config
+    const hash = await hashPin(pin);
+    const { error: insertErr } = await supabaseClient
+      .from('admin_config')
+      .upsert({ pin_hash: hash }, { onConflict: 'id' });
+    if (insertErr) throw insertErr;
+
+    saveConfig({ url, key });
+    document.getElementById('setup-modal').style.display = 'none';
+    toast('Connected! Welcome to Tennis Event Manager.', 'success');
+    showScreen('pin-screen');
+  } catch(e) {
+    showSetupError('Connection failed: ' + (e.message || 'Check your URL and key.'));
+  }
+}
+
+function showSetupError(msg) {
+  const el = document.getElementById('setup-error');
+  el.textContent = msg; el.style.display = 'flex';
+}
+
+// ═══════════════════════════════════════════════
+// PIN AUTH
+// ═══════════════════════════════════════════════
+let pinBuffer = '';
+let pinLocked = false;
+
+function pinKey(digit) {
+  if (pinLocked || pinBuffer.length >= 6) return;
+  pinBuffer += digit;
+  updatePinDots();
+  if (pinBuffer.length >= 4) {
+    // Auto-submit after slight delay if 4+ digits
+    // For 6 digit PINs, allow more input for 500ms
+    clearTimeout(window._pinTimer);
+    window._pinTimer = setTimeout(() => attemptLogin(), 600);
+  }
+}
+
+function pinDelete() {
+  clearTimeout(window._pinTimer);
+  pinBuffer = pinBuffer.slice(0, -1);
+  updatePinDots();
+  document.getElementById('pin-status').textContent = '';
+}
+
+function updatePinDots(state = 'normal') {
+  for (let i = 0; i < 4; i++) {
+    const dot = document.getElementById(`dot-${i}`);
+    dot.className = 'pin-dot';
+    if (i < pinBuffer.length) dot.classList.add(state === 'error' ? 'error' : 'filled');
+  }
+}
+
+async function attemptLogin() {
+  if (!pinBuffer) return;
+  const statusEl = document.getElementById('pin-status');
+  const hintEl = document.getElementById('pin-hint');
+  statusEl.textContent = '';
+  hintEl.textContent = '';
+  pinLocked = true;
+
+  try {
+    const hash = await hashPin(pinBuffer);
+
+    // Check admin PIN first
+    const { data: adminData } = await supabaseClient
+      .from('admin_config')
+      .select('pin_hash')
+      .single();
+
+    if (adminData && adminData.pin_hash === hash) {
+      currentUser = { role: 'admin' };
+      saveConfig({ lastRole: 'admin' });
+      pinBuffer = '';
+      updatePinDots();
+      showScreen('admin-screen');
+      loadAdminData();
+      pinLocked = false;
+      return;
+    }
+
+    // Check director PINs
+    const { data: dirData, error } = await supabaseClient
+      .from('directors')
+      .select('*, clubs(name, primary_color, secondary_color, accent_color)')
+      .eq('pin_hash', hash)
+      .eq('is_active', true)
+      .single();
+
+    if (error || !dirData) {
+      // Wrong PIN
+      updatePinDots('error');
+      statusEl.textContent = 'Incorrect PIN';
+      setTimeout(() => {
+        pinBuffer = '';
+        updatePinDots();
+        statusEl.textContent = '';
+        pinLocked = false;
+      }, 1200);
+      return;
+    }
+
+    // Check lockout
+    if (dirData.locked_until && new Date(dirData.locked_until) > new Date()) {
+      const mins = Math.ceil((new Date(dirData.locked_until) - new Date()) / 60000);
+      statusEl.textContent = `Account locked. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`;
+      pinBuffer = '';
+      updatePinDots();
+      pinLocked = false;
+      return;
+    }
+
+    // Director login success
+    currentUser = {
+      role: 'director',
+      director_id: dirData.id,
+      club_id: dirData.club_id,
+      club_name: dirData.clubs?.name || 'Your Club',
+      director_name: dirData.name,
+      club_colors: dirData.clubs
+    };
+
+    // Update last login
+    await supabaseClient.from('directors').update({ last_login_at: new Date().toISOString(), failed_pin_attempts: 0 }).eq('id', dirData.id);
+
+    applyClubBranding(dirData.clubs);
+    pinBuffer = '';
+    updatePinDots();
+    showScreen('director-screen');
+    document.getElementById('dir-club-name').textContent = currentUser.club_name;
+    document.getElementById('dir-name').textContent = currentUser.director_name;
+    loadDirectorEvents();
+    loadDirectorPlayers();
+    pinLocked = false;
+
+  } catch(e) {
+    statusEl.textContent = 'Connection error. Try again.';
+    pinBuffer = '';
+    updatePinDots();
+    pinLocked = false;
+  }
+}
+
+function applyClubBranding(club) {
+  if (!club) return;
+  const primary = club.primary_color || '#1B5E20';
+  document.querySelector('.app-header').style.background = primary;
+  if (club.accent_color) {
+    document.documentElement.style.setProperty('--gold', club.accent_color);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// HASH UTILITY (SHA-256)
+// ═══════════════════════════════════════════════
+async function hashPin(pin) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode('tem_salt_v1_' + pin);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ═══════════════════════════════════════════════
+// SCREEN NAVIGATION
+// ═══════════════════════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function logout() {
+  currentUser = null;
+  pinBuffer = '';
+  updatePinDots();
+  document.getElementById('pin-status').textContent = '';
+  showScreen('pin-screen');
+}
+
+// ═══════════════════════════════════════════════
+// ADMIN TABS
+// ═══════════════════════════════════════════════
+function adminTab(name, btn) {
+  document.querySelectorAll('.admin-nav-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  ['overview', 'clubs', 'directors', 'players', 'settings'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display = t === name ? 'block' : 'none';
+  });
+  if (name === 'clubs') loadClubs();
+  if (name === 'directors') loadDirectors();
+  if (name === 'players') loadPlayers('players-list');
+}
+
+function dirTab(name, btn) {
+  document.querySelectorAll('.dir-nav-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  ['events', 'players', 'notes'].forEach(t => {
+    document.getElementById(`dir-tab-${t}`).style.display = t === name ? 'block' : 'none';
+  });
+  if (name === 'players') loadPlayers('dir-players-list');
+}
+
+// ═══════════════════════════════════════════════
+// MODAL HELPERS
+// ═══════════════════════════════════════════════
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+// Close on backdrop click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) overlay.classList.remove('open');
+  });
+});
+
+// ═══════════════════════════════════════════════
+// ADMIN DATA LOADING
+// ═══════════════════════════════════════════════
+async function loadAdminData() {
+  try {
+    const [clubs, directors, players, events] = await Promise.all([
+      supabaseClient.from('clubs').select('id', { count: 'exact' }),
+      supabaseClient.from('directors').select('id', { count: 'exact' }),
+      supabaseClient.from('players').select('id', { count: 'exact' }).eq('is_active', true),
+      supabaseClient.from('events').select('id, name, event_date, status, event_type, clubs(name)').order('event_date', { ascending: false }).limit(8)
+    ]);
+
+    document.getElementById('stat-clubs').textContent = clubs.count ?? '—';
+    document.getElementById('stat-directors').textContent = directors.count ?? '—';
+    document.getElementById('stat-players').textContent = players.count ?? '—';
+
+    const eventsEl = document.getElementById('admin-recent-events');
+    if (!events.data || events.data.length === 0) {
+      eventsEl.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events yet</div><div class="empty-sub">Create a club and director to get started</div></div>`;
+    } else {
+      eventsEl.innerHTML = `<table class="data-table">
+        <thead><tr><th>Event</th><th>Club</th><th>Date</th><th>Type</th><th>Status</th></tr></thead>
+        <tbody>${events.data.map(e => `
+          <tr>
+            <td><strong>${e.name}</strong></td>
+            <td>${e.clubs?.name || '—'}</td>
+            <td>${formatDate(e.event_date)}</td>
+            <td><span class="badge badge-blue">${e.event_type}</span></td>
+            <td>${statusBadge(e.status)}</td>
+          </tr>`).join('')}
+        </tbody></table>`;
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function loadClubs() {
+  const el = document.getElementById('clubs-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const { data, error } = await supabaseClient.from('clubs').select('*, directors(count)').order('name');
+  if (error) { el.innerHTML = `<div class="empty-state"><div class="empty-title">Error loading clubs</div></div>`; return; }
+  if (!data || data.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🏛️</div><div class="empty-title">No clubs yet</div><div class="empty-sub">Create your first club to get started</div><button class="btn btn-primary" onclick="openModal('club-modal')">+ New Club</button></div>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Club</th><th>Primary Color</th><th>Font</th><th>Motto</th><th>Actions</th></tr></thead>
+    <tbody>${data.map(c => `
+      <tr>
+        <td>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:28px;height:28px;border-radius:6px;background:${c.primary_color||'#1B5E20'};flex-shrink:0"></div>
+            <div>
+              <div style="font-weight:600">${c.name}</div>
+              ${c.tagline ? `<div style="font-size:12px;color:var(--baseline-muted)">${c.tagline}</div>` : ''}
+            </div>
+          </div>
+        </td>
+        <td><code style="font-size:12px">${c.primary_color||'—'}</code></td>
+        <td>${c.font_style||'MODERN'}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--baseline-muted)">${c.motto||'—'}</td>
+        <td>
+          <button class="btn btn-sm btn-ghost" onclick="editClub('${c.id}')">Edit</button>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function loadDirectors() {
+  const el = document.getElementById('directors-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const { data, error } = await supabaseClient.from('directors').select('*, clubs(name)').order('name');
+  if (error || !data) { el.innerHTML = `<div class="empty-state"><div class="empty-title">Error</div></div>`; return; }
+  if (data.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">No directors yet</div><div class="empty-sub">Create a club first, then add directors</div></div>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Name</th><th>Club</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead>
+    <tbody>${data.map(d => `
+      <tr>
+        <td><strong>${d.name}</strong></td>
+        <td>${d.clubs?.name||'—'}</td>
+        <td>${d.is_active ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Inactive</span>'}</td>
+        <td style="font-size:13px;color:var(--baseline-muted)">${d.last_login_at ? formatDate(d.last_login_at) : 'Never'}</td>
+        <td style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-ghost" onclick="resetPin('${d.id}','${d.name}')">Reset PIN</button>
+          <button class="btn btn-sm ${d.is_active ? 'btn-danger' : 'btn-secondary'}" onclick="toggleDirector('${d.id}',${d.is_active})">
+            ${d.is_active ? 'Deactivate' : 'Activate'}
+          </button>
+        </td>
+      </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function loadPlayers(containerId) {
+  const el = document.getElementById(containerId);
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const { data, error } = await supabaseClient
+    .from('players')
+    .select(`*, current_player_ratings(source, value, designation, is_manual, fetched_at)`)
+    .eq('is_active', true)
+    .order('roster_name')
+    .limit(50);
+
+  if (error) { el.innerHTML = `<div class="empty-state"><div class="empty-title">Error loading players</div><div class="empty-sub">${error.message}</div></div>`; return; }
+  if (!data || data.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — their ratings will be looked up automatically</div></div>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR / UTR</th><th>Status</th></tr></thead>
+    <tbody>${data.map(p => {
+      const ratings = p.current_player_ratings || [];
+      const ntrp = ratings.find(r => r.source === 'NTRP');
+      const trr = ratings.find(r => r.source === 'TRR');
+      const utr = ratings.find(r => r.source === 'UTR');
+      const primary = trr || utr;
+      const isStale = primary && (new Date() - new Date(primary.fetched_at)) > 365 * 24 * 60 * 60 * 1000;
+      return `<tr>
+        <td><strong>${p.roster_name}</strong>${p.alias_memory?.length ? `<div style="font-size:11px;color:var(--baseline-muted)">${p.alias_memory[0]}</div>` : ''}</td>
+        <td><span class="badge ${p.player_type === 'AD' ? 'badge-blue' : 'badge-gold'}">${p.player_type}</span></td>
+        <td style="font-size:13px">${p.gender === 'MALE' ? '♂' : '♀'}</td>
+        <td style="font-size:13px">${ntrp ? `${ntrp.value}<span style="color:var(--baseline-muted);font-size:11px"> ${ntrp.designation||''}</span>` : '—'}</td>
+        <td style="font-size:13px">${primary ? `${parseFloat(primary.value).toFixed(4)}${primary.is_manual ? ' <span class="badge badge-gold" style="font-size:10px">Manual</span>' : ''}` : '<span style="color:var(--baseline-ghost)">Not rated</span>'}</td>
+        <td>${isStale ? '<span class="badge badge-red">Stale</span>' : primary ? '<span class="badge badge-green">Current</span>' : '<span class="badge badge-gray">No rating</span>'}</td>
+      </tr>`;
+    }).join('')}
+    </tbody></table>`;
+}
+
+async function searchPlayers(query) {
+  if (!query) { loadPlayers('players-list'); return; }
+  const { data } = await supabaseClient
+    .from('players')
+    .select('*')
+    .eq('is_active', true)
+    .ilike('roster_name', `%${query}%`)
+    .limit(20);
+  // Re-render with filtered results (simplified)
+  const el = document.getElementById('players-list') || document.getElementById('dir-players-list');
+  if (!el) return;
+  if (!data || data.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-title">No players found for "${query}"</div></div>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Name</th><th>Type</th><th>Gender</th></tr></thead>
+    <tbody>${data.map(p => `<tr><td><strong>${p.roster_name}</strong></td><td><span class="badge ${p.player_type === 'AD' ? 'badge-blue' : 'badge-gold'}">${p.player_type}</span></td><td>${p.gender}</td></tr>`).join('')}
+    </tbody></table>`;
+}
+
+// ═══════════════════════════════════════════════
+// DIRECTOR DATA
+// ═══════════════════════════════════════════════
+let allEvents = [];
+let eventFilter = 'all';
+
+async function loadDirectorEvents() {
+  const el = document.getElementById('dir-events-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading events…</div>';
+  const { data, error } = await supabaseClient
+    .from('events')
+    .select('*')
+    .eq('club_id', currentUser.club_id)
+    .order('event_date', { ascending: false });
+
+  if (error) { el.innerHTML = `<div class="empty-state"><div class="empty-title">Error loading events</div></div>`; return; }
+  allEvents = data || [];
+  renderEvents();
+}
+
+function filterEvents(status, btn) {
+  eventFilter = status;
+  document.querySelectorAll('.dir-nav + .content .btn-sm').forEach(b => {
+    b.className = b === btn ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost';
+  });
+  renderEvents();
+}
+
+function renderEvents() {
+  const el = document.getElementById('dir-events-list');
+  const filtered = eventFilter === 'all' ? allEvents : allEvents.filter(e => e.status === eventFilter);
+
+  if (filtered.length === 0) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events yet</div><div class="empty-sub">Create your first event draft to get started</div><button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button></div>`;
+    return;
+  }
+
+  el.innerHTML = filtered.map(e => `
+    <div class="event-card" onclick="openEvent('${e.id}')">
+      <div class="event-card-info">
+        <div class="event-card-name">${e.name}</div>
+        <div class="event-card-meta">
+          <span>${formatDate(e.event_date)}</span>
+          <span>${e.event_type}</span>
+          ${e.num_teams ? `<span>${e.num_teams} teams</span>` : ''}
+          ${e.draw_size ? `<span>Draw of ${e.draw_size}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        ${statusBadge(e.status)}
+        <span class="event-card-arrow">›</span>
+      </div>
+    </div>`).join('');
+}
+
+function openEvent(id) {
+  const event = allEvents.find(e => e.id === id);
+  if (!event) return;
+  toast(`Opening "${event.name}"… Event detail view coming in Phase 4`, 'success');
+}
+
+async function loadDirectorPlayers() {
+  // Pre-load for the players tab
+  loadPlayers('dir-players-list');
+}
+
+// ═══════════════════════════════════════════════
+// SAVE CLUB
+// ═══════════════════════════════════════════════
+let editingClubId = null;
+
+async function saveClub() {
+  const name = document.getElementById('club-name').value.trim();
+  if (!name) { toast('Club name is required', 'error'); return; }
+
+  const btn = document.getElementById('save-club-btn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  const payload = {
+    name,
+    tagline: document.getElementById('club-tagline').value.trim() || null,
+    motto: document.getElementById('club-motto').value.trim() || null,
+    primary_color: document.getElementById('club-primary-hex').value || '#1B5E20',
+    secondary_color: document.getElementById('club-secondary-hex').value || '#4CAF50',
+    accent_color: document.getElementById('club-accent-hex').value || '#F57F17',
+    background_style: document.getElementById('club-bg-style').value,
+    logo_position: document.getElementById('club-logo-pos').value,
+    logo_opacity: parseInt(document.getElementById('club-opacity').value),
+    font_style: document.getElementById('club-font').value,
+  };
+
+  try {
+    let error;
+    if (editingClubId) {
+      ({ error } = await supabaseClient.from('clubs').update(payload).eq('id', editingClubId));
+    } else {
+      ({ error } = await supabaseClient.from('clubs').insert(payload));
+    }
+    if (error) throw error;
+    toast(editingClubId ? 'Club updated!' : 'Club created!', 'success');
+    closeModal('club-modal');
+    editingClubId = null;
+    loadClubs();
+    loadAdminData();
+  } catch(e) {
+    toast('Error: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = editingClubId ? 'Save Changes' : 'Create Club';
+  }
+}
+
+async function editClub(id) {
+  const { data, error } = await supabaseClient.from('clubs').select('*').eq('id', id).single();
+  if (error || !data) { toast('Error loading club', 'error'); return; }
+  editingClubId = id;
+  document.getElementById('club-modal-title').textContent = 'Edit Club';
+  document.getElementById('save-club-btn').textContent = 'Save Changes';
+  document.getElementById('club-name').value = data.name || '';
+  document.getElementById('club-tagline').value = data.tagline || '';
+  document.getElementById('club-motto').value = data.motto || '';
+  document.getElementById('club-primary-hex').value = data.primary_color || '#1B5E20';
+  document.getElementById('club-primary').value = data.primary_color || '#1B5E20';
+  document.getElementById('club-secondary-hex').value = data.secondary_color || '#4CAF50';
+  document.getElementById('club-secondary').value = data.secondary_color || '#4CAF50';
+  document.getElementById('club-accent-hex').value = data.accent_color || '#F57F17';
+  document.getElementById('club-accent').value = data.accent_color || '#F57F17';
+  document.getElementById('club-bg-style').value = data.background_style || 'WHITE_WITH_ACCENTS';
+  document.getElementById('club-logo-pos').value = data.logo_position || 'TOP_CENTER';
+  document.getElementById('club-opacity').value = data.logo_opacity || 100;
+  document.getElementById('opacity-val').textContent = data.logo_opacity || 100;
+  document.getElementById('club-font').value = data.font_style || 'MODERN';
+  updateBrandPreview();
+  openModal('club-modal');
+}
+
+// ═══════════════════════════════════════════════
+// SAVE DIRECTOR
+// ═══════════════════════════════════════════════
+async function saveDirector() {
+  const name = document.getElementById('director-name').value.trim();
+  const clubId = document.getElementById('director-club').value;
+  const pin = document.getElementById('director-pin').value.trim();
+  const pinConfirm = document.getElementById('director-pin-confirm').value.trim();
+  const errEl = document.getElementById('director-modal-error');
+  errEl.style.display = 'none';
+
+  if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = 'flex'; return; }
+  if (!clubId) { errEl.textContent = 'Please select a club.'; errEl.style.display = 'flex'; return; }
+  if (!pin || pin.length < 4) { errEl.textContent = 'PIN must be at least 4 digits.'; errEl.style.display = 'flex'; return; }
+  if (!/^\d+$/.test(pin)) { errEl.textContent = 'PIN must contain digits only.'; errEl.style.display = 'flex'; return; }
+  if (pin !== pinConfirm) { errEl.textContent = 'PINs do not match.'; errEl.style.display = 'flex'; return; }
+
+  try {
+    // Create anonymous Supabase auth user for this director
+    const { data: authData, error: authError } = await supabaseClient.auth.signUp({
+      email: `director_${Date.now()}@tem.internal`,
+      password: crypto.randomUUID()
+    });
+    if (authError) throw authError;
+
+    const hash = await hashPin(pin);
+    const { error } = await supabaseClient.from('directors').insert({
+      name, club_id: clubId, pin_hash: hash,
+      supabase_auth_uid: authData.user.id
+    });
+    if (error) throw error;
+
+    toast(`Director "${name}" created!`, 'success');
+    closeModal('director-modal');
+    document.getElementById('director-name').value = '';
+    document.getElementById('director-club').value = '';
+    document.getElementById('director-pin').value = '';
+    document.getElementById('director-pin-confirm').value = '';
+    loadDirectors();
+    loadAdminData();
+  } catch(e) {
+    errEl.textContent = 'Error: ' + e.message;
+    errEl.style.display = 'flex';
+  }
+}
+
+async function resetPin(directorId, directorName) {
+  const newPin = prompt(`Enter new PIN for ${directorName} (4-6 digits):`);
+  if (!newPin) return;
+  if (!/^\d{4,6}$/.test(newPin)) { toast('PIN must be 4-6 digits', 'error'); return; }
+  const hash = await hashPin(newPin);
+  const { error } = await supabaseClient.from('directors').update({ pin_hash: hash, failed_pin_attempts: 0, locked_until: null }).eq('id', directorId);
+  if (error) { toast('Error resetting PIN', 'error'); return; }
+  toast(`PIN reset for ${directorName}. Share the new PIN with them.`, 'success');
+}
+
+async function toggleDirector(id, currentlyActive) {
+  const { error } = await supabaseClient.from('directors').update({ is_active: !currentlyActive }).eq('id', id);
+  if (error) { toast('Error', 'error'); return; }
+  toast(`Director ${currentlyActive ? 'deactivated' : 'activated'}.`, 'success');
+  loadDirectors();
+}
+
+// ═══════════════════════════════════════════════
+// SAVE PLAYER
+// ═══════════════════════════════════════════════
+async function savePlayer() {
+  const first = document.getElementById('player-first').value.trim();
+  const last = document.getElementById('player-last').value.trim();
+  const gender = document.getElementById('player-gender').value;
+  const type = document.getElementById('player-type').value;
+  if (!first || !last) { toast('First and last name required', 'error'); return; }
+  if (!gender) { toast('Gender required', 'error'); return; }
+
+  const { data, error } = await supabaseClient.from('players').insert({
+    roster_name: `${first} ${last}`,
+    gender, player_type: type
+  }).select().single();
+
+  if (error) { toast('Error: ' + error.message, 'error'); return; }
+  toast(`${data.roster_name} added. Rating lookup will run automatically.`, 'success');
+  closeModal('player-modal');
+  document.getElementById('player-first').value = '';
+  document.getElementById('player-last').value = '';
+  loadPlayers('players-list');
+}
+
+// ═══════════════════════════════════════════════
+// CREATE EVENT
+// ═══════════════════════════════════════════════
+async function createEvent() {
+  const name = document.getElementById('event-name').value.trim();
+  const date = document.getElementById('event-date').value;
+  const type = document.getElementById('event-type').value;
+  const errEl = document.getElementById('event-modal-error');
+  errEl.style.display = 'none';
+
+  if (!name) { errEl.textContent = 'Event name required.'; errEl.style.display = 'flex'; return; }
+  if (!date) { errEl.textContent = 'Event date required.'; errEl.style.display = 'flex'; return; }
+
+  const payload = {
+    name, event_date: date, event_type: type,
+    club_id: currentUser.club_id,
+    director_id: currentUser.director_id,
+    status: 'DRAFT'
+  };
+
+  if (type !== 'INDIVIDUAL') {
+    const teams = parseInt(document.getElementById('event-teams').value);
+    const courts = parseInt(document.getElementById('event-courts').value);
+    if (!teams || teams < 2) { errEl.textContent = 'Number of teams is required (minimum 2).'; errEl.style.display = 'flex'; return; }
+    payload.num_teams = teams;
+    payload.num_courts = courts || 4;
+  }
+
+  const { data, error } = await supabaseClient.from('events').insert(payload).select().single();
+  if (error) { errEl.textContent = 'Error: ' + error.message; errEl.style.display = 'flex'; return; }
+
+  if (type === 'INDIVIDUAL') {
+    const drawSize = parseInt(document.getElementById('event-draw-size').value);
+    const elimType = document.getElementById('event-elim-type').value;
+    await supabaseClient.from('draws').insert({ event_id: data.id, draw_size: drawSize, elimination_type: elimType, match_format: 'GAMES', games_target: 6 });
+  }
+
+  toast(`"${name}" created as a DRAFT!`, 'success');
+  closeModal('new-event-modal');
+  document.getElementById('event-name').value = '';
+  document.getElementById('event-date').value = '';
+  document.getElementById('event-teams').value = '';
+  loadDirectorEvents();
+}
+
+// ═══════════════════════════════════════════════
+// EVENT TYPE TOGGLE IN MODAL
+// ═══════════════════════════════════════════════
+document.getElementById('event-type').addEventListener('change', function() {
+  const isIndividual = this.value === 'INDIVIDUAL';
+  document.getElementById('team-fields').style.display = isIndividual ? 'none' : 'grid';
+  document.getElementById('individual-fields').style.display = isIndividual ? 'grid' : 'none';
+});
+
+// ═══════════════════════════════════════════════
+// ADMIN SETTINGS
+// ═══════════════════════════════════════════════
+async function changeAdminPin() {
+  const current = document.getElementById('current-pin').value.trim();
+  const newPin = document.getElementById('new-pin').value.trim();
+  const confirm = document.getElementById('confirm-pin').value.trim();
+  if (!current || !newPin || !confirm) { toast('All fields required', 'error'); return; }
+  if (newPin !== confirm) { toast('New PINs do not match', 'error'); return; }
+  if (!/^\d{4,6}$/.test(newPin)) { toast('PIN must be 4-6 digits', 'error'); return; }
+  const currentHash = await hashPin(current);
+  const { data } = await supabaseClient.from('admin_config').select('pin_hash').single();
+  if (!data || data.pin_hash !== currentHash) { toast('Current PIN is incorrect', 'error'); return; }
+  const newHash = await hashPin(newPin);
+  await supabaseClient.from('admin_config').update({ pin_hash: newHash });
+  toast('Admin PIN updated!', 'success');
+  document.getElementById('current-pin').value = '';
+  document.getElementById('new-pin').value = '';
+  document.getElementById('confirm-pin').value = '';
+}
+
+// ═══════════════════════════════════════════════
+// COLOR SYNC
+// ═══════════════════════════════════════════════
+function syncColor(pickerId, hexId) {
+  const hex = document.getElementById(hexId).value;
+  if (/^#[0-9A-Fa-f]{6}$/.test(hex)) {
+    document.getElementById(pickerId).value = hex;
+    updateBrandPreview();
+  }
+}
+document.getElementById('club-primary').addEventListener('input', function() {
+  document.getElementById('club-primary-hex').value = this.value;
+  updateBrandPreview();
+});
+document.getElementById('club-secondary').addEventListener('input', function() {
+  document.getElementById('club-secondary-hex').value = this.value;
+});
+document.getElementById('club-accent').addEventListener('input', function() {
+  document.getElementById('club-accent-hex').value = this.value;
+});
+function updateBrandPreview() {
+  const color = document.getElementById('club-primary-hex').value || '#1B5E20';
+  const el = document.getElementById('brand-preview-bar');
+  const nameEl = document.getElementById('club-name');
+  if (el) {
+    el.style.background = color;
+    el.textContent = (nameEl?.value || 'Club Name') + ' Preview';
+  }
+}
+document.getElementById('club-name')?.addEventListener('input', updateBrandPreview);
+
+// ═══════════════════════════════════════════════
+// DIRECTOR MODAL — populate clubs dropdown
+// ═══════════════════════════════════════════════
+document.getElementById('director-modal').addEventListener('click', async function(e) {
+  if (!e.target.closest('.modal-overlay')) return;
+});
+// Populate clubs when director modal opens
+const origOpenModal = openModal;
+window.openModal = async function(id) {
+  origOpenModal(id);
+  if (id === 'director-modal') {
+    const sel = document.getElementById('director-club');
+    sel.innerHTML = '<option value="">Select a club…</option>';
+    const { data } = await supabaseClient.from('clubs').select('id, name').order('name');
+    if (data) data.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id; opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+  }
+};
+
+// ═══════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════
+function statusBadge(status) {
+  const map = {
+    'DRAFT': 'badge-gray', 'ROSTER_LOADED': 'badge-blue',
+    'TEAMS_SET': 'badge-gold', 'LIVE': 'badge-green', 'COMPLETE': 'badge-gray'
+  };
+  const labels = {
+    'DRAFT': 'Draft', 'ROSTER_LOADED': 'Roster Loaded',
+    'TEAMS_SET': 'Teams Set', 'LIVE': '🟢 Live', 'COMPLETE': 'Complete'
+  };
+  return `<span class="badge ${map[status]||'badge-gray'}">${labels[status]||status}</span>`;
+}
+
+function formatDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function toast(msg, type = 'default') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ═══════════════════════════════════════════════
+// APP INIT
+// ═══════════════════════════════════════════════
+async function init() {
+  const ok = initSupabase();
+  if (!ok) {
+    // Show setup modal
+    document.getElementById('setup-modal').style.display = 'flex';
+    return;
+  }
+
+  // Check if admin config exists
+  const { data, error } = await supabaseClient.from('admin_config').select('id').limit(1);
+  if (error || !data || data.length === 0) {
+    document.getElementById('setup-modal').style.display = 'flex';
+    return;
+  }
+
+  // Check for saved session
+  const cfg = getConfig();
+  if (cfg.lastRole === 'admin') {
+    // Still require PIN — don't auto-login
+  }
+
+  showScreen('pin-screen');
+}
+
+init();
+</script>
+
+
+</body></html>
