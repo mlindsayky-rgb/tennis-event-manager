@@ -396,6 +396,72 @@ body { background: var(--court-green-ghost); color: var(--baseline); min-height:
   display: flex; align-items: center; gap: 10px;
 }
 
+
+/* ── PHASE 2 — RATING LOOKUP ── */
+.lookup-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 10px; border-radius: 20px;
+  font-weight: 600; white-space: nowrap;
+}
+.lookup-status.searching { background: var(--sky-light); color: var(--sky); }
+.lookup-status.found { background: var(--court-green-pale); color: var(--court-green); }
+.lookup-status.multiple { background: var(--gold-light); color: var(--gold); cursor: pointer; }
+.lookup-status.not-found { background: var(--clay-light); color: var(--clay); cursor: pointer; }
+.lookup-status.stale { background: var(--gold-light); color: var(--gold); }
+.lookup-status.manual { background: var(--sky-light); color: var(--sky); }
+
+.spinner-sm {
+  width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: currentColor; border-radius: 50%;
+  animation: spin 0.7s linear infinite; display: inline-block;
+}
+
+.rating-queue {
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+  box-shadow: var(--shadow); margin-bottom: 20px;
+}
+.rating-queue-header {
+  padding: 14px 20px; background: var(--gold-light);
+  border-bottom: 1px solid #FFE082;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.rating-queue-title { font-size: 14px; font-weight: 700; color: #5D4037; }
+.rating-queue-count { font-size: 13px; color: #6D4C41; }
+.queue-item {
+  padding: 14px 20px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px;
+}
+.queue-item:last-child { border-bottom: none; }
+.queue-item-name { font-size: 14px; font-weight: 600; flex: 1; }
+.queue-item-issue { font-size: 12px; color: var(--baseline-muted); }
+.queue-item-actions { display: flex; gap: 8px; align-items: center; }
+
+.progress-bar-wrap {
+  background: var(--border); border-radius: 20px;
+  height: 8px; overflow: hidden; margin: 8px 0;
+}
+.progress-bar-fill {
+  height: 100%; background: var(--court-green);
+  border-radius: 20px; transition: width 0.3s ease;
+}
+
+.manual-entry-panel {
+  background: var(--court-green-ghost); border: 1.5px solid var(--court-green-light);
+  border-radius: var(--radius); padding: 16px; margin-top: 8px;
+}
+.manual-entry-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; color: var(--baseline); }
+
+.trr-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--sky); text-decoration: none;
+  padding: 4px 10px; border: 1px solid var(--sky);
+  border-radius: 6px; transition: background 0.15s;
+}
+.trr-link:hover { background: var(--sky-light); }
+
+.player-row-expanded { background: var(--court-green-ghost); }
+
 /* ── RESPONSIVE ── */
 @media (max-width: 640px) {
   .content { padding: 16px; }
@@ -574,10 +640,35 @@ body { background: var(--court-green-ghost); color: var(--baseline); min-height:
           </div>
         </div>
         <div class="card">
+          <div class="card-header"><div class="card-title">Rating Lookup Settings</div></div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Auto-Lookup (TennisRecord.com)</label>
+              <div style="display:flex;align-items:center;gap:12px;margin-top:6px">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                  <input type="checkbox" id="auto-lookup-toggle" checked="checked" onchange="toggleAutoLookup(this.checked)" style="width:18px;height:18px;accent-color:var(--court-green)">
+                  <span style="font-size:14px">Enable automatic rating lookup</span>
+                </label>
+              </div>
+              <div class="form-hint">When enabled, the app attempts to 
+look up player ratings from TennisRecord.com automatically. Disable this
+ if the site changes or blocks requests — manual entry will be used 
+instead.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Filter States (comma separated)</label>
+              <input class="form-input" id="lookup-states-input" value="KY, IN" style="max-width:200px">
+              <div class="form-hint">Only match players from these states during lookup</div>
+              <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="saveLookupStates()">Save States</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-header"><div class="card-title">System Info</div></div>
           <div class="card-body">
             <div style="font-size:13px;color:var(--baseline-muted);line-height:2;margin-bottom:16px">
-              <div><strong>Version:</strong> 1.0.0 — Phase 1</div>
+              <div><strong>Version:</strong> 1.0.0 — Phase 2</div>
               <div><strong>Schema:</strong> v5.0</div>
               <div><strong>Tables:</strong> 20</div>
               <div><strong>Enums:</strong> 21</div>
@@ -941,6 +1032,97 @@ body { background: var(--court-green-ghost); color: var(--baseline); min-height:
   </div>
 </div>
 
+
+<!-- RATING QUEUE MODAL -->
+<div class="modal-overlay" id="rating-queue-modal">
+  <div class="modal" style="max-width:700px">
+    <div class="modal-header">
+      <div class="modal-title">⚡ Rating Review Queue</div>
+      <button class="modal-close" onclick="closeModal('rating-queue-modal')">×</button>
+    </div>
+    <div class="modal-body" id="rating-queue-body">
+      <div class="loading"><div class="spinner"></div> Loading queue…</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('rating-queue-modal')">Close</button>
+      <button class="btn btn-primary" onclick="retryAllLookups()">Retry All Failed</button>
+    </div>
+  </div>
+</div>
+
+<!-- MANUAL RATING MODAL -->
+<div class="modal-overlay" id="manual-rating-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <div class="modal-title" id="manual-rating-title">Enter Rating</div>
+      <button class="modal-close" onclick="closeModal('manual-rating-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="margin-bottom:16px">
+        <span>Look up this player on TennisRecord.com and enter their rating below.</span>
+      </div>
+      <div id="manual-trr-link-wrap" style="margin-bottom:16px"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">NTRP Rating</label>
+          <select class="form-select" id="manual-ntrp-value">
+            <option value="" selected="selected">Unknown</option>
+            <option value="2.5">2.5</option>
+            <option value="3.0">3.0</option>
+            <option value="3.5">3.5</option>
+            <option value="4.0">4.0</option>
+            <option value="4.5">4.5</option>
+            <option value="5.0">5.0</option>
+            <option value="5.5">5.5</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">NTRP Designation</label>
+          <select class="form-select" id="manual-ntrp-designation">
+            <option value="" selected="selected">Unknown</option>
+            <option value="C">C — Computer verified</option>
+            <option value="S">S — Self rated</option>
+            <option value="A">A — Amended</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">TRR (Estimated Dynamic Rating)</label>
+        <input class="form-input" id="manual-trr-value" placeholder="e.g. 4.2067" type="number" step="0.0001" min="1" max="7">
+        <div class="form-hint">Found under "Estimated Dynamic Rating" on TennisRecord.com</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Alternate Name (if different on TennisRecord)</label>
+        <input class="form-input" id="manual-alias" placeholder="Name as it appears on TennisRecord.com">
+        <div class="form-hint">If saved, this name will be used for future auto-lookups</div>
+      </div>
+      <div id="manual-rating-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('manual-rating-modal')">Cancel</button>
+      <button class="btn btn-secondary" onclick="skipRating()">Skip for Now</button>
+      <button class="btn btn-primary" onclick="saveManualRating()">Save Rating</button>
+    </div>
+  </div>
+</div>
+
+<!-- MULTIPLE MATCHES MODAL -->
+<div class="modal-overlay" id="multiple-matches-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-title">Multiple Players Found</div>
+      <button class="modal-close" onclick="closeModal('multiple-matches-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="margin-bottom:16px">Select the correct player from the list below.</div>
+      <div id="multiple-matches-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('multiple-matches-modal')">None of these — Enter Manually</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST CONTAINER -->
 <div id="toast-container"></div>
 
@@ -990,7 +1172,7 @@ let currentUser = null; // { role: 'admin'|'director', director_id, club_id, clu
 
 // HARDCODED CREDENTIALS — no setup screen needed
 const HARDCODED_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const HARDCODED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const HARDCODED_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 function getConfig() {
   const stored = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
@@ -1264,6 +1446,13 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 // ADMIN DATA LOADING
 // ═══════════════════════════════════════════════
 async function loadAdminData() {
+  await loadSettings();
+  // Update toggle UI
+  const toggle = document.getElementById('auto-lookup-toggle');
+  if (toggle) toggle.checked = AUTO_LOOKUP_ENABLED;
+  const statesInput = document.getElementById('lookup-states-input');
+  if (statesInput) statesInput.value = LOOKUP_STATES.join(', ');
+
   try {
     const [clubs, directors, players, events] = await Promise.all([
       supabaseClient.from('clubs').select('id', { count: 'exact' }),
@@ -1359,35 +1548,123 @@ async function loadPlayers(containerId) {
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const { data, error } = await supabaseClient
     .from('players')
-    .select(`*, current_player_ratings(source, value, designation, is_manual, fetched_at)`)
+    .select('id, roster_name, gender, player_type, alias_memory, is_active')
     .eq('is_active', true)
     .order('roster_name')
-    .limit(50);
+    .limit(100);
 
   if (error) { el.innerHTML = `<div class="empty-state"><div class="empty-title">Error loading players</div><div class="empty-sub">${error.message}</div></div>`; return; }
   if (!data || data.length === 0) {
     el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — their ratings will be looked up automatically</div></div>`;
     return;
   }
-  el.innerHTML = `<table class="data-table">
-    <thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR / UTR</th><th>Status</th></tr></thead>
-    <tbody>${data.map(p => {
-      const ratings = p.current_player_ratings || [];
-      const ntrp = ratings.find(r => r.source === 'NTRP');
-      const trr = ratings.find(r => r.source === 'TRR');
-      const utr = ratings.find(r => r.source === 'UTR');
-      const primary = trr || utr;
-      const isStale = primary && (new Date() - new Date(primary.fetched_at)) > 365 * 24 * 60 * 60 * 1000;
-      return `<tr>
-        <td><strong>${p.roster_name}</strong>${p.alias_memory?.length ? `<div style="font-size:11px;color:var(--baseline-muted)">${p.alias_memory[0]}</div>` : ''}</td>
-        <td><span class="badge ${p.player_type === 'AD' ? 'badge-blue' : 'badge-gold'}">${p.player_type}</span></td>
-        <td style="font-size:13px">${p.gender === 'MALE' ? '♂' : '♀'}</td>
-        <td style="font-size:13px">${ntrp ? `${ntrp.value}<span style="color:var(--baseline-muted);font-size:11px"> ${ntrp.designation||''}</span>` : '—'}</td>
-        <td style="font-size:13px">${primary ? `${parseFloat(primary.value).toFixed(4)}${primary.is_manual ? ' <span class="badge badge-gold" style="font-size:10px">Manual</span>' : ''}` : '<span style="color:var(--baseline-ghost)">Not rated</span>'}</td>
-        <td>${isStale ? '<span class="badge badge-red">Stale</span>' : primary ? '<span class="badge badge-green">Current</span>' : '<span class="badge badge-gray">No rating</span>'}</td>
-      </tr>`;
-    }).join('')}
-    </tbody></table>`;
+
+  // Load ratings separately
+  const playerIds = data.map(p => p.id);
+  const { data: ratings } = await supabaseClient
+    .from('player_ratings')
+    .select('player_id, source, value, designation, is_manual, fetched_at')
+    .in('player_id', playerIds);
+
+  // Build rating map (latest per player per source)
+  const ratingMap = {};
+  (ratings || []).forEach(r => {
+    if (!ratingMap[r.player_id]) ratingMap[r.player_id] = {};
+    const existing = ratingMap[r.player_id][r.source];
+    if (!existing || new Date(r.fetched_at) > new Date(existing.fetched_at)) {
+      ratingMap[r.player_id][r.source] = r;
+    }
+  });
+
+  const unratedCount = data.filter(p => !ratingMap[p.id] || Object.keys(ratingMap[p.id]).length === 0).length;
+
+  el.innerHTML = `
+    <div id="lookup-progress" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>
+    ${unratedCount > 0 ? `
+    <div style="padding:12px 16px;background:var(--gold-light);border-bottom:1px solid #FFE082;display:flex;align-items:center;justify-content:space-between">
+      <div style="font-size:13px;color:#5D4037"><strong>${unratedCount} player${unratedCount > 1 ? 's' : ''}</strong> need rating lookup</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-ghost" onclick="openRatingQueue()">View Queue</button>
+        <button class="btn btn-sm btn-primary" onclick="startBulkLookup('${containerId}')">⚡ Look Up All</button>
+      </div>
+    </div>` : ''}
+    <table class="data-table">
+      <thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR / UTR</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${data.map(p => {
+        const r = ratingMap[p.id] || {};
+        const ntrp = r['NTRP'];
+        const trr = r['TRR'];
+        const utr = r['UTR'];
+        const primary = trr || utr;
+        const isStale = primary && (new Date() - new Date(primary.fetched_at)) > 365 * 24 * 60 * 60 * 1000;
+        const hasRating = !!primary;
+        
+        let statusHtml;
+        if (isStale) statusHtml = `<span class="lookup-status stale" onclick="openManualRating('${p.id}','${p.roster_name}')">⚑ Stale</span>`;
+        else if (hasRating && primary.is_manual) statusHtml = `<span class="lookup-status manual">✎ Manual</span>`;
+        else if (hasRating) statusHtml = `<span class="lookup-status found">✓ Rated</span>`;
+        else statusHtml = `<span class="lookup-status not-found" onclick="openManualRating('${p.id}','${p.roster_name}')">No rating</span>`;
+
+        return `<tr data-player-id="${p.id}">
+          <td>
+            <strong>${p.roster_name}</strong>
+            ${p.alias_memory?.length ? `<div style="font-size:11px;color:var(--baseline-muted)">aka ${p.alias_memory[0]}</div>` : ''}
+          </td>
+          <td><span class="badge ${p.player_type === 'AD' ? 'badge-blue' : 'badge-gold'}">${p.player_type}</span></td>
+          <td style="font-size:13px">${p.gender === 'MALE' ? '♂' : '♀'}</td>
+          <td class="ntrp-cell" style="font-size:13px">${ntrp ? `${parseFloat(ntrp.value).toFixed(1)}<span style="color:var(--baseline-muted);font-size:11px"> ${ntrp.designation||''}</span>` : '—'}</td>
+          <td class="trr-cell" style="font-size:13px">${primary ? `${parseFloat(primary.value).toFixed(4)}${primary.is_manual ? ' <span class="badge badge-gold" style="font-size:10px;padding:1px 6px">Manual</span>' : ''}` : '<span style="color:var(--baseline-ghost)">—</span>'}</td>
+          <td class="lookup-status-cell">${statusHtml}</td>
+          <td>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-sm btn-ghost" onclick="lookupAndRefresh('${p.id}','${p.roster_name}','${containerId}',this)" title="Look up on TennisRecord">🔍</button>
+              <button class="btn btn-sm btn-ghost" onclick="openManualRating('${p.id}','${p.roster_name}')" title="Enter manually">✎</button>
+            </div>
+          </td>
+        </tr>`;
+      }).join('')}
+      </tbody>
+    </table>`;
+
+  // Auto-trigger lookup for newly added players with no rating
+  const newUnrated = data.filter(p => {
+    const r = ratingMap[p.id];
+    return !r || Object.keys(r).length === 0;
+  });
+  if (newUnrated.length === 1 && AUTO_LOOKUP_ENABLED) {
+    // Single new player - look up immediately
+    const p = newUnrated[0];
+    const rowEl = el.querySelector(`[data-player-id="${p.id}"]`);
+    lookupPlayer(p.id, p.roster_name, rowEl);
+  }
+}
+
+async function lookupAndRefresh(playerId, playerName, containerId, btn) {
+  btn.disabled = true;
+  btn.textContent = '…';
+  const rowEl = btn.closest('tr');
+  await lookupPlayer(playerId, playerName, rowEl);
+  btn.disabled = false;
+  btn.textContent = '🔍';
+}
+
+async function startBulkLookup(containerId) {
+  const { data: players } = await supabaseClient
+    .from('players')
+    .select('id, roster_name, player_type')
+    .eq('is_active', true)
+    .order('roster_name');
+  
+  const { data: ratings } = await supabaseClient
+    .from('player_ratings')
+    .select('player_id');
+  
+  const ratedIds = new Set((ratings || []).map(r => r.player_id));
+  const enriched = (players || []).map(p => ({ ...p, has_rating: ratedIds.has(p.id) }));
+  
+  const containerEl = document.getElementById(containerId);
+  await runBulkLookup(enriched, containerEl);
+  await loadPlayers(containerId);
 }
 
 async function searchPlayers(query) {
@@ -1783,6 +2060,622 @@ function toast(msg, type = 'default') {
   el.textContent = msg;
   document.getElementById('toast-container').appendChild(el);
   setTimeout(() => el.remove(), 3500);
+}
+
+
+// ═══════════════════════════════════════════════
+// PHASE 2 — RATING LOOKUP ENGINE
+// ═══════════════════════════════════════════════
+
+// Feature flag — set in Admin Settings → auto_lookup_enabled
+let AUTO_LOOKUP_ENABLED = true;
+let LOOKUP_STATES = ['KY', 'IN'];
+let manualRatingPlayerId = null;
+let lookupQueue = [];
+let lookupResults = {}; // playerId -> { status, matches, selected }
+
+// Load settings from Supabase
+async function loadSettings() {
+  try {
+    const { data } = await supabaseClient.from('app_settings').select('*');
+    if (data) {
+      data.forEach(s => {
+        if (s.key === 'auto_lookup_enabled') AUTO_LOOKUP_ENABLED = s.value === 'true';
+        if (s.key === 'lookup_states') LOOKUP_STATES = s.value.split(',').map(x => x.trim());
+      });
+    }
+  } catch(e) { console.log('Settings load failed, using defaults'); }
+}
+
+// ── CORS PROXY ──────────────────────────────────
+// We use allorigins.win as a CORS proxy to fetch TennisRecord
+// This is the "pluggable" part — if we need to disable scraping,
+// AUTO_LOOKUP_ENABLED = false bypasses this entirely
+const PROXY_URL = 'https://api.allorigins.win/get?url=';
+
+async function fetchTennisRecord(firstName, lastName) {
+  if (!AUTO_LOOKUP_ENABLED) return { status: 'disabled' };
+  
+  try {
+    const targetUrl = encodeURIComponent(
+      `https://www.tennisrecord.com/adult/search.aspx?firstname=${encodeURIComponent(firstName)}&lastname=${encodeURIComponent(lastName)}`
+    );
+    const response = await fetch(PROXY_URL + targetUrl, { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('Proxy failed');
+    
+    const data = await response.json();
+    const html = data.contents;
+    if (!html) throw new Error('No content');
+    
+    return parseTennisRecordResults(html, firstName, lastName);
+  } catch(e) {
+    console.log('TennisRecord lookup failed:', e.message);
+    return { status: 'error', message: e.message };
+  }
+}
+
+function parseTennisRecordResults(html, firstName, lastName) {
+  // Parse player links from results page
+  // TennisRecord results contain links like: /adult/profile.aspx?playername=...
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  // Look for player profile links
+  const links = Array.from(doc.querySelectorAll('a[href*="profile.aspx"]'));
+  
+  if (links.length === 0) {
+    // Check if we're on a profile page directly (exact match)
+    return parseProfilePage(html);
+  }
+  
+  // Multiple results — extract player info from each link
+  const matches = links.map(link => {
+    const href = link.getAttribute('href');
+    const text = link.textContent.trim();
+    const row = link.closest('tr') || link.parentElement;
+    const cells = row ? Array.from(row.querySelectorAll('td')) : [];
+    
+    return {
+      name: text,
+      url: href.startsWith('http') ? href : 'https://www.tennisrecord.com' + href,
+      location: cells[1]?.textContent?.trim() || '',
+      ntrp: cells[2]?.textContent?.trim() || '',
+      rawHtml: row?.innerHTML || ''
+    };
+  }).filter(m => m.name);
+
+  if (matches.length === 0) return { status: 'not_found' };
+  
+  // Filter by KY or IN
+  const filtered = matches.filter(m => 
+    LOOKUP_STATES.some(state => m.location.includes(state))
+  );
+  
+  if (filtered.length === 0) {
+    // No KY/IN match — show all results for director to choose
+    if (matches.length === 1) return { status: 'multiple', matches };
+    return { status: 'not_found' };
+  }
+  
+  if (filtered.length === 1) {
+    // One KY/IN match — fetch their profile
+    return { status: 'single_pending', match: filtered[0] };
+  }
+  
+  // Multiple KY/IN matches
+  return { status: 'multiple', matches: filtered };
+}
+
+function parseProfilePage(html) {
+  // Parse a player profile page for NTRP and TRR
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  // Look for rating data in tables
+  const tables = doc.querySelectorAll('table');
+  let ntrpValue = null, ntrpDesig = null, trrValue = null, trrDate = null;
+  let playerName = null, location = null;
+  
+  // Player name usually in h1 or specific element
+  const h1 = doc.querySelector('h1, .player-name, [class*="name"]');
+  if (h1) playerName = h1.textContent.trim();
+  
+  // Look for NTRP pattern like "4.5 C" or "4.5C"  
+  const bodyText = doc.body?.textContent || '';
+  
+  // NTRP pattern — look for X.X followed by C, S, or A
+  const ntrpMatch = bodyText.match(/([2-6]\.[05])\s*([CSA])/);
+  if (ntrpMatch) {
+    ntrpValue = parseFloat(ntrpMatch[1]);
+    ntrpDesig = ntrpMatch[2];
+  }
+  
+  // TRR — Estimated Dynamic Rating pattern
+  const trrMatch = bodyText.match(/Estimated Dynamic Rating[\s\S]{0,100}?(\d\.\d{4})/);
+  if (trrMatch) trrValue = parseFloat(trrMatch[1]);
+  
+  // Date pattern near TRR
+  const dateMatch = bodyText.match(/(\d{1,2}\/\d{1,2}\/\d{4})/g);
+  if (dateMatch && dateMatch.length > 0) trrDate = dateMatch[0];
+  
+  if (!ntrpValue && !trrValue) return { status: 'not_found' };
+  
+  return {
+    status: 'found',
+    data: { ntrpValue, ntrpDesig, trrValue, trrDate, playerName, location }
+  };
+}
+
+async function fetchPlayerProfile(profileUrl) {
+  try {
+    const response = await fetch(PROXY_URL + encodeURIComponent(profileUrl), { 
+      signal: AbortSignal.timeout(10000) 
+    });
+    if (!response.ok) throw new Error('Profile fetch failed');
+    const data = await response.json();
+    return parseProfilePage(data.contents || '');
+  } catch(e) {
+    return { status: 'error', message: e.message };
+  }
+}
+
+// ── SAVE RATING TO DATABASE ──────────────────────
+async function saveRating(playerId, source, value, designation, isManual, directorId, clubId) {
+  const payload = {
+    player_id: playerId,
+    source,
+    value: parseFloat(value),
+    is_manual: isManual,
+    fetched_at: new Date().toISOString()
+  };
+  if (designation) payload.designation = designation;
+  if (isManual) {
+    payload.manual_by_director_id = directorId;
+    payload.manual_by_club_id = clubId;
+  }
+  const { error } = await supabaseClient.from('player_ratings').insert(payload);
+  if (error) throw error;
+}
+
+async function savePlayerAlias(playerId, alias) {
+  if (!alias) return;
+  const { data } = await supabaseClient.from('players').select('alias_memory').eq('id', playerId).single();
+  const existing = data?.alias_memory || [];
+  if (!existing.includes(alias)) {
+    await supabaseClient.from('players').update({ 
+      alias_memory: [...existing, alias] 
+    }).eq('id', playerId);
+  }
+}
+
+// ── LOOKUP SINGLE PLAYER ────────────────────────
+async function lookupPlayer(playerId, playerName, rowEl) {
+  const parts = playerName.trim().split(' ');
+  const firstName = parts[0];
+  const lastName = parts.slice(1).join(' ');
+  
+  if (rowEl) updateRowStatus(rowEl, 'searching');
+  
+  // Check for alias memory first
+  const { data: player } = await supabaseClient
+    .from('players')
+    .select('alias_memory, player_type')
+    .eq('id', playerId)
+    .maybeSingle();
+  
+  // Try alias names first, then original
+  const namesToTry = [
+    { first: firstName, last: lastName },
+    ...(player?.alias_memory || []).map(alias => {
+      const p = alias.trim().split(' ');
+      return { first: p[0], last: p.slice(1).join(' ') };
+    })
+  ];
+  
+  let result = { status: 'not_found' };
+  
+  for (const name of namesToTry) {
+    result = await fetchTennisRecord(name.first, name.last);
+    if (result.status !== 'not_found' && result.status !== 'error') break;
+  }
+  
+  lookupResults[playerId] = result;
+  
+  if (result.status === 'found') {
+    // Save ratings automatically
+    try {
+      const d = result.data;
+      if (d.ntrpValue) await saveRating(playerId, 'NTRP', d.ntrpValue, d.ntrpDesig, false, null, null);
+      if (d.trrValue) await saveRating(playerId, 'TRR', d.trrValue, null, false, null, null);
+      if (rowEl) updateRowStatus(rowEl, 'found', d);
+      toast(`${playerName} — rating found!`, 'success');
+    } catch(e) {
+      console.log('Save rating error:', e);
+      if (rowEl) updateRowStatus(rowEl, 'not-found');
+    }
+  } else if (result.status === 'single_pending') {
+    // Need to fetch the profile page
+    const profileResult = await fetchPlayerProfile(result.match.url);
+    if (profileResult.status === 'found') {
+      try {
+        const d = profileResult.data;
+        if (d.ntrpValue) await saveRating(playerId, 'NTRP', d.ntrpValue, d.ntrpDesig, false, null, null);
+        if (d.trrValue) await saveRating(playerId, 'TRR', d.trrValue, null, false, null, null);
+        if (rowEl) updateRowStatus(rowEl, 'found', d);
+        toast(`${playerName} — rating found!`, 'success');
+      } catch(e) {
+        if (rowEl) updateRowStatus(rowEl, 'not-found');
+      }
+    } else {
+      lookupResults[playerId] = { status: 'not_found' };
+      if (rowEl) updateRowStatus(rowEl, 'not-found');
+    }
+  } else if (result.status === 'multiple') {
+    if (rowEl) updateRowStatus(rowEl, 'multiple', null, playerId, playerName);
+  } else if (result.status === 'disabled') {
+    if (rowEl) updateRowStatus(rowEl, 'manual-needed');
+  } else {
+    if (rowEl) updateRowStatus(rowEl, 'not-found');
+  }
+  
+  return result;
+}
+
+function updateRowStatus(rowEl, status, data, playerId, playerName) {
+  const statusCell = rowEl.querySelector('.lookup-status-cell');
+  if (!statusCell) return;
+  
+  const labels = {
+    'searching': '<span class="lookup-status searching"><span class="spinner-sm"></span> Looking up…</span>',
+    'found': '<span class="lookup-status found">✓ Rated</span>',
+    'multiple': `<span class="lookup-status multiple" onclick="showMultipleMatches('${playerId}','${playerName}')">⚠ Multiple found — click</span>`,
+    'not-found': `<span class="lookup-status not-found" onclick="openManualRating('${playerId}','${playerName}')">✕ Not found — enter manually</span>`,
+    'stale': '<span class="lookup-status stale">⚑ Stale rating</span>',
+    'manual-needed': `<span class="lookup-status not-found" onclick="openManualRating('${playerId}','${playerName}')">↗ Enter manually</span>`,
+  };
+  
+  statusCell.innerHTML = labels[status] || '';
+  
+  if (status === 'found' && data) {
+    const ntrpCell = rowEl.querySelector('.ntrp-cell');
+    const trrCell = rowEl.querySelector('.trr-cell');
+    if (ntrpCell && data.ntrpValue) ntrpCell.textContent = data.ntrpValue + (data.ntrpDesig ? ' ' + data.ntrpDesig : '');
+    if (trrCell && data.trrValue) trrCell.textContent = parseFloat(data.trrValue).toFixed(4);
+  }
+}
+
+// ── BULK LOOKUP ─────────────────────────────────
+async function runBulkLookup(players, containerEl) {
+  await loadSettings();
+  
+  if (!AUTO_LOOKUP_ENABLED) {
+    toast('Auto-lookup is disabled. Enter ratings manually.', 'default');
+    return;
+  }
+  
+  const unrated = players.filter(p => !p.has_rating);
+  if (unrated.length === 0) {
+    toast('All players already have ratings!', 'success');
+    return;
+  }
+  
+  toast(`Looking up ${unrated.length} players…`, 'default');
+  
+  let found = 0, failed = 0;
+  
+  for (let i = 0; i < unrated.length; i++) {
+    const player = unrated[i];
+    const rowEl = containerEl?.querySelector(`[data-player-id="${player.id}"]`);
+    
+    // Update progress
+    const pct = Math.round((i / unrated.length) * 100);
+    updateLookupProgress(pct, i + 1, unrated.length, found, failed);
+    
+    const result = await lookupPlayer(player.id, player.roster_name, rowEl);
+    if (result.status === 'found' || result.status === 'single_pending') found++;
+    else failed++;
+    
+    // Small delay to be polite to the server
+    await new Promise(r => setTimeout(r, 500));
+  }
+  
+  updateLookupProgress(100, unrated.length, unrated.length, found, failed);
+  toast(`Lookup complete: ${found} found, ${failed} need attention`, found > 0 ? 'success' : 'default');
+  
+  if (failed > 0) {
+    setTimeout(() => openRatingQueue(), 1000);
+  }
+}
+
+function updateLookupProgress(pct, current, total, found, failed) {
+  const el = document.getElementById('lookup-progress');
+  if (!el) return;
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div style="font-size:13px;margin-bottom:6px;color:var(--baseline-muted)">
+      Looking up players… ${current} of ${total} 
+      <span style="color:var(--court-green)">${found} found</span>
+      ${failed > 0 ? `<span style="color:var(--clay)"> · ${failed} need attention</span>` : ''}
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" style="width:${pct}%"></div>
+    </div>`;
+  if (pct === 100) {
+    setTimeout(() => { if(el) el.style.display = 'none'; }, 3000);
+  }
+}
+
+// ── MANUAL RATING ───────────────────────────────
+function openManualRating(playerId, playerName) {
+  manualRatingPlayerId = playerId;
+  document.getElementById('manual-rating-title').textContent = `Enter Rating — ${playerName}`;
+  document.getElementById('manual-ntrp-value').value = '';
+  document.getElementById('manual-ntrp-designation').value = '';
+  document.getElementById('manual-trr-value').value = '';
+  document.getElementById('manual-alias').value = '';
+  document.getElementById('manual-rating-error').style.display = 'none';
+  
+  // Set TennisRecord link
+  const parts = playerName.split(' ');
+  const searchUrl = `https://www.tennisrecord.com/adult/search.aspx`;
+  document.getElementById('manual-trr-link-wrap').innerHTML = `
+    <a class="trr-link" href="${searchUrl}" target="_blank">
+      🔍 Search "${playerName}" on TennisRecord.com
+    </a>`;
+  
+  openModal('manual-rating-modal');
+}
+
+async function saveManualRating() {
+  const playerId = manualRatingPlayerId;
+  if (!playerId) return;
+  
+  const ntrp = document.getElementById('manual-ntrp-value').value;
+  const desig = document.getElementById('manual-ntrp-designation').value;
+  const trr = document.getElementById('manual-trr-value').value;
+  const alias = document.getElementById('manual-alias').value.trim();
+  const errEl = document.getElementById('manual-rating-error');
+  errEl.style.display = 'none';
+  
+  if (!ntrp && !trr) {
+    errEl.textContent = 'Please enter at least an NTRP or TRR rating.';
+    errEl.style.display = 'flex';
+    return;
+  }
+  
+  try {
+    const dirId = currentUser?.director_id || null;
+    const clubId = currentUser?.club_id || null;
+    
+    if (ntrp) await saveRating(playerId, 'NTRP', ntrp, desig || null, true, dirId, clubId);
+    if (trr) await saveRating(playerId, 'TRR', trr, null, true, dirId, clubId);
+    if (alias) await savePlayerAlias(playerId, alias);
+    
+    toast('Rating saved!', 'success');
+    closeModal('manual-rating-modal');
+    
+    // Send notification to other directors if manual rating
+    await sendManualRatingNotification(playerId, ntrp || trr);
+    
+    // Refresh player list
+    const listId = currentUser?.role === 'admin' ? 'players-list' : 'dir-players-list';
+    loadPlayers(listId);
+  } catch(e) {
+    errEl.textContent = 'Error saving: ' + e.message;
+    errEl.style.display = 'flex';
+  }
+}
+
+function skipRating() {
+  closeModal('manual-rating-modal');
+  toast('Skipped — you can enter this rating later from the player list.', 'default');
+}
+
+// ── MULTIPLE MATCHES ────────────────────────────
+function showMultipleMatches(playerId, playerName) {
+  const result = lookupResults[playerId];
+  if (!result || !result.matches) return;
+  
+  const listEl = document.getElementById('multiple-matches-list');
+  listEl.innerHTML = result.matches.map((m, i) => `
+    <div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-weight:600;font-size:14px">${m.name}</div>
+        <div style="font-size:12px;color:var(--baseline-muted)">${m.location} ${m.ntrp ? '· NTRP ' + m.ntrp : ''}</div>
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="selectMatch('${playerId}','${playerName}',${i})">
+        This one
+      </button>
+    </div>`).join('');
+  
+  // Close multiple modal when "none" is clicked — goes to manual
+  document.querySelector('#multiple-matches-modal .btn-ghost').onclick = () => {
+    closeModal('multiple-matches-modal');
+    openManualRating(playerId, playerName);
+  };
+  
+  openModal('multiple-matches-modal');
+}
+
+async function selectMatch(playerId, playerName, matchIndex) {
+  const result = lookupResults[playerId];
+  const match = result.matches[matchIndex];
+  closeModal('multiple-matches-modal');
+  
+  toast('Fetching rating…', 'default');
+  const profileResult = await fetchPlayerProfile(match.url);
+  
+  if (profileResult.status === 'found') {
+    try {
+      const d = profileResult.data;
+      if (d.ntrpValue) await saveRating(playerId, 'NTRP', d.ntrpValue, d.ntrpDesig, false, null, null);
+      if (d.trrValue) await saveRating(playerId, 'TRR', d.trrValue, null, false, null, null);
+      // Save alias if name differs
+      if (d.playerName && d.playerName !== playerName) await savePlayerAlias(playerId, d.playerName);
+      toast(`${playerName} — rating saved!`, 'success');
+      const listId = currentUser?.role === 'admin' ? 'players-list' : 'dir-players-list';
+      loadPlayers(listId);
+    } catch(e) {
+      toast('Error saving rating', 'error');
+    }
+  } else {
+    openManualRating(playerId, playerName);
+  }
+}
+
+// ── RATING QUEUE ────────────────────────────────
+async function openRatingQueue() {
+  openModal('rating-queue-modal');
+  const body = document.getElementById('rating-queue-body');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div> Finding players needing attention…</div>';
+  
+  // Get all players with no ratings or stale ratings
+  const { data: players } = await supabaseClient
+    .from('players')
+    .select('id, roster_name, player_type, gender')
+    .eq('is_active', true)
+    .order('roster_name');
+  
+  if (!players || players.length === 0) {
+    body.innerHTML = '<div class="empty-state"><div class="empty-title">No players found</div></div>';
+    return;
+  }
+  
+  const { data: ratings } = await supabaseClient
+    .from('player_ratings')
+    .select('player_id, source, fetched_at, is_manual');
+  
+  const ratingMap = {};
+  (ratings || []).forEach(r => {
+    if (!ratingMap[r.player_id]) ratingMap[r.player_id] = [];
+    ratingMap[r.player_id].push(r);
+  });
+  
+  const needsAttention = players.filter(p => {
+    const r = ratingMap[p.id] || [];
+    if (r.length === 0) return true;
+    const primary = r.find(x => x.source === 'TRR' || x.source === 'UTR');
+    if (primary && (new Date() - new Date(primary.fetched_at)) > 365 * 24 * 60 * 60 * 1000) return true;
+    return false;
+  });
+  
+  if (needsAttention.length === 0) {
+    body.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">All players are rated!</div><div class="empty-sub">No action needed.</div></div>';
+    return;
+  }
+  
+  body.innerHTML = `
+    <div style="margin-bottom:16px">
+      <div id="lookup-progress" style="display:none"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-size:14px;color:var(--baseline-muted)">${needsAttention.length} player${needsAttention.length > 1 ? 's' : ''} need attention</div>
+        <button class="btn btn-sm btn-secondary" onclick="batchAcceptAll()">Accept All As-Is</button>
+      </div>
+    </div>
+    ${needsAttention.map(p => `
+      <div class="queue-item" data-player-id="${p.id}">
+        <div style="flex:1">
+          <div class="queue-item-name">${p.roster_name}</div>
+          <div class="queue-item-issue">${p.player_type} · ${p.gender === 'MALE' ? '♂' : '♀'} · No rating found</div>
+        </div>
+        <div class="queue-item-actions">
+          <button class="btn btn-sm btn-ghost" onclick="lookupSingleFromQueue('${p.id}','${p.roster_name}',this)">
+            🔍 Look up
+          </button>
+          <button class="btn btn-sm btn-secondary" onclick="openManualRating('${p.id}','${p.roster_name}')">
+            ✎ Enter manually
+          </button>
+        </div>
+      </div>`).join('')}`;
+}
+
+async function lookupSingleFromQueue(playerId, playerName, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Looking up…';
+  const result = await lookupPlayer(playerId, playerName, null);
+  if (result.status === 'found' || result.status === 'single_pending') {
+    btn.closest('.queue-item').style.opacity = '0.4';
+    btn.textContent = '✓ Found';
+  } else if (result.status === 'multiple') {
+    btn.disabled = false;
+    btn.textContent = '⚠ Multiple';
+    showMultipleMatches(playerId, playerName);
+  } else {
+    btn.disabled = false;
+    btn.textContent = '✕ Not found';
+    openManualRating(playerId, playerName);
+  }
+}
+
+async function retryAllLookups() {
+  const items = document.querySelectorAll('.queue-item');
+  toast(`Retrying ${items.length} lookups…`, 'default');
+  
+  for (const item of items) {
+    const playerId = item.dataset.playerId;
+    const name = item.querySelector('.queue-item-name')?.textContent;
+    if (playerId && name) {
+      const btn = item.querySelector('.btn-ghost');
+      if (btn) { btn.disabled = true; btn.textContent = 'Looking up…'; }
+      await lookupPlayer(playerId, name, null);
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  openRatingQueue(); // Refresh
+}
+
+// ── NOTIFICATIONS ───────────────────────────────
+async function sendManualRatingNotification(playerId, ratingValue) {
+  try {
+    // Get all directors who have used this player
+    const { data: eventPlayers } = await supabaseClient
+      .from('event_players')
+      .select('event_id, events(director_id)')
+      .eq('player_id', playerId);
+    
+    if (!eventPlayers || eventPlayers.length === 0) return;
+    
+    const { data: player } = await supabaseClient
+      .from('players').select('roster_name').eq('id', playerId).maybeSingle();
+    
+    const directorIds = [...new Set(
+      eventPlayers.map(ep => ep.events?.director_id).filter(Boolean)
+    )].filter(id => id !== currentUser?.director_id);
+    
+    if (directorIds.length === 0) return;
+    
+    const notifications = directorIds.map(dirId => ({
+      director_id: dirId,
+      type: 'MANUAL_RATING_ADDED',
+      payload: JSON.stringify({
+        player_id: playerId,
+        player_name: player?.roster_name || 'Unknown',
+        new_value: ratingValue,
+        club_name: currentUser?.club_name || 'Unknown Club',
+        director_name: currentUser?.director_name || 'Admin',
+        date: new Date().toISOString()
+      })
+    }));
+    
+    await supabaseClient.from('notifications').insert(notifications);
+  } catch(e) { console.log('Notification send failed:', e); }
+}
+
+// ── TOGGLE AUTO LOOKUP ──────────────────────────
+async function saveLookupStates() {
+  const val = document.getElementById('lookup-states-input').value.trim();
+  if (!val) return;
+  await supabaseClient.from('app_settings')
+    .upsert({ key: 'lookup_states', value: val });
+  LOOKUP_STATES = val.split(',').map(x => x.trim());
+  toast('Lookup states saved!', 'success');
+}
+
+async function toggleAutoLookup(enabled) {
+  await supabaseClient.from('app_settings')
+    .upsert({ key: 'auto_lookup_enabled', value: enabled ? 'true' : 'false' });
+  AUTO_LOOKUP_ENABLED = enabled;
+  toast(`Auto-lookup ${enabled ? 'enabled' : 'disabled'}.`, 'success');
 }
 
 // ═══════════════════════════════════════════════
