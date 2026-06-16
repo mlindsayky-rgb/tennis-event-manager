@@ -1023,12 +1023,15 @@ async function setupApp() {
     const { error } = await supabaseClient.from('admin_config').select('id').limit(1);
     if (error && error.code !== 'PGRST116') throw error;
 
-    // Hash PIN and save admin config
-    const hash = await hashPin(pin);
-    const { error: insertErr } = await supabaseClient
-      .from('admin_config')
-      .upsert({ pin_hash: hash }, { onConflict: 'id' });
-    if (insertErr) throw insertErr;
+    // Check if admin PIN already exists — don't overwrite if it does
+    const { data: existingAdmin } = await supabaseClient.from('admin_config').select('id').limit(1);
+    if (!existingAdmin || existingAdmin.length === 0) {
+      // No PIN set yet — create one
+      const hash = await hashPin(pin);
+      const { error: insertErr } = await supabaseClient.from('admin_config').insert({ pin_hash: hash });
+      if (insertErr) throw insertErr;
+    }
+    // If PIN already exists, just save credentials and proceed to PIN screen
 
     saveConfig({ url, key });
     document.getElementById('setup-modal').style.display = 'none';
