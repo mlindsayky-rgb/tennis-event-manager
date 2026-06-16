@@ -1548,17 +1548,13 @@ async function saveDirector() {
   if (pin !== pinConfirm) { errEl.textContent = 'PINs do not match.'; errEl.style.display = 'flex'; return; }
 
   try {
-    // Create anonymous Supabase auth user for this director
-    const { data: authData, error: authError } = await supabaseClient.auth.signUp({
-      email: `director_${Date.now()}@tem.internal`,
-      password: crypto.randomUUID()
-    });
-    if (authError) throw authError;
-
+    // Phase 1: Insert director with placeholder auth uid
+    // Real Supabase Auth user created in Phase 3 with Edge Functions
     const hash = await hashPin(pin);
+    const placeholderUid = crypto.randomUUID();
     const { error } = await supabaseClient.from('directors').insert({
       name, club_id: clubId, pin_hash: hash,
-      supabase_auth_uid: authData.user.id
+      supabase_auth_uid: placeholderUid
     });
     if (error) throw error;
 
