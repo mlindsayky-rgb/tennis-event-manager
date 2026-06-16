@@ -988,8 +988,18 @@ const CONFIG_KEY = 'tem_config';
 let supabaseClient = null;
 let currentUser = null; // { role: 'admin'|'director', director_id, club_id, club_name, director_name }
 
+// HARDCODED CREDENTIALS — no setup screen needed
+const HARDCODED_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
+const HARDCODED_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
+
 function getConfig() {
-  try { return JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}'); } catch { return {}; }
+  const stored = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
+  // Always fall back to hardcoded values if not in localStorage
+  return {
+    url: stored.url || HARDCODED_URL,
+    key: stored.key || HARDCODED_KEY,
+    ...stored
+  };
 }
 function saveConfig(data) {
   localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...getConfig(), ...data }));
