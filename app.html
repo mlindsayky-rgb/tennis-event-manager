@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="app_files/supabase.min.js"></script>
+<script src="app_files/supabase.js"></script>
 <style>
 :root {
   --court-green: #1B5E20;
@@ -993,7 +993,7 @@ function initSupabase() {
   const cfg = getConfig();
   if (!cfg.url || !cfg.key) return false;
   try {
-    const { createClient } = window.supabase; supabaseClient = createClient(cfg.url, cfg.key);
+    if (!window.supabase) throw new Error("Supabase library failed to load"); const { createClient } = window.supabase; supabaseClient = createClient(cfg.url, cfg.key);
     return true;
   } catch(e) { return false; }
 }
@@ -1015,7 +1015,7 @@ async function setupApp() {
   if (pin !== pinConfirm) return showSetupError('PINs do not match.');
 
   try {
-    const { createClient: createClient2 } = window.supabase; supabaseClient = createClient2(url, key);
+    if (!window.supabase) throw new Error("Supabase library failed to load"); const { createClient: createClient2 } = window.supabase; supabaseClient = createClient2(url, key);
     // Test connection
     const { error } = await supabaseClient.from('admin_config').select('id').limit(1);
     if (error && error.code !== 'PGRST116') throw error;
