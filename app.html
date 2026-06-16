@@ -945,7 +945,7 @@ body { background: var(--court-green-ghost); color: var(--baseline); min-height:
 <div id="toast-container"></div>
 
 <!-- SETUP PROMPT (shown if no Supabase config) -->
-<div class="modal-overlay" id="setup-modal" style="display: flex; opacity: 1; pointer-events: all; background: rgba(27, 94, 32, 0.95);">
+<div class="modal-overlay" id="setup-modal" style="display:none;opacity:1;pointer-events:all;background:rgba(27,94,32,0.95)">
   <div class="modal" style="max-width:560px">
     <div class="modal-body" style="text-align:center;padding:40px">
       <div style="font-size:52px;margin-bottom:16px">🎾</div>
@@ -1799,6 +1799,13 @@ function resetConnection() {
 // APP INIT
 // ═══════════════════════════════════════════════
 async function init() {
+  // Wait for ESM module to load before initializing
+  let attempts = 0;
+  while (!window._supabaseCreateClient && attempts < 20) {
+    await new Promise(r => setTimeout(r, 100));
+    attempts++;
+  }
+  
   const ok = initSupabase();
   if (!ok) {
     // No saved credentials — show setup
@@ -1806,7 +1813,6 @@ async function init() {
     return;
   }
   // Credentials exist — go straight to PIN screen
-  // Setup screen never appears again on this device
   showScreen('pin-screen');
 }
 
