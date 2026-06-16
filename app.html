@@ -576,11 +576,17 @@ body { background: var(--court-green-ghost); color: var(--baseline); min-height:
         <div class="card">
           <div class="card-header"><div class="card-title">System Info</div></div>
           <div class="card-body">
-            <div style="font-size:13px;color:var(--baseline-muted);line-height:2">
+            <div style="font-size:13px;color:var(--baseline-muted);line-height:2;margin-bottom:16px">
               <div><strong>Version:</strong> 1.0.0 — Phase 1</div>
               <div><strong>Schema:</strong> v5.0</div>
               <div><strong>Tables:</strong> 20</div>
               <div><strong>Enums:</strong> 21</div>
+              <div><strong>App URL:</strong> mlindsayky-rgb.github.io/tennis-event-manager/app.html</div>
+            </div>
+            <div style="border-top:1px solid var(--border);padding-top:16px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px">Reset Connection</div>
+              <div style="font-size:12px;color:var(--baseline-muted);margin-bottom:12px">Only use this if you need to reconnect to a different Supabase project. You will need your URL and anon key.</div>
+              <button class="btn btn-danger btn-sm" onclick="resetConnection()">Reset &amp; Reconnect</button>
             </div>
           </div>
         </div>
@@ -1770,29 +1776,27 @@ function toast(msg, type = 'default') {
 }
 
 // ═══════════════════════════════════════════════
+// RESET CONNECTION
+// ═══════════════════════════════════════════════
+function resetConnection() {
+  if (confirm('This will clear your saved connection and require you to re-enter your Supabase URL and key. Continue?')) {
+    localStorage.removeItem('tem_config');
+    location.reload();
+  }
+}
+
+// ═══════════════════════════════════════════════
 // APP INIT
 // ═══════════════════════════════════════════════
 async function init() {
   const ok = initSupabase();
   if (!ok) {
-    // Show setup modal
+    // No saved credentials — show setup
     document.getElementById('setup-modal').style.display = 'flex';
     return;
   }
-
-  // Check if admin config exists
-  const { data, error } = await supabaseClient.from('admin_config').select('id').limit(1);
-  if (error || !data || data.length === 0) {
-    document.getElementById('setup-modal').style.display = 'flex';
-    return;
-  }
-
-  // Check for saved session
-  const cfg = getConfig();
-  if (cfg.lastRole === 'admin') {
-    // Still require PIN — don't auto-login
-  }
-
+  // Credentials exist — go straight to PIN screen
+  // Setup screen never appears again on this device
   showScreen('pin-screen');
 }
 
