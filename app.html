@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
+<script src="app_files/xlsx.full.min_Z6UB.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -282,7 +283,10 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
     <div id="tab-players" style="display:none">
       <div class="section-header">
         <div><div class="section-title">Player Database</div><div class="section-sub">Global pool — shared across all clubs</div></div>
-        <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary" onclick="openModal('xlsx-import-modal')">↑ Import xlsx</button>
+          <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        </div>
       </div>
       <div style="margin-bottom:16px">
         <input class="form-input" type="text" placeholder="Search players by name…" oninput="searchPlayers(this.value,'players-list')" style="max-width:360px">
@@ -373,7 +377,10 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
     <div id="dir-tab-players" style="display:none">
       <div class="section-header">
         <div><div class="section-title">Players</div><div class="section-sub">Global pool — add anytime</div></div>
-        <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary" onclick="openModal('xlsx-import-modal')">↑ Import xlsx</button>
+          <button class="btn btn-primary" onclick="openModal('player-modal')">+ Add Player</button>
+        </div>
       </div>
       <div style="margin-bottom:16px">
         <input class="form-input" type="text" placeholder="Search players…" oninput="searchPlayers(this.value,'dir-players-list')" style="max-width:360px">
@@ -561,6 +568,13 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
         </div>
       </div>
       <div class="form-group"><label class="form-label">TRR (Estimated Dynamic Rating)</label><input class="form-input" id="manual-trr-value" placeholder="e.g. 4.2067" type="number" step="0.0001" min="1" max="7"><div class="form-hint">Found under "Estimated Dynamic Rating" on TennisRecord.com</div></div>
+      <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--mid);margin-bottom:12px">Junior Ratings (if applicable)</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">UTR Rating</label><input class="form-input" id="manual-utr-value" placeholder="e.g. 7.45" type="number" step="0.01" min="1" max="16"><div class="form-hint">From app.utrsports.net</div></div>
+          <div class="form-group"><label class="form-label">WTN Rating</label><input class="form-input" id="manual-wtn-value" placeholder="e.g. 12" type="number" step="0.1" min="1" max="40"><div class="form-hint">From World Tennis Number</div></div>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Alternate Name on TennisRecord</label><input class="form-input" id="manual-alias" placeholder="If name differs from roster name"><div class="form-hint">Saved for future auto-lookups</div></div>
       <div id="manual-rating-error" class="alert alert-error" style="display:none"></div>
     </div>
@@ -586,6 +600,46 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
   </div>
 </div>
 
+<!-- RATING REVIEW QUEUE MODAL -->
+<div class="modal-overlay" id="rating-queue-modal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header"><div class="modal-title">⚡ Rating Review Queue</div><button class="modal-close" onclick="closeModal('rating-queue-modal')">×</button></div>
+    <div class="modal-body" id="rating-queue-body"><div class="loading"><div class="spinner"></div> Scanning player database…</div></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('rating-queue-modal')">Close</button>
+      <button class="btn btn-primary" id="queue-retry-all-btn" onclick="retryAllInQueue()">Retry All</button>
+    </div>
+  </div>
+</div>
+
+<!-- XLSX IMPORT MODAL -->
+<div class="modal-overlay" id="xlsx-import-modal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header"><div class="modal-title">Import Players from Spreadsheet</div><button class="modal-close" onclick="closeModal('xlsx-import-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="margin-bottom:16px">
+        Upload an .xlsx file with columns: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Gender</strong> (M/F), <strong>Type</strong> (AD/JR). Column order and exact header names don't matter much — the importer will try to match them.
+      </div>
+      <div class="form-group">
+        <label class="form-label">Choose File</label>
+        <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" class="form-input" style="padding:8px">
+      </div>
+      <div id="xlsx-preview" style="display:none;margin-top:16px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Preview — <span id="xlsx-row-count">0</span> players found</div>
+        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)">
+          <table class="data-table" id="xlsx-preview-table" style="margin:0"></table>
+        </div>
+      </div>
+      <div id="xlsx-error" class="alert alert-error" style="display:none;margin-top:12px"></div>
+      <div id="xlsx-progress" style="display:none;margin-top:16px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('xlsx-import-modal')">Cancel</button>
+      <button class="btn btn-primary" id="xlsx-import-btn" onclick="runXlsxImport()" style="display:none">Import &amp; Look Up Ratings</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast-container"></div>
 
@@ -594,7 +648,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -884,11 +938,11 @@ async function loadPlayers(containerId) {
         const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],primary=trr||utr;
         const stale=primary&&(new Date()-new Date(primary.fetched_at))>365*24*60*60*1000;
         let status;
-        if(stale) status=`<span class="lookup-status stale" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}')">⚑ Stale</span>`;
+        if(stale) status=`<span class="lookup-status stale" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">⚑ Stale</span>`;
         else if(primary?.is_manual) status=`<span class="lookup-status manual">✎ Manual</span>`;
         else if(primary) status=`<span class="lookup-status found">✓ Rated</span>`;
-        else status=`<span class="lookup-status not-found" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}')">No rating</span>`;
-        return `<tr data-pid="${p.id}" data-pname="${escQ(p.roster_name)}">
+        else status=`<span class="lookup-status not-found" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">No rating</span>`;
+        return `<tr data-pid="${p.id}" data-pname="${escQ(p.roster_name)}" data-ptype="${p.player_type}">
           <td><strong>${p.roster_name}</strong>${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}</td>
           <td><span class="badge ${p.player_type==='AD'?'badge-blue':'badge-gold'}">${p.player_type}</span></td>
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
@@ -1121,7 +1175,7 @@ function lookupRow(btn) {
 }
 function manualRow(btn) {
   const row=btn.closest('tr');
-  openManualEntry(row.dataset.pid, row.dataset.pname);
+  openManualEntry(row.dataset.pid, row.dataset.pname, row.dataset.ptype);
 }
 
 async function doLookup(playerId, playerName, rowEl) {
@@ -1216,7 +1270,7 @@ function setRowStatus(row,status,data,pid,pname) {
   if(status==='searching') sc.innerHTML='<span class="lookup-status searching"><span class="spinner-sm"></span> Looking up…</span>';
   else if(status==='found') { sc.innerHTML='<span class="lookup-status found">✓ Rated</span>'; if(data){const nc=row.querySelector('.nc'),tc=row.querySelector('.tc');if(nc&&data.ntrpValue)nc.textContent=data.ntrpValue+(data.ntrpDesig?' '+data.ntrpDesig:'');if(tc&&data.trrValue)tc.textContent=parseFloat(data.trrValue).toFixed(4);} toast('Rating found!','success'); }
   else if(status==='multiple') sc.innerHTML=`<span class="lookup-status multiple" onclick="showMatches('${pid}','${escQ(pname)}')">⚠ Multiple — click</span>`;
-  else if(status==='not-found') sc.innerHTML=`<span class="lookup-status not-found" onclick="openManualEntry('${pid}','${escQ(pname)}')">✕ Not found</span>`;
+  else if(status==='not-found') sc.innerHTML=`<span class="lookup-status not-found" onclick="openManualEntry('${pid}','${escQ(pname)}','${row.dataset.ptype||''}')">✕ Not found</span>`;
 }
 
 function showMatches(pid,pname) {
@@ -1265,14 +1319,16 @@ async function bulkLookup(containerId) {
 }
 
 // ── MANUAL ENTRY ──
-function openManualEntry(pid,pname) {
+function openManualEntry(pid,pname,ptype) {
   if(!pid){toast('Error: no player selected','error');return;}
   document.getElementById('manual-player-id').value = pid;
   document.getElementById('manual-rating-title').textContent = `Enter Rating — ${pname}`;
-  ['manual-ntrp-value','manual-ntrp-designation','manual-alias'].forEach(id=>document.getElementById(id).value='');
+  ['manual-ntrp-value','manual-ntrp-designation','manual-alias','manual-utr-value','manual-wtn-value'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('manual-trr-value').value='';
   document.getElementById('manual-rating-error').style.display='none';
-  document.getElementById('manual-trr-link-wrap').innerHTML=`<a class="trr-link" href="https://www.tennisrecord.com/adult/search.aspx" target="_blank">🔍 Search "${pname}" on TennisRecord.com</a>`;
+  const links = [`<a class="trr-link" href="https://www.tennisrecord.com/adult/search.aspx" target="_blank">🔍 Search "${pname}" on TennisRecord.com</a>`];
+  if(ptype==='JR') links.push(`<a class="trr-link" href="https://app.utrsports.net/search?type=players&query=${encodeURIComponent(pname)}" target="_blank" style="margin-left:8px">🔍 Search on UTR Sports</a>`);
+  document.getElementById('manual-trr-link-wrap').innerHTML = links.join('');
   openModal('manual-rating-modal');
 }
 
@@ -1282,16 +1338,21 @@ async function saveManualRating() {
   const ntrp=document.getElementById('manual-ntrp-value').value;
   const desig=document.getElementById('manual-ntrp-designation').value;
   const trr=document.getElementById('manual-trr-value').value;
+  const utr=document.getElementById('manual-utr-value').value;
+  const wtn=document.getElementById('manual-wtn-value').value;
   const alias=document.getElementById('manual-alias').value.trim();
   const errEl=document.getElementById('manual-rating-error');
   errEl.style.display='none';
-  if(!ntrp&&!trr){errEl.textContent='Enter at least one rating.';errEl.style.display='flex';return;}
+  if(!ntrp&&!trr&&!utr&&!wtn){errEl.textContent='Enter at least one rating.';errEl.style.display='flex';return;}
   try {
     const rows=[];
     const dirId=currentUser?.director_id||null;
     const clubId=currentUser?.club_id||null;
-    if(ntrp) rows.push({player_id:pid,source:'NTRP',value:parseFloat(ntrp),designation:desig||null,is_manual:true,fetched_at:new Date().toISOString(),...(dirId?{manual_by_director_id:dirId}:{}),...(clubId?{manual_by_club_id:clubId}:{})});
-    if(trr) rows.push({player_id:pid,source:'TRR',value:parseFloat(trr),is_manual:true,fetched_at:new Date().toISOString(),...(dirId?{manual_by_director_id:dirId}:{}),...(clubId?{manual_by_club_id:clubId}:{})});
+    const base={is_manual:true,fetched_at:new Date().toISOString(),...(dirId?{manual_by_director_id:dirId}:{}),...(clubId?{manual_by_club_id:clubId}:{})};
+    if(ntrp) rows.push({player_id:pid,source:'NTRP',value:parseFloat(ntrp),designation:desig||null,...base});
+    if(trr) rows.push({player_id:pid,source:'TRR',value:parseFloat(trr),...base});
+    if(utr) rows.push({player_id:pid,source:'UTR',value:parseFloat(utr),...base});
+    if(wtn) rows.push({player_id:pid,source:'WTN',value:parseFloat(wtn),...base});
     if(rows.length) await sb.from('player_ratings').insert(rows);
     if(alias){const {data:pl}=await sb.from('players').select('alias_memory').eq('id',pid).single();const ex=pl?.alias_memory||[];if(!ex.includes(alias))await sb.from('players').update({alias_memory:[...ex,alias]}).eq('id',pid);}
     toast('Rating saved!','success');
@@ -1302,7 +1363,215 @@ async function saveManualRating() {
 
 function skipRating(){closeModal('manual-rating-modal');toast('Skipped — enter later from player list.','default');}
 
-async function openRatingQueue(){toast('Rating queue — coming in full Phase 2 build','default');}
+// ══════════════════════════════════════════════
+// RATING REVIEW QUEUE — full implementation
+// ══════════════════════════════════════════════
+let queuePlayers = [];
+
+async function openRatingQueue() {
+  openModal('rating-queue-modal');
+  const body = document.getElementById('rating-queue-body');
+  body.innerHTML = '<div class="loading"><div class="spinner"></div> Scanning player database…</div>';
+
+  const {data: players} = await sb.from('players').select('id,roster_name,player_type,gender,alias_memory').eq('is_active',true).order('roster_name');
+  if(!players?.length){body.innerHTML='<div class="empty-state"><div class="empty-title">No players in database</div></div>';return;}
+
+  const {data: ratings} = await sb.from('player_ratings').select('player_id,source,fetched_at,is_manual');
+  const rm = {};
+  (ratings||[]).forEach(r=>{
+    if(!rm[r.player_id]) rm[r.player_id]=[];
+    rm[r.player_id].push(r);
+  });
+
+  const STALE_MS = 365*24*60*60*1000;
+  queuePlayers = players.filter(p=>{
+    const r = rm[p.id]||[];
+    if(!r.length) return true;
+    const primary = r.find(x=>x.source==='TRR'||x.source==='UTR');
+    if(!primary) return true; // has some rating but not the primary kind
+    if((new Date()-new Date(primary.fetched_at))>STALE_MS) return true;
+    return false;
+  });
+
+  if(!queuePlayers.length){
+    body.innerHTML='<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">All players are rated!</div><div class="empty-sub">No action needed right now.</div></div>';
+    document.getElementById('queue-retry-all-btn').style.display='none';
+    return;
+  }
+
+  document.getElementById('queue-retry-all-btn').style.display='inline-block';
+  renderQueue();
+}
+
+function renderQueue() {
+  const body = document.getElementById('rating-queue-body');
+  body.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:14px;color:var(--muted)"><strong>${queuePlayers.length}</strong> player${queuePlayers.length>1?'s':''} need attention</div>
+    </div>
+    <div id="queue-progress" style="display:none;margin-bottom:12px"></div>
+    ${queuePlayers.map(p=>`
+      <div class="queue-item" data-pid="${p.id}" data-pname="${escQ(p.roster_name)}" data-ptype="${p.player_type}" style="padding:14px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:16px">
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:14px">${p.roster_name}</div>
+          <div style="font-size:12px;color:var(--muted)">${p.player_type} · ${p.gender==='MALE'?'♂':'♀'} · No current rating</div>
+        </div>
+        <div style="display:flex;gap:8px" class="queue-item-actions">
+          <button class="btn btn-sm btn-ghost" onclick="queueLookup(this)">🔍 Look up</button>
+          <button class="btn btn-sm btn-secondary" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">✎ Manual</button>
+        </div>
+      </div>`).join('')}`;
+}
+
+async function queueLookup(btn) {
+  const item = btn.closest('.queue-item');
+  const pid=item.dataset.pid, pname=item.dataset.pname;
+  btn.disabled=true; btn.textContent='Looking up…';
+  await doLookup(pid, pname, null);
+  const r = lookupCache[pid];
+  if(r?.status==='found'||r?.status==='single_pending'){
+    item.style.opacity='0.4';
+    btn.textContent='✓ Found';
+    queuePlayers = queuePlayers.filter(p=>p.id!==pid);
+  } else if(r?.status==='multiple'){
+    btn.disabled=false; btn.textContent='⚠ Multiple';
+    showMatches(pid,pname);
+  } else {
+    btn.disabled=false; btn.textContent='✕ Not found';
+  }
+}
+
+async function retryAllInQueue() {
+  const items = Array.from(document.querySelectorAll('.queue-item'));
+  if(!items.length) return;
+  const pgEl = document.getElementById('queue-progress');
+  pgEl.style.display='block';
+  let done=0;
+  for(const item of items){
+    const pid=item.dataset.pid, pname=item.dataset.pname;
+    pgEl.innerHTML=`<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Retrying ${done+1} of ${items.length}…</div><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${Math.round((done/items.length)*100)}%"></div></div>`;
+    const btn = item.querySelector('.btn-ghost');
+    if(btn){btn.disabled=true;btn.textContent='Looking up…';}
+    await doLookup(pid,pname,null);
+    await delay(600);
+    done++;
+  }
+  pgEl.innerHTML = `<div style="font-size:13px;color:var(--green)">✓ Retry complete</div>`;
+  setTimeout(()=>openRatingQueue(), 1500);
+}
+
+// ══════════════════════════════════════════════
+// XLSX IMPORT
+// ══════════════════════════════════════════════
+let xlsxParsedRows = [];
+
+document.getElementById('xlsx-file-input').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if(!file) return;
+  const errEl = document.getElementById('xlsx-error');
+  errEl.style.display='none';
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    try {
+      const wb = XLSX.read(evt.target.result, {type:'array'});
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
+      if(!rows.length) throw new Error('No rows found in spreadsheet');
+      xlsxParsedRows = rows.map(parseXlsxRow).filter(r=>r.firstName && r.lastName);
+      if(!xlsxParsedRows.length) throw new Error('Could not find First Name / Last Name columns. Check your headers.');
+      renderXlsxPreview();
+    } catch(err) {
+      errEl.textContent = 'Error reading file: ' + err.message;
+      errEl.style.display='flex';
+      document.getElementById('xlsx-preview').style.display='none';
+      document.getElementById('xlsx-import-btn').style.display='none';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+
+function parseXlsxRow(row) {
+  // Flexible column matching — look for common header variations
+  const keys = Object.keys(row);
+  const findCol = (patterns) => {
+    for(const pattern of patterns){
+      const k = keys.find(k => k.toLowerCase().replace(/[^a-z]/g,'').includes(pattern));
+      if(k) return row[k];
+    }
+    return '';
+  };
+  let firstName = findCol(['firstname','first','fname']);
+  let lastName = findCol(['lastname','last','lname']);
+  // Handle single "Name" column as fallback
+  if(!firstName && !lastName){
+    const fullName = findCol(['name','player','playername']);
+    if(fullName){
+      const parts = String(fullName).trim().split(' ');
+      firstName = parts[0]; lastName = parts.slice(1).join(' ');
+    }
+  }
+  let genderRaw = String(findCol(['gender','sex'])).trim().toUpperCase();
+  let gender = genderRaw.startsWith('M') ? 'MALE' : genderRaw.startsWith('F') ? 'FEMALE' : '';
+  let typeRaw = String(findCol(['type','playertype','category'])).trim().toUpperCase();
+  let type = typeRaw.startsWith('J') ? 'JR' : 'AD'; // default to AD
+  return { firstName: String(firstName).trim(), lastName: String(lastName).trim(), gender, type };
+}
+
+function renderXlsxPreview() {
+  document.getElementById('xlsx-row-count').textContent = xlsxParsedRows.length;
+  document.getElementById('xlsx-preview').style.display = 'block';
+  document.getElementById('xlsx-import-btn').style.display = 'inline-block';
+  const table = document.getElementById('xlsx-preview-table');
+  table.innerHTML = `<thead><tr><th>Name</th><th>Gender</th><th>Type</th></tr></thead><tbody>
+    ${xlsxParsedRows.slice(0,50).map(r=>`<tr><td>${r.firstName} ${r.lastName}</td><td>${r.gender||'<span style="color:var(--clay)">missing</span>'}</td><td>${r.type}</td></tr>`).join('')}
+  </tbody>`;
+}
+
+async function runXlsxImport() {
+  if(!xlsxParsedRows.length) return;
+  const btn = document.getElementById('xlsx-import-btn');
+  btn.disabled = true; btn.textContent = 'Importing…';
+  const pgEl = document.getElementById('xlsx-progress');
+  pgEl.style.display='block';
+
+  let imported=0, skipped=0;
+  const insertedPlayers = [];
+
+  for(let i=0;i<xlsxParsedRows.length;i++){
+    const r = xlsxParsedRows[i];
+    pgEl.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Importing ${i+1} of ${xlsxParsedRows.length}…</div><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${Math.round((i/xlsxParsedRows.length)*100)}%"></div></div>`;
+    if(!r.gender){ skipped++; continue; }
+    try {
+      const {data,error} = await sb.from('players').insert({
+        roster_name: `${r.firstName} ${r.lastName}`,
+        gender: r.gender, player_type: r.type
+      }).select().single();
+      if(error) { skipped++; continue; }
+      insertedPlayers.push(data);
+      imported++;
+    } catch(e){ skipped++; }
+  }
+
+  pgEl.innerHTML = `<div style="font-size:13px;color:var(--green)">✓ Imported ${imported} players${skipped?`, skipped ${skipped} (missing gender or duplicate)`:''}</div>`;
+  toast(`Imported ${imported} players!`,'success');
+
+  setTimeout(async () => {
+    closeModal('xlsx-import-modal');
+    document.getElementById('xlsx-file-input').value='';
+    document.getElementById('xlsx-preview').style.display='none';
+    document.getElementById('xlsx-progress').style.display='none';
+    btn.style.display='none';
+    xlsxParsedRows=[];
+    const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+    await loadPlayers(lid);
+    if(AUTO_LOOKUP && insertedPlayers.length){
+      toast(`Looking up ratings for ${insertedPlayers.length} new players…`,'default');
+      bulkLookup(lid);
+    }
+  }, 1500);
+}
+
+
 
 // ══════════════════════════════════════════════
 // ADMIN SETTINGS
