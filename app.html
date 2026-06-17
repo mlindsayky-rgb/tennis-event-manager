@@ -5,20 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
 <script>
-// Load Supabase via dynamic import — runs after page loads
+// Load Supabase via dynamic import
 window._supabaseReady = false;
-window.addEventListener('DOMContentLoaded', async () => {
+async function loadSupabase() {
   try {
     const mod = await import('https://esm.sh/@supabase/supabase-js@2.39.3');
     window._supabaseCreateClient = mod.createClient;
     window._supabaseReady = true;
-    // Trigger init now that library is ready
     if (window._pendingInit) window._pendingInit();
   } catch(e) {
     console.error('Failed to load Supabase:', e);
-    document.getElementById('setup-modal').style.display = 'flex';
   }
-});
+}
+loadSupabase();
 </script>
 <style>
 :root {
@@ -1152,7 +1151,7 @@ instead.</div>
       <div style="text-align:left">
         <div class="form-group">
           <label class="form-label">Supabase Project URL <span class="required">*</span></label>
-          <input class="form-input" id="setup-url" placeholder="https://xxxxxxxxxxxx.supabase.co">
+          <input class="form-input" id="setup-url" placeholder="https://xxxxxxxxxxxx.supabase.co" value="https://vrnvhrruvzcnslvceacn.supabase.co">
         </div>
         <div class="form-group">
           <label class="form-label">Supabase Anon Key <span class="required">*</span></label>
@@ -1185,7 +1184,7 @@ let currentUser = null; // { role: 'admin'|'director', director_id, club_id, clu
 
 // HARDCODED CREDENTIALS — no setup screen needed
 const HARDCODED_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const HARDCODED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const HARDCODED_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 function getConfig() {
   const stored = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
@@ -1207,7 +1206,7 @@ function initSupabase() {
   const cfg = getConfig();
   if (!cfg.url || !cfg.key) return false;
   // Don't fail if key is still placeholder
-  if (cfg.key === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') return false;
+  if (cfg.key === 'REPLACE_WITH_YOUR_ANON_KEY') return false;
   try {
     if (!window._supabaseCreateClient) return false; // Library not ready yet — init() will retry
     supabaseClient = window._supabaseCreateClient(cfg.url, cfg.key);
@@ -2729,29 +2728,57 @@ function resetConnection() {
 // APP INIT
 // ═══════════════════════════════════════════════
 async function init() {
-  // If Supabase library not ready yet, register as pending
+  // Wait for library with timeout
+  let waited = 0;
+  while (!window._supabaseReady && waited < 5000) {
+    await new Promise(r => setTimeout(r, 50));
+    waited += 50;
+  }
+
   if (!window._supabaseReady) {
-    window._pendingInit = init;
+    console.error('Supabase library timeout');
+    showSetupWithAutoFill();
     return;
   }
+
+  // Try hardcoded credentials first
+  const url = HARDCODED_URL;
+  const key = HARDCODED_KEY;
   
-  const ok = initSupabase();
-  if (!ok) {
-    const stored = JSON.parse(localStorage.getItem('tem_config') || '{}');
-    if (stored.url && stored.key && stored.key !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') {
-      try {
-        supabaseClient = window._supabaseCreateClient(stored.url, stored.key);
-        showScreen('pin-screen');
-        return;
-      } catch(e) { console.log('Init with stored creds failed:', e); }
-    }
-    document.getElementById('setup-modal').style.display = 'flex';
-    return;
+  if (url && key && key !== 'REPLACE_WITH_YOUR_ANON_KEY') {
+    try {
+      supabaseClient = window._supabaseCreateClient(url, key);
+      // Save to localStorage for future
+      saveConfig({ url, key });
+      showScreen('pin-screen');
+      return;
+    } catch(e) { console.log('Hardcoded creds failed:', e); }
   }
-  showScreen('pin-screen');
+
+  // Try localStorage
+  const stored = JSON.parse(localStorage.getItem('tem_config') || '{}');
+  if (stored.url && stored.key && stored.key !== 'REPLACE_WITH_YOUR_ANON_KEY') {
+    try {
+      supabaseClient = window._supabaseCreateClient(stored.url, stored.key);
+      showScreen('pin-screen');
+      return;
+    } catch(e) { console.log('Stored creds failed:', e); }
+  }
+
+  // No valid credentials found — show setup
+  showSetupWithAutoFill();
 }
 
-// Run init — if library not ready it will wait via _pendingInit callback
+function showSetupWithAutoFill() {
+  const modal = document.getElementById('setup-modal');
+  modal.style.display = 'flex';
+  // Auto-fill URL if hardcoded
+  if (HARDCODED_URL) {
+    const urlEl = document.getElementById('setup-url');
+    if (urlEl) urlEl.value = HARDCODED_URL;
+  }
+}
+
 init();
 </script>
 
