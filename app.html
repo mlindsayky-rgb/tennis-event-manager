@@ -192,17 +192,18 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 <body>
 
 <!-- ══ CONNECTING SCREEN ══ -->
-<div id="connecting-screen" class="screen active" style="align-items:center;justify-content:center;background:linear-gradient(160deg,var(--green) 0%,var(--green-mid) 60%,#1a3a1a 100%)">
+<div id="connecting-screen" class="screen" style="align-items:center;justify-content:center;background:linear-gradient(160deg,var(--green) 0%,var(--green-mid) 60%,#1a3a1a 100%)">
   <div style="text-align:center;color:white">
     <div style="font-size:52px;margin-bottom:16px">🎾</div>
     <div style="font-size:22px;font-weight:700;margin-bottom:8px">Tennis Event Manager</div>
-    <div style="font-size:14px;opacity:.75;margin-bottom:24px">Connecting…</div>
-    <div style="width:40px;height:40px;border:3px solid rgba(255,255,255,.3);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto"></div>
+    <div id="connecting-status" style="font-size:14px;opacity:.75;margin-bottom:24px">Connecting…</div>
+    <div id="connecting-spinner" style="width:40px;height:40px;border:3px solid rgba(255,255,255,.3);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;margin:0 auto"></div>
+    <button id="connecting-retry" onclick="location.reload()" style="display:none;margin-top:20px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:white;padding:10px 24px;border-radius:8px;font-size:14px;cursor:pointer">Retry</button>
   </div>
 </div>
 
 <!-- ══ PIN SCREEN ══ -->
-<div id="pin-screen" class="screen">
+<div id="pin-screen" class="screen active">
   <div style="flex:1;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,var(--green) 0%,var(--green-mid) 60%,#1a3a1a 100%)">
     <div class="pin-card">
       <div class="pin-logo">🎾</div>
@@ -593,7 +594,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -604,17 +605,34 @@ let LOOKUP_STATES = ['KY','IN'];
 // BOOT — load Supabase then go to PIN
 // ══════════════════════════════════════════════
 (async function boot() {
+  let mod;
   try {
-    const mod = await import('https://esm.sh/@supabase/supabase-js@2.39.3');
+    mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  } catch(e1) {
+    console.log('jsDelivr failed, trying esm.sh fallback:', e1.message);
+    try {
+      mod = await import('https://esm.sh/@supabase/supabase-js@2.39.3');
+    } catch(e2) {
+      console.error('Both CDNs failed:', e2.message);
+      showConnectError('Connection failed. Check your internet and retry.');
+      return;
+    }
+  }
+  try {
     sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY);
     await loadSettings();
     showScreen('pin-screen');
   } catch(e) {
     console.error('Boot failed:', e);
-    // Show error on connecting screen
-    document.querySelector('#connecting-screen div div:nth-child(3)').textContent = 'Connection failed. Please refresh.';
+    showConnectError('Connection failed. Please retry.');
   }
 })();
+
+function showConnectError(msg) {
+  document.getElementById('connecting-status').textContent = msg;
+  document.getElementById('connecting-spinner').style.display = 'none';
+  document.getElementById('connecting-retry').style.display = 'inline-block';
+}
 
 // ══════════════════════════════════════════════
 // SETTINGS
@@ -875,7 +893,7 @@ async function loadPlayers(containerId) {
           <td><span class="badge ${p.player_type==='AD'?'badge-blue':'badge-gold'}">${p.player_type}</span></td>
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
           <td class="nc">${ntrp?`${parseFloat(ntrp.value).toFixed(1)}<span style="color:var(--muted);font-size:11px"> ${ntrp.designation||''}</span>`:'—'}</td>
-          <td class="tc">${primary?`${parseFloat(primary.value).toFixed(4)}${primary.is_manual?' <span class="badge badge-gold" style="font-size:10px;padding:1px 6px">M</span>':''}':'<span style="color:var(--ghost)">—</span>'}</td>
+          <td class="tc">${primary?`${parseFloat(primary.value).toFixed(4)}${primary.is_manual?' <span class="badge badge-gold" style="font-size:10px;padding:1px 6px">M</span>':''}`:'<span style="color:var(--ghost)">—</span>'}</td>
           <td class="sc">${status}</td>
           <td><div style="display:flex;gap:4px">
             <button class="btn btn-sm btn-ghost" onclick="lookupRow(this)" title="Look up">🔍</button>
