@@ -4,9 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script type="module">
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
-window._supabaseCreateClient = createClient;
+<script>
+// Load Supabase via dynamic import — runs after page loads
+window._supabaseReady = false;
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const mod = await import('https://esm.sh/@supabase/supabase-js@2.39.3');
+    window._supabaseCreateClient = mod.createClient;
+    window._supabaseReady = true;
+    // Trigger init now that library is ready
+    if (window._pendingInit) window._pendingInit();
+  } catch(e) {
+    console.error('Failed to load Supabase:', e);
+    document.getElementById('setup-modal').style.display = 'flex';
+  }
+});
 </script>
 <style>
 :root {
@@ -1173,7 +1185,7 @@ let currentUser = null; // { role: 'admin'|'director', director_id, club_id, clu
 
 // HARDCODED CREDENTIALS — no setup screen needed
 const HARDCODED_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const HARDCODED_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQY';
+const HARDCODED_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 function getConfig() {
   const stored = JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}');
@@ -1195,7 +1207,7 @@ function initSupabase() {
   const cfg = getConfig();
   if (!cfg.url || !cfg.key) return false;
   // Don't fail if key is still placeholder
-  if (cfg.key === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') return false;
+  if (cfg.key === 'REPLACE_WITH_YOUR_ANON_KEY') return false;
   try {
     if (!window._supabaseCreateClient) return false; // Library not ready yet — init() will retry
     supabaseClient = window._supabaseCreateClient(cfg.url, cfg.key);
@@ -2717,37 +2729,29 @@ function resetConnection() {
 // APP INIT
 // ═══════════════════════════════════════════════
 async function init() {
-  // Wait for ESM module to load before initializing
-  let attempts = 0;
-  while (!window._supabaseCreateClient && attempts < 30) {
-    await new Promise(r => setTimeout(r, 100));
-    attempts++;
+  // If Supabase library not ready yet, register as pending
+  if (!window._supabaseReady) {
+    window._pendingInit = init;
+    return;
   }
   
-  if (!window._supabaseCreateClient) {
-    console.log('Supabase library failed to load after 3 seconds');
-    document.getElementById('setup-modal').style.display = 'flex';
-    return;
-  }
-
   const ok = initSupabase();
   if (!ok) {
-    // Check if we have stored credentials in localStorage
     const stored = JSON.parse(localStorage.getItem('tem_config') || '{}');
-    if (stored.url && stored.key && stored.key !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') {
-      // Have valid stored creds — try again
-      supabaseClient = window._supabaseCreateClient(stored.url, stored.key);
-      showScreen('pin-screen');
-      return;
+    if (stored.url && stored.key && stored.key !== 'REPLACE_WITH_YOUR_ANON_KEY') {
+      try {
+        supabaseClient = window._supabaseCreateClient(stored.url, stored.key);
+        showScreen('pin-screen');
+        return;
+      } catch(e) { console.log('Init with stored creds failed:', e); }
     }
-    // No valid credentials — show setup
     document.getElementById('setup-modal').style.display = 'flex';
     return;
   }
-  // Credentials exist — go straight to PIN screen
   showScreen('pin-screen');
 }
 
+// Run init — if library not ready it will wait via _pendingInit callback
 init();
 </script>
 
