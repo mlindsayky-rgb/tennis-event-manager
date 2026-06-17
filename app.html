@@ -1058,6 +1058,7 @@ instead.</div>
       <button class="modal-close" onclick="closeModal('manual-rating-modal')">×</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="manual-player-id" value="">
       <div class="alert alert-info" style="margin-bottom:16px">
         <span>Look up this player on TennisRecord.com and enter their rating below.</span>
       </div>
@@ -1127,7 +1128,7 @@ instead.</div>
 <div id="toast-container"></div>
 
 <!-- SETUP PROMPT (shown if no Supabase config) -->
-<div class="modal-overlay" id="setup-modal" style="display:none;opacity:1;pointer-events:all;background:rgba(27,94,32,0.95)">
+<div class="modal-overlay" id="setup-modal" style="display: flex; opacity: 1; pointer-events: all; background: rgba(27, 94, 32, 0.95);">
   <div class="modal" style="max-width:560px">
     <div class="modal-body" style="text-align:center;padding:40px">
       <div style="font-size:52px;margin-bottom:16px">🎾</div>
@@ -2423,6 +2424,8 @@ function manualFromRow(btn) {
 }
 function openManualRating(playerId, playerName) {
   manualRatingPlayerId = playerId;
+  document.getElementById('manual-player-id').value = playerId || '';
+  console.log('openManualRating called with:', playerId, playerName);
   document.getElementById('manual-rating-title').textContent = `Enter Rating — ${playerName}`;
   document.getElementById('manual-ntrp-value').value = '';
   document.getElementById('manual-ntrp-designation').value = '';
@@ -2442,8 +2445,12 @@ function openManualRating(playerId, playerName) {
 }
 
 async function saveManualRating() {
-  const playerId = manualRatingPlayerId;
-  if (!playerId) return;
+  const playerId = manualRatingPlayerId || document.getElementById('manual-player-id').value;
+  console.log('saveManualRating - playerId:', playerId);
+  if (!playerId) { 
+    toast('Error: No player selected', 'error'); 
+    return; 
+  }
   
   const ntrp = document.getElementById('manual-ntrp-value').value;
   const desig = document.getElementById('manual-ntrp-designation').value;
