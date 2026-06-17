@@ -1195,7 +1195,7 @@ function initSupabase() {
   const cfg = getConfig();
   if (!cfg.url || !cfg.key) return false;
   // Don't fail if key is still placeholder
-  if (cfg.key === 'REPLACE_WITH_YOUR_ANON_KEY') return false;
+  if (cfg.key === 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') return false;
   try {
     if (!window._supabaseCreateClient) return false; // Library not ready yet — init() will retry
     supabaseClient = window._supabaseCreateClient(cfg.url, cfg.key);
@@ -2734,7 +2734,7 @@ async function init() {
   if (!ok) {
     // Check if we have stored credentials in localStorage
     const stored = JSON.parse(localStorage.getItem('tem_config') || '{}');
-    if (stored.url && stored.key && stored.key !== 'REPLACE_WITH_YOUR_ANON_KEY') {
+    if (stored.url && stored.key && stored.key !== 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ') {
       // Have valid stored creds — try again
       supabaseClient = window._supabaseCreateClient(stored.url, stored.key);
       showScreen('pin-screen');
