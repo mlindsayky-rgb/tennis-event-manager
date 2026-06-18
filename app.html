@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_Ryo9.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -648,7 +648,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -922,6 +922,20 @@ async function loadPlayers(containerId) {
 
   const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
 
+  // Sort: NTRP desc, then TRR desc within each NTRP group, players with no TRR sink to bottom of their NTRP group
+  data.sort((a,b)=>{
+    const an=rm[a.id]?.['NTRP']?.value, bn=rm[b.id]?.['NTRP']?.value;
+    if(an==null && bn==null) return (a.roster_name||'').localeCompare(b.roster_name||'');
+    if(an==null) return 1;
+    if(bn==null) return -1;
+    if(bn!==an) return bn-an;
+    const at=rm[a.id]?.['TRR']?.value, bt=rm[b.id]?.['TRR']?.value;
+    if(at==null && bt==null) return (a.roster_name||'').localeCompare(b.roster_name||'');
+    if(at==null) return 1;
+    if(bt==null) return -1;
+    return bt-at;
+  });
+
   el.innerHTML=`
     <div id="lp-${containerId}" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>
     ${unrated>0?`<div style="padding:12px 16px;background:var(--gold-light);border-bottom:1px solid #FFE082;display:flex;align-items:center;justify-content:space-between">
@@ -950,6 +964,7 @@ async function loadPlayers(containerId) {
           <td class="tc">${primary?`${parseFloat(primary.value).toFixed(4)}${primary.is_manual?' <span class="badge badge-gold" style="font-size:10px;padding:1px 6px">M</span>':''}`:'<span style="color:var(--ghost)">—</span>'}</td>
           <td class="sc">${status}</td>
           <td><div style="display:flex;gap:4px">
+            <button class="btn btn-sm btn-ghost" onclick="editPlayerName('${p.id}','${escQ(p.roster_name)}')" title="Edit name">✏️</button>
             <button class="btn btn-sm btn-ghost" onclick="lookupRow(this)" title="Look up">🔍</button>
             <button class="btn btn-sm btn-ghost" onclick="manualRow(this)" title="Manual entry">✎</button>
           </div></td>
@@ -965,6 +980,19 @@ async function loadPlayers(containerId) {
 }
 
 function escQ(s) { return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+async function editPlayerName(pid, currentName) {
+  const newName = prompt('Edit player name:', currentName);
+  if(newName===null) return; // cancelled
+  const trimmed = newName.trim();
+  if(!trimmed){toast('Name cannot be empty','error');return;}
+  if(trimmed===currentName) return;
+  const {error} = await sb.from('players').update({roster_name:trimmed}).eq('id',pid);
+  if(error){toast('Error updating name: '+error.message,'error');return;}
+  toast('Name updated!','success');
+  const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+  loadPlayers(lid);
+}
 
 async function searchPlayers(q, containerId) {
   if(!q) { loadPlayers(containerId); return; }
