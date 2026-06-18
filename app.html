@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="app_files/xlsx.full.min_sPD2.js"></script>
+<script src="app_files/xlsx.full.min_YmqZ.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -648,7 +648,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1278,10 +1278,28 @@ async function trProfile(url) {
 function parseProfile(html) {
   const doc=new DOMParser().parseFromString(html,'text/html');
   const text=doc.body?.textContent||'';
-  const nm=text.match(/([2-6]\.[05])\s*([CSA])\b/);
+
+  // Try to find NTRP from table cells first (most reliable — rating and letter are in same cell)
+  let ntrpValue=null, ntrpDesig=null;
+  const cells=Array.from(doc.querySelectorAll('td,th'));
+  for(const cell of cells){
+    const t=cell.textContent.trim();
+    const m=t.match(/^([2-6]\.[05])\s*([CSA])$/);
+    if(m){ntrpValue=parseFloat(m[1]);ntrpDesig=m[2];break;}
+  }
+
+  // Fallback: scan raw text with generous whitespace tolerance
+  if(!ntrpValue){
+    const nm=text.match(/([2-6]\.[05])\s*[\r\n\t ]*([CSA])\b/);
+    if(nm){ntrpValue=parseFloat(nm[1]);ntrpDesig=nm[2];}
+  }
+
+  // TRR: Estimated Dynamic Rating
   const tm=text.match(/Estimated Dynamic Rating[\s\S]{0,200}?(\d\.\d{4})/);
-  if(!nm&&!tm) return{status:'not_found'};
-  return{status:'found',data:{ntrpValue:nm?parseFloat(nm[1]):null,ntrpDesig:nm?nm[2]:null,trrValue:tm?parseFloat(tm[1]):null}};
+  const trrValue=tm?parseFloat(tm[1]):null;
+
+  if(!ntrpValue&&!trrValue) return{status:'not_found'};
+  return{status:'found',data:{ntrpValue,ntrpDesig,trrValue}};
 }
 
 async function saveRatings(playerId,d) {
