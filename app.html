@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="app_files/xlsx.full.min_0uvX.js"></script>
+<script src="app_files/xlsx.full.min_sESx.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -648,7 +648,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1307,8 +1307,8 @@ function parseProfile(html) {
 async function saveRatings(playerId,d) {
   const rows=[];
   if(d.ntrpValue) rows.push({player_id:playerId,source:'NTRP',value:d.ntrpValue,designation:d.ntrpDesig||null,is_manual:false,fetched_at:new Date().toISOString()});
-  if(d.trrValue) rows.push({player_id:playerId,source:'TRR',value:d.trrValue,is_manual:false,fetched_at:new Date().toISOString()});
-  if(rows.length) await sb.from('player_ratings').insert(rows);
+  if(d.trrValue) rows.push({player_id:playerId,source:'TRR',value:d.trrValue,designation:null,is_manual:false,fetched_at:new Date().toISOString()});
+  if(rows.length) await sb.from('player_ratings').upsert(rows,{onConflict:'player_id,source'});
 }
 
 function setRowStatus(row,status,data,pid,pname) {
