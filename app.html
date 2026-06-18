@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="app_files/xlsx.full.min_15T0.js"></script>
+<script src="app_files/xlsx.full.min_ReJw.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -648,7 +648,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1227,13 +1227,19 @@ async function doLookup(playerId, playerName, rowEl) {
 
   lookupCache[playerId]=result;
 
+  // Never overwrite a manually-entered rating with an auto-lookup result
+  const {data:existingRatings}=await sb.from('player_ratings').select('source,is_manual').eq('player_id',playerId);
+  const hasManual=(existingRatings||[]).some(r=>r.is_manual);
+
   if(result.status==='found') {
-    await saveRatings(playerId,result.data);
+    if(!hasManual){await saveRatings(playerId,result.data);}
     setRowStatus(rowEl,'found',result.data);
   } else if(result.status==='single_pending') {
     const pr=await trProfile(result.match.url);
-    if(pr.status==='found'){await saveRatings(playerId,pr.data);setRowStatus(rowEl,'found',pr.data);}
-    else{setRowStatus(rowEl,'not-found',null,playerId,playerName);}
+    if(pr.status==='found'){
+      if(!hasManual){await saveRatings(playerId,pr.data);}
+      setRowStatus(rowEl,'found',pr.data);
+    } else{setRowStatus(rowEl,'not-found',null,playerId,playerName);}
   } else if(result.status==='multiple') {
     setRowStatus(rowEl,'multiple',null,playerId,playerName);
   } else {
@@ -1346,6 +1352,11 @@ async function selectMatch(pid,pname,idx) {
   closeModal('multiple-matches-modal');
   toast('Fetching profile…','default');
   try {
+    // Check for existing manual rating before saving
+    const {data:existingRatings}=await sb.from('player_ratings').select('source,is_manual').eq('player_id',pid);
+    const hasManual=(existingRatings||[]).some(r=>r.is_manual);
+    if(hasManual){toast('Manual rating on file — lookup skipped to protect it','default');return;}
+
     const pr=await trProfile(m.url);
     if(pr.status==='found'){
       const {error}=await sb.from('player_ratings').upsert([
