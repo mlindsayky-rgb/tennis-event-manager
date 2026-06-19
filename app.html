@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_o-EG.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -700,7 +700,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1426,21 +1426,26 @@ async function saveRoster() {
   const included = eventPlayers.filter(p=>p.included);
   const excluded = eventPlayers.filter(p=>!p.included);
 
-  // Remove excluded players from event_players
-  if(excluded.length){
-    const excIds = excluded.filter(p=>p.ep).map(p=>p.ep.id);
-    if(excIds.length) await sb.from('event_players').delete().in('id',excIds);
+async function saveRoster() {
+  const included = eventPlayers.filter(p=>p.included);
+  const excluded = eventPlayers.filter(p=>!p.included);
+
+  // Remove excluded players that were previously saved
+  const excIds = excluded.filter(p=>p.ep).map(p=>p.ep.id);
+  if(excIds.length){
+    const {error:delErr}=await sb.from('event_players').delete().in('id',excIds);
+    if(delErr){toast('Error removing players: '+delErr.message,'error');return;}
   }
 
-  // Insert newly included players
-  const existingIds = new Set(eventPlayers.filter(p=>p.ep).map(p=>p.id));
-  const toInsert = included.filter(p=>!existingIds.has(p.id)||!p.ep);
+  // Insert newly included players (those without an existing ep record)
+  const toInsert = included.filter(p=>!p.ep);
   if(toInsert.length){
-    await sb.from('event_players').insert(toInsert.map(p=>({
+    const {error:insErr}=await sb.from('event_players').insert(toInsert.map(p=>({
       event_id:currentEvent.id,
       player_id:p.id,
-      status:'REGISTERED'
+      status:'ACTIVE'
     })));
+    if(insErr){toast('Error saving roster: '+insErr.message,'error');console.error('saveRoster error:',insErr);return;}
   }
 
   toast(`Roster saved — ${included.length} players included`,'success');
@@ -1453,10 +1458,12 @@ async function renderTeamsTab() {
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading teams…</div>';
 
   // Load existing teams
-  const [{data:teams},{data:teamPlayers}] = await Promise.all([
+  const [{data:teams},{data:epRows2}] = await Promise.all([
     sb.from('teams').select('*').eq('event_id',currentEvent.id).order('name'),
-    sb.from('team_players').select('*,event_players(player_id)').eq('event_id' ,currentEvent.id)
+    sb.from('event_players').select('id,player_id').eq('event_id',currentEvent.id)
   ]);
+  const teamIds=(teams||[]).map(t=>t.id);
+  const {data:teamPlayers}=teamIds.length ? await sb.from('team_players').select('*').in('team_id',teamIds) : {data:[]};
 
   const includedPlayers = eventPlayers.filter(p=>p.included);
   const numTeams = currentEvent.num_teams||4;
