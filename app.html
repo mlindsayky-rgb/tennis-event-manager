@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_FKz0.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -157,6 +157,17 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 .event-card:hover{border-color:var(--green);box-shadow:0 4px 16px rgba(27,94,32,.1)}
 .event-card-name{font-size:16px;font-weight:700;margin-bottom:4px}
 .event-card-meta{font-size:13px;color:var(--muted);display:flex;gap:16px}
+.ev-tab{background:none;border:none;padding:10px 18px;font-size:14px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s}
+.ev-tab.active{color:var(--green);border-bottom-color:var(--green)}
+.ev-tab:hover{color:var(--green-mid)}
+.team-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-top:16px}
+.team-card{background:white;border:2px solid var(--border);border-radius:var(--r);padding:16px;min-height:120px}
+.team-card-header{font-weight:700;font-size:14px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.team-player-row{display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border-radius:6px;font-size:13px;margin-bottom:4px;background:var(--green-ghost);cursor:grab}
+.team-player-row:hover{background:var(--green-pale)}
+.roster-player-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:14px}
+.roster-player-row:last-child{border-bottom:none}
+.roster-player-row input[type=checkbox]{width:16px;height:16px;accent-color:var(--green);cursor:pointer}
 .events-list{display:flex;flex-direction:column;gap:12px}
 
 /* PHASE 2 — RATING */
@@ -362,17 +373,43 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
   </nav>
   <div class="content">
     <div id="dir-tab-events">
-      <div class="section-header">
-        <div><div class="section-title">Your Events</div></div>
-        <button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button>
+      <!-- EVENT LIST VIEW -->
+      <div id="event-list-view">
+        <div class="section-header">
+          <div><div class="section-title">Your Events</div></div>
+          <button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-primary" onclick="filterEvents('all',this)">All</button>
+          <button class="btn btn-sm btn-ghost" onclick="filterEvents('DRAFT',this)">Draft</button>
+          <button class="btn btn-sm btn-ghost" onclick="filterEvents('LIVE',this)">Live</button>
+          <button class="btn btn-sm btn-ghost" onclick="filterEvents('COMPLETE',this)">Complete</button>
+        </div>
+        <div class="events-list" id="dir-events-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-primary" onclick="filterEvents('all',this)">All</button>
-        <button class="btn btn-sm btn-ghost" onclick="filterEvents('DRAFT',this)">Draft</button>
-        <button class="btn btn-sm btn-ghost" onclick="filterEvents('LIVE',this)">Live</button>
-        <button class="btn btn-sm btn-ghost" onclick="filterEvents('COMPLETE',this)">Complete</button>
+
+      <!-- EVENT DETAIL VIEW -->
+      <div id="event-detail-view" style="display:none">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+          <button class="btn btn-ghost" onclick="closeEventDetail()">← Back</button>
+          <div style="flex:1">
+            <div id="ev-detail-name" style="font-size:20px;font-weight:700"></div>
+            <div id="ev-detail-meta" style="font-size:13px;color:var(--muted)"></div>
+          </div>
+          <div id="ev-detail-status"></div>
+        </div>
+
+        <!-- Event Detail Tabs -->
+        <div style="display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:24px">
+          <button class="ev-tab active" onclick="evTab('roster',this)">👥 Roster</button>
+          <button class="ev-tab" onclick="evTab('teams',this)">🏆 Teams</button>
+          <button class="ev-tab" onclick="evTab('settings',this)">⚙️ Settings</button>
+        </div>
+
+        <div id="ev-tab-roster"></div>
+        <div id="ev-tab-teams" style="display:none"></div>
+        <div id="ev-tab-settings" style="display:none"></div>
       </div>
-      <div class="events-list" id="dir-events-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="dir-tab-players" style="display:none">
       <div class="section-header">
@@ -663,7 +700,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1277,12 +1314,365 @@ function renderEvents() {
   const el=document.getElementById('dir-events-list');
   const f=evFilter==='all'?allEvents:allEvents.filter(e=>e.status===evFilter);
   if(!f.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events</div><button class="btn btn-primary" onclick="openModal(\'new-event-modal\')">+ New Event</button></div>';return;}
-  el.innerHTML=f.map(e=>`<div class="event-card"><div style="flex:1"><div class="event-card-name">${e.name}</div><div class="event-card-meta"><span>${fmtDate(e.event_date)}</span><span>${e.event_type}</span>${e.num_teams?`<span>${e.num_teams} teams</span>`:''}</div></div><div style="display:flex;align-items:center;gap:12px">${statusBadge(e.status)}<span style="color:var(--ghost);font-size:20px">›</span></div></div>`).join('');
+  el.innerHTML=f.map(e=>`<div class="event-card" onclick="openEventDetail('${e.id}')"><div style="flex:1"><div class="event-card-name">${e.name}</div><div class="event-card-meta"><span>${fmtDate(e.event_date)}</span><span>${e.event_type}</span>${e.num_teams?`<span>${e.num_teams} teams</span>`:''}</div></div><div style="display:flex;align-items:center;gap:12px">${statusBadge(e.status)}<span style="color:var(--ghost);font-size:20px">›</span></div></div>`).join('');
 }
 
 // ══════════════════════════════════════════════
-// RATING LOOKUP ENGINE
+// EVENT DETAIL
 // ══════════════════════════════════════════════
+let currentEvent = null;
+let eventPlayers = []; // all players in the roster with ratings
+let eventTeams = [];   // current team assignments [{team, players:[]}]
+
+async function openEventDetail(eventId) {
+  const {data:ev} = await sb.from('events').select('*,clubs(name)').eq('id',eventId).single();
+  if(!ev){toast('Error loading event','error');return;}
+  currentEvent = ev;
+  document.getElementById('ev-detail-name').textContent = ev.name;
+  document.getElementById('ev-detail-meta').textContent = `${fmtDate(ev.event_date)} · ${ev.clubs?.name||''} · ${ev.num_teams||'?'} teams · ${ev.num_courts||4} courts`;
+  document.getElementById('ev-detail-status').innerHTML = statusBadge(ev.status);
+  document.getElementById('event-list-view').style.display='none';
+  document.getElementById('event-detail-view').style.display='block';
+  evTab('roster', document.querySelector('.ev-tab'));
+  await loadEventRoster();
+}
+
+function closeEventDetail() {
+  currentEvent=null;
+  document.getElementById('event-detail-view').style.display='none';
+  document.getElementById('event-list-view').style.display='block';
+}
+
+function evTab(name, btn) {
+  document.querySelectorAll('.ev-tab').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  ['roster','teams','settings'].forEach(t=>{
+    document.getElementById(`ev-tab-${t}`).style.display = t===name?'block':'none';
+  });
+  if(name==='teams') renderTeamsTab();
+  if(name==='settings') renderSettingsTab();
+}
+
+// ── ROSTER TAB ──
+async function loadEventRoster() {
+  const el = document.getElementById('ev-tab-roster');
+  el.innerHTML='<div class="loading"><div class="spinner"></div> Loading roster…</div>';
+
+  // Get all players for this club with ratings
+  const [{data:players},{data:epRows},{data:ratings}] = await Promise.all([
+    sb.from('players').select('id,roster_name,gender,player_type,player_clubs!inner(club_id)').eq('is_active',true).eq('player_clubs.club_id',currentEvent.club_id).order('roster_name'),
+    sb.from('event_players').select('*').eq('event_id',currentEvent.id),
+    sb.from('player_ratings').select('player_id,source,value').in('player_id',(await sb.from('players').select('id').eq('is_active',true)).data?.map(p=>p.id)||[])
+  ]);
+
+  // Build rating map
+  const rm={};
+  (ratings||[]).forEach(r=>{if(!rm[r.player_id])rm[r.player_id]={};rm[r.player_id][r.source]=r.value;});
+
+  // Merge into eventPlayers
+  const epMap={};
+  (epRows||[]).forEach(ep=>epMap[ep.player_id]=ep);
+
+  eventPlayers = (players||[]).map(p=>({
+    ...p,
+    ntrp: rm[p.id]?.['NTRP']||null,
+    trr: rm[p.id]?.['TRR']||null,
+    ep: epMap[p.id]||null,
+    included: !!epMap[p.id]
+  }));
+
+  const includedCount = eventPlayers.filter(p=>p.included).length;
+
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:14px;color:var(--muted)"><strong>${includedCount}</strong> of ${eventPlayers.length} players included</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-ghost" onclick="toggleAllRoster(true)">Select All</button>
+        <button class="btn btn-sm btn-ghost" onclick="toggleAllRoster(false)">Clear All</button>
+        <button class="btn btn-sm btn-primary" onclick="saveRoster()">Save Roster</button>
+      </div>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      ${eventPlayers.map((p,i)=>`
+        <div class="roster-player-row" id="rpr-${p.id}">
+          <input type="checkbox" id="rp-${p.id}" ${p.included?'checked':''} onchange="toggleRosterPlayer('${p.id}',this.checked)">
+          <label for="rp-${p.id}" style="flex:1;cursor:pointer">
+            <strong>${p.roster_name}</strong>
+            <span style="font-size:12px;color:var(--muted);margin-left:8px">${p.gender==='MALE'?'♂':'♀'} ${p.player_type}</span>
+          </label>
+          <div style="font-size:12px;color:var(--muted);text-align:right">
+            ${p.ntrp?`<span style="font-weight:600;color:var(--dark)">${parseFloat(p.ntrp).toFixed(1)}</span>`:'<span style="color:var(--ghost)">No NTRP</span>'}
+            ${p.trr?`<span style="margin-left:6px;color:var(--muted)">${parseFloat(p.trr).toFixed(4)}</span>`:''}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function toggleRosterPlayer(pid, checked) {
+  const p = eventPlayers.find(p=>p.id===pid);
+  if(p) p.included = checked;
+  // Update count
+  const count = eventPlayers.filter(p=>p.included).length;
+  document.querySelector('#ev-tab-roster > div > div:first-child strong').textContent = count;
+}
+
+function toggleAllRoster(checked) {
+  eventPlayers.forEach(p=>{
+    p.included=checked;
+    const cb=document.getElementById(`rp-${p.id}`);
+    if(cb) cb.checked=checked;
+  });
+  const count = eventPlayers.filter(p=>p.included).length;
+  document.querySelector('#ev-tab-roster > div > div:first-child strong').textContent = count;
+}
+
+async function saveRoster() {
+  const included = eventPlayers.filter(p=>p.included);
+  const excluded = eventPlayers.filter(p=>!p.included);
+
+  // Remove excluded players from event_players
+  if(excluded.length){
+    const excIds = excluded.filter(p=>p.ep).map(p=>p.ep.id);
+    if(excIds.length) await sb.from('event_players').delete().in('id',excIds);
+  }
+
+  // Insert newly included players
+  const existingIds = new Set(eventPlayers.filter(p=>p.ep).map(p=>p.id));
+  const toInsert = included.filter(p=>!existingIds.has(p.id)||!p.ep);
+  if(toInsert.length){
+    await sb.from('event_players').insert(toInsert.map(p=>({
+      event_id:currentEvent.id,
+      player_id:p.id,
+      status:'REGISTERED'
+    })));
+  }
+
+  toast(`Roster saved — ${included.length} players included`,'success');
+  await loadEventRoster();
+}
+
+// ── TEAMS TAB ──
+async function renderTeamsTab() {
+  const el = document.getElementById('ev-tab-teams');
+  el.innerHTML='<div class="loading"><div class="spinner"></div> Loading teams…</div>';
+
+  // Load existing teams
+  const [{data:teams},{data:teamPlayers}] = await Promise.all([
+    sb.from('teams').select('*').eq('event_id',currentEvent.id).order('name'),
+    sb.from('team_players').select('*,event_players(player_id)').eq('event_id' ,currentEvent.id)
+  ]);
+
+  const includedPlayers = eventPlayers.filter(p=>p.included);
+  const numTeams = currentEvent.num_teams||4;
+
+  // Check if teams exist already
+  if(teams?.length){
+    renderExistingTeams(teams, teamPlayers||[]);
+  } else {
+    el.innerHTML=`
+      <div style="text-align:center;padding:40px 20px">
+        <div style="font-size:48px;margin-bottom:16px">🏆</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:8px">Ready to build teams</div>
+        <div style="font-size:14px;color:var(--muted);margin-bottom:24px">${includedPlayers.length} players in roster · ${numTeams} teams · auto-balanced by NTRP/TRR</div>
+        ${includedPlayers.length<numTeams?`<div class="alert alert-error" style="margin-bottom:16px">Need at least ${numTeams} players to build ${numTeams} teams. Go to Roster tab and include more players.</div>`:''}
+        <button class="btn btn-primary btn-lg" onclick="buildTeams()" ${includedPlayers.length<numTeams?'disabled':''}>⚡ Build Balanced Teams</button>
+      </div>`;
+  }
+}
+
+async function buildTeams() {
+  const el = document.getElementById('ev-tab-teams');
+  el.innerHTML='<div class="loading"><div class="spinner"></div> Building balanced teams…</div>';
+
+  const included = eventPlayers.filter(p=>p.included);
+  const numTeams = currentEvent.num_teams||4;
+
+  // Sort players by NTRP desc, then TRR desc
+  const sorted = [...included].sort((a,b)=>{
+    if(!a.ntrp && !b.ntrp) return 0;
+    if(!a.ntrp) return 1;
+    if(!b.ntrp) return -1;
+    if(b.ntrp!==a.ntrp) return b.ntrp-a.ntrp;
+    if(!a.trr && !b.trr) return 0;
+    if(!a.trr) return 1;
+    if(!b.trr) return -1;
+    return b.trr-a.trr;
+  });
+
+  // Snake draft — distribute players across teams like a snake to balance strength
+  const teamArrays = Array.from({length:numTeams},(_,i)=>({
+    name:`Team ${i+1}`,
+    color:['#1B5E20','#1565C0','#BF360C','#F57F17','#6A1B9A','#00695C','#4E342E','#37474F'][i%8],
+    players:[]
+  }));
+
+  sorted.forEach((player,idx)=>{
+    // Snake: 0,1,2,3,3,2,1,0,0,1,2,3...
+    const pass = Math.floor(idx/numTeams);
+    const pos = idx%numTeams;
+    const teamIdx = pass%2===0 ? pos : numTeams-1-pos;
+    teamArrays[teamIdx].players.push(player);
+  });
+
+  // Save teams to DB
+  const {data:savedTeams,error:te} = await sb.from('teams').insert(
+    teamArrays.map(t=>({event_id:currentEvent.id,name:t.name,color:t.color}))
+  ).select();
+  if(te){toast('Error creating teams: '+te.message,'error');return;}
+
+  // Get event_player ids for each player
+  const {data:epRows} = await sb.from('event_players').select('id,player_id').eq('event_id',currentEvent.id);
+  const epMap={};
+  (epRows||[]).forEach(ep=>epMap[ep.player_id]=ep.id);
+
+  // Save team_players
+  const tpRows=[];
+  savedTeams.forEach((team,i)=>{
+    teamArrays[i].players.forEach(p=>{
+      if(epMap[p.id]) tpRows.push({team_id:team.id,event_player_id:epMap[p.id]});
+    });
+  });
+  if(tpRows.length){
+    const {error:tpe}=await sb.from('team_players').insert(tpRows);
+    if(tpe){toast('Error assigning players: '+tpe.message,'error');return;}
+  }
+
+  toast('Teams built!','success');
+  await renderTeamsTab();
+}
+
+async function renderExistingTeams(teams, teamPlayers) {
+  const el = document.getElementById('ev-tab-teams');
+
+  // Build player lookup
+  const {data:epRows} = await sb.from('event_players').select('id,player_id').eq('event_id',currentEvent.id);
+  const epToPlayer={};
+  (epRows||[]).forEach(ep=>epToPlayer[ep.id]=ep.player_id);
+
+  const playerMap={};
+  eventPlayers.forEach(p=>playerMap[p.id]=p);
+
+  // Group team_players by team
+  const teamMap={};
+  teams.forEach(t=>teamMap[t.id]={...t,players:[]});
+  teamPlayers.forEach(tp=>{
+    const playerId=tp.event_players?.player_id||epToPlayer[tp.event_player_id];
+    if(teamMap[tp.team_id]&&playerId&&playerMap[playerId]){
+      teamMap[tp.team_id].players.push(playerMap[playerId]);
+    }
+  });
+
+  const teamList=Object.values(teamMap);
+
+  el.innerHTML=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="font-size:14px;color:var(--muted)">${teams.length} teams · ${teamPlayers.length} players assigned</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-ghost" onclick="confirmRebuildTeams()">🔄 Rebuild Teams</button>
+      </div>
+    </div>
+    <div class="team-grid">
+      ${teamList.map(t=>`
+        <div class="team-card" style="border-color:${t.color}">
+          <div class="team-card-header">
+            <span style="color:${t.color}">${t.name}</span>
+            <span style="font-size:12px;color:var(--muted)">${t.players.length}p · avg ${teamAvgNtrp(t.players)}</span>
+          </div>
+          ${t.players.map(p=>`
+            <div class="team-player-row" draggable="true"
+              ondragstart="dragStart(event,'${p.id}','${t.id}')"
+              ondragover="event.preventDefault()"
+              ondrop="dragDrop(event,'${t.id}')">
+              <span>${p.roster_name}</span>
+              <span style="font-size:11px;color:var(--muted)">${p.ntrp?parseFloat(p.ntrp).toFixed(1):'?'}</span>
+            </div>`).join('')}
+        </div>`).join('')}
+    </div>`;
+
+  // Set up drop zones on team cards
+  document.querySelectorAll('.team-card').forEach(card=>{
+    card.addEventListener('dragover',e=>e.preventDefault());
+  });
+}
+
+function teamAvgNtrp(players) {
+  const rated=players.filter(p=>p.ntrp);
+  if(!rated.length) return '—';
+  return (rated.reduce((s,p)=>s+parseFloat(p.ntrp),0)/rated.length).toFixed(1);
+}
+
+let draggedPlayerId=null, draggedFromTeamId=null;
+function dragStart(e,playerId,teamId){draggedPlayerId=playerId;draggedFromTeamId=teamId;}
+async function dragDrop(e,targetTeamId){
+  e.preventDefault();
+  if(!draggedPlayerId||draggedFromTeamId===targetTeamId) return;
+  // Move player: update team_players row
+  const {data:epRows}=await sb.from('event_players').select('id,player_id').eq('event_id',currentEvent.id);
+  const ep=epRows?.find(e=>e.player_id===draggedPlayerId);
+  if(!ep) return;
+  const {error}=await sb.from('team_players').update({team_id:targetTeamId}).eq('event_player_id',ep.id);
+  if(error){toast('Error moving player','error');return;}
+  toast('Player moved!','success');
+  await renderTeamsTab();
+}
+
+async function confirmRebuildTeams(){
+  if(!confirm('Rebuild teams? This will delete current team assignments and re-balance from scratch.')) return;
+  await sb.from('team_players').delete().in('team_id',(await sb.from('teams').select('id').eq('event_id',currentEvent.id)).data?.map(t=>t.id)||[]);
+  await sb.from('teams').delete().eq('event_id',currentEvent.id);
+  await buildTeams();
+}
+
+// ── SETTINGS TAB ──
+function renderSettingsTab() {
+  const ev=currentEvent;
+  document.getElementById('ev-tab-settings').innerHTML=`
+    <div class="card" style="max-width:500px">
+      <div class="card-body">
+        <div class="form-group"><label class="form-label">Event Name</label><input class="form-input" id="ev-set-name" value="${escQ(ev.name)}"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Courts</label><input class="form-input" type="number" id="ev-set-courts" value="${ev.num_courts||4}" min="1" max="20"></div>
+          <div class="form-group"><label class="form-label">Teams</label><input class="form-input" type="number" id="ev-set-teams" value="${ev.num_teams||4}" min="2" max="16"></div>
+        </div>
+        <div class="form-group"><label class="form-label">Rounds</label><input class="form-input" type="number" id="ev-set-rounds" value="${ev.num_rounds||4}" min="1" max="20"></div>
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-select" id="ev-set-status">
+            <option value="DRAFT" ${ev.status==='DRAFT'?'selected':''}>Draft</option>
+            <option value="LIVE" ${ev.status==='LIVE'?'selected':''}>Live</option>
+            <option value="COMPLETE" ${ev.status==='COMPLETE'?'selected':''}>Complete</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="saveEventSettings()">Save Changes</button>
+          <button class="btn btn-danger" onclick="deleteEvent()">Delete Event</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveEventSettings() {
+  const payload={
+    name:document.getElementById('ev-set-name').value.trim(),
+    num_courts:parseInt(document.getElementById('ev-set-courts').value),
+    num_teams:parseInt(document.getElementById('ev-set-teams').value),
+    num_rounds:parseInt(document.getElementById('ev-set-rounds').value),
+    status:document.getElementById('ev-set-status').value
+  };
+  const {error}=await sb.from('events').update(payload).eq('id',currentEvent.id);
+  if(error){toast('Error: '+error.message,'error');return;}
+  Object.assign(currentEvent,payload);
+  document.getElementById('ev-detail-name').textContent=payload.name;
+  document.getElementById('ev-detail-status').innerHTML=statusBadge(payload.status);
+  toast('Event updated!','success');
+}
+
+async function deleteEvent() {
+  if(!confirm(`Delete "${currentEvent.name}"? This cannot be undone.`)) return;
+  await sb.from('events').delete().eq('id',currentEvent.id);
+  toast('Event deleted','success');
+  closeEventDetail();
+  loadDirectorEvents();
+}
 const PROXY = 'https://vrnvhrruvzcnslvceacn.supabase.co/functions/v1/tennis-proxy?url=';
 let lookupCache = {}; // playerId -> result
 
