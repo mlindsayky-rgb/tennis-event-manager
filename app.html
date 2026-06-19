@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_M2De.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -700,7 +700,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1349,30 +1349,21 @@ function evTab(name, btn) {
   ['roster','teams','settings'].forEach(t=>{
     document.getElementById(`ev-tab-${t}`).style.display = t===name?'block':'none';
   });
-  if(name==='teams') renderTeamsTab();
+  if(name==='teams') fetchEventPlayers().then(()=>renderTeamsTab());
   if(name==='settings') renderSettingsTab();
 }
 
 // ── ROSTER TAB ──
-async function loadEventRoster() {
-  const el = document.getElementById('ev-tab-roster');
-  el.innerHTML='<div class="loading"><div class="spinner"></div> Loading roster…</div>';
-
-  // Get all players for this club with ratings
+async function fetchEventPlayers() {
   const [{data:players},{data:epRows},{data:ratings}] = await Promise.all([
     sb.from('players').select('id,roster_name,gender,player_type,player_clubs!inner(club_id)').eq('is_active',true).eq('player_clubs.club_id',currentEvent.club_id).order('roster_name'),
     sb.from('event_players').select('*').eq('event_id',currentEvent.id),
     sb.from('player_ratings').select('player_id,source,value').in('player_id',(await sb.from('players').select('id').eq('is_active',true)).data?.map(p=>p.id)||[])
   ]);
-
-  // Build rating map
   const rm={};
   (ratings||[]).forEach(r=>{if(!rm[r.player_id])rm[r.player_id]={};rm[r.player_id][r.source]=r.value;});
-
-  // Merge into eventPlayers
   const epMap={};
   (epRows||[]).forEach(ep=>epMap[ep.player_id]=ep);
-
   eventPlayers = (players||[]).map(p=>({
     ...p,
     ntrp: rm[p.id]?.['NTRP']||null,
@@ -1380,7 +1371,12 @@ async function loadEventRoster() {
     ep: epMap[p.id]||null,
     included: !!epMap[p.id]
   }));
+}
 
+async function loadEventRoster() {
+  const el = document.getElementById('ev-tab-roster');
+  el.innerHTML='<div class="loading"><div class="spinner"></div> Loading roster…</div>';
+  await fetchEventPlayers();
   const includedCount = eventPlayers.filter(p=>p.included).length;
 
   el.innerHTML=`
