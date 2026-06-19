@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_rK8a.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -551,6 +551,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
   <div class="modal">
     <div class="modal-header"><div class="modal-title">New Event</div><button class="modal-close" onclick="closeModal('new-event-modal')">×</button></div>
     <div class="modal-body">
+      <div id="event-error" class="alert alert-error" style="display:none;margin-bottom:16px"></div>
       <div class="form-group"><label class="form-label">Event Name <span class="req">*</span></label><input class="form-input" id="event-name" placeholder="e.g. Summer Social 2026"><div class="form-hint">Used in TV banner and PDF filename</div></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Date <span class="req">*</span></label><input class="form-input" id="event-date" type="date"></div>
@@ -573,7 +574,6 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
           <div class="form-group"><label class="form-label">Elimination Type <span class="req">*</span></label><select class="form-select" id="event-elim-type"><option value="SINGLE" selected="selected">Single elimination</option><option value="SINGLE_WITH_CONSOLATION">Single + consolation</option></select></div>
         </div>
       </div>
-      <div id="event-error" class="alert alert-error" style="display:none"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('new-event-modal')">Cancel</button>
@@ -700,7 +700,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -1278,7 +1278,7 @@ async function createEvent() {
     payload.num_teams=teams; payload.num_courts=parseInt(document.getElementById('event-courts').value)||4;
   }
   const {data,error}=await sb.from('events').insert(payload).select().single();
-  if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+  if(error){console.error('createEvent error:',error);errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
   if(type==='INDIVIDUAL'){
     await sb.from('draws').insert({event_id:data.id,draw_size:parseInt(document.getElementById('event-draw-size').value),elimination_type:document.getElementById('event-elim-type').value,match_format:'GAMES',games_target:6});
   }
