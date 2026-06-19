@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Tennis Event Manager</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="app_files/xlsx.full.min_rbXS.js"></script>
 <style>
 :root {
   --green: #1B5E20; --green-mid: #2E7D32; --green-light: #4CAF50;
@@ -401,6 +401,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
     <div class="modal-header"><div class="modal-title" id="club-modal-title">New Club</div><button class="modal-close" onclick="closeModal('club-modal')">×</button></div>
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Club Name <span class="req">*</span></label><input class="form-input" id="club-name" placeholder="e.g. Lakeside Tennis Club"></div>
+      <div class="form-group"><label class="form-label">Abbreviation <span class="req">*</span></label><input class="form-input" id="club-abbrev" placeholder="e.g. HCCC" maxlength="8" style="text-transform:uppercase"></div>
       <div class="form-group"><label class="form-label">Tagline</label><input class="form-input" id="club-tagline" placeholder="Short description"></div>
       <div class="form-group"><label class="form-label">Club Motto</label><input class="form-input" id="club-motto" placeholder="Optional — shown on TV display between rounds"></div>
       <div style="border-top:1px solid var(--border);margin:20px 0;padding-top:20px">
@@ -613,6 +614,20 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 </div>
 
 <!-- XLSX IMPORT MODAL -->
+<div class="modal-overlay" id="club-assign-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header"><div class="modal-title" id="club-assign-title">Assign Clubs</div><button class="modal-close" onclick="closeModal('club-assign-modal')">×</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Select which clubs this player belongs to:</div>
+      <div id="club-assign-checkboxes" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('club-assign-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClubAssignments()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="xlsx-import-modal">
   <div class="modal" style="max-width:600px">
     <div class="modal-header"><div class="modal-title">Import Players from Spreadsheet</div><button class="modal-close" onclick="closeModal('xlsx-import-modal')">×</button></div>
@@ -648,7 +663,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 // CREDENTIALS — hardcoded so setup never appears
 // ══════════════════════════════════════════════
 const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+const SUPABASE_KEY = 'REPLACE_WITH_YOUR_ANON_KEY';
 
 let sb = null; // Supabase client
 let currentUser = null;
@@ -876,9 +891,10 @@ async function loadClubs() {
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
   const {data} = await sb.from('clubs').select('*').order('name');
   if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🏛️</div><div class="empty-title">No clubs yet</div><button class="btn btn-primary" onclick="openModal(\'club-modal\')">+ New Club</button></div>';return;}
-  el.innerHTML=`<table class="data-table"><thead><tr><th>Club</th><th>Colors</th><th>Font</th><th>Actions</th></tr></thead><tbody>
+  el.innerHTML=`<table class="data-table"><thead><tr><th>Club</th><th>Abbrev</th><th>Colors</th><th>Font</th><th>Actions</th></tr></thead><tbody>
   ${data.map(c=>`<tr>
     <td><div style="display:flex;align-items:center;gap:10px"><div style="width:28px;height:28px;border-radius:6px;background:${c.primary_color||'#1B5E20'};flex-shrink:0"></div><div><div style="font-weight:600">${c.name}</div>${c.tagline?`<div style="font-size:12px;color:var(--muted)">${c.tagline}</div>`:''}</div></div></td>
+    <td><span class="badge badge-blue">${c.abbreviation||'—'}</span></td>
     <td><code style="font-size:11px">${c.primary_color||'—'}</code></td>
     <td style="font-size:13px">${c.font_style||'MODERN'}</td>
     <td><button class="btn btn-sm btn-ghost" onclick="editClub('${c.id}')">Edit</button></td>
@@ -908,11 +924,20 @@ async function loadPlayers(containerId) {
   const el = document.getElementById(containerId);
   if(!el) return;
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
-  const {data,error} = await sb.from('players').select('id,roster_name,gender,player_type,alias_memory').eq('is_active',true).order('roster_name').limit(100);
-  if(error){el.innerHTML=`<div class="empty-state"><div class="empty-title">Error: ${error.message}</div></div>`;return;}
-  if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — ratings looked up automatically</div></div>';return;}
 
-  const {data:ratings} = await sb.from('player_ratings').select('player_id,source,value,designation,is_manual,fetched_at').in('player_id',data.map(p=>p.id));
+  // Fetch all active players with their club assignments
+  const {data,error} = await sb.from('players').select('id,roster_name,gender,player_type,alias_memory,player_clubs(club_id,clubs(id,name,abbreviation))').eq('is_active',true).order('roster_name').limit(500);
+  if(error){el.innerHTML=`<div class="empty-state"><div class="empty-title">Error: ${error.message}</div></div>`;return;}
+
+  // Directors only see players assigned to their club
+  let filtered = data||[];
+  if(currentUser?.role==='director' && currentUser?.club_id){
+    filtered = filtered.filter(p=>(p.player_clubs||[]).some(pc=>pc.club_id===currentUser.club_id));
+  }
+
+  if(!filtered.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — ratings looked up automatically</div></div>';return;}
+
+  const {data:ratings} = await sb.from('player_ratings').select('player_id,source,value,designation,is_manual,fetched_at').in('player_id',filtered.map(p=>p.id));
   const rm = {};
   (ratings||[]).forEach(r=>{
     if(!rm[r.player_id]) rm[r.player_id]={};
@@ -920,10 +945,10 @@ async function loadPlayers(containerId) {
     if(!ex || new Date(r.fetched_at)>new Date(ex.fetched_at)) rm[r.player_id][r.source]=r;
   });
 
-  const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
+  const unrated = filtered.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
 
   // Sort: NTRP desc, then TRR desc within each NTRP group, players with no TRR sink to bottom of their NTRP group
-  data.sort((a,b)=>{
+  filtered.sort((a,b)=>{
     const an=rm[a.id]?.['NTRP']?.value, bn=rm[b.id]?.['NTRP']?.value;
     if(an==null && bn==null) return (a.roster_name||'').localeCompare(b.roster_name||'');
     if(an==null) return 1;
@@ -948,7 +973,7 @@ async function loadPlayers(containerId) {
     </div>`:''}
     <table class="data-table">
       <thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
-      <tbody>${data.map(p=>{
+      <tbody>${filtered.map(p=>{
         const r=rm[p.id]||{};
         const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],primary=trr||utr;
         const stale=primary&&(new Date()-new Date(primary.fetched_at))>365*24*60*60*1000;
@@ -957,8 +982,9 @@ async function loadPlayers(containerId) {
         else if(primary?.is_manual) status=`<span class="lookup-status manual">✎ Manual</span>`;
         else if(primary) status=`<span class="lookup-status found">✓ Rated</span>`;
         else status=`<span class="lookup-status not-found" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">No rating</span>`;
+        const clubs=(p.player_clubs||[]).map(pc=>pc.clubs?.abbreviation||'?').filter(Boolean);
         return `<tr data-pid="${p.id}" data-pname="${escQ(p.roster_name)}" data-ptype="${p.player_type}">
-          <td><strong>${p.roster_name}</strong>${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}</td>
+          <td><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><strong>${p.roster_name}</strong>${clubs.map(a=>`<span class="badge badge-blue" style="font-size:10px;padding:1px 5px">${a}</span>`).join('')}</div>${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}</td>
           <td><span class="badge ${p.player_type==='AD'?'badge-blue':'badge-gold'}">${p.player_type}</span></td>
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
           <td class="nc">${ntrp?`${parseFloat(ntrp.value).toFixed(1)}${ntrp.designation?`<span style="color:var(--muted);font-size:11px"> ${ntrp.designation}</span>`:''}`:' —'}</td>
@@ -966,6 +992,7 @@ async function loadPlayers(containerId) {
           <td class="sc">${status}</td>
           <td><div style="display:flex;gap:4px">
             <button class="btn btn-sm btn-ghost" onclick="editPlayerName('${p.id}','${escQ(p.roster_name)}')" title="Edit name">✏️</button>
+            <button class="btn btn-sm btn-ghost" onclick="assignClubs('${p.id}','${escQ(p.roster_name)}')" title="Assign clubs">🏛</button>
             <button class="btn btn-sm btn-ghost" onclick="lookupRow(this)" title="Look up">🔍</button>
             <button class="btn btn-sm btn-ghost" onclick="manualRow(this)" title="Manual entry">✎</button>
             <button class="btn btn-sm btn-ghost" onclick="deactivatePlayer('${p.id}','${escQ(p.roster_name)}')" title="Remove player" style="color:var(--clay)">✕</button>
@@ -992,6 +1019,56 @@ async function editPlayerName(pid, currentName) {
   const {error} = await sb.from('players').update({roster_name:trimmed}).eq('id',pid);
   if(error){toast('Error updating name: '+error.message,'error');return;}
   toast('Name updated!','success');
+  const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+  loadPlayers(lid);
+}
+
+let assigningPlayerId = null;
+
+async function assignClubs(pid, name) {
+  assigningPlayerId = pid;
+  document.getElementById('club-assign-title').textContent = `Clubs — ${name}`;
+
+  // Load all clubs and current assignments in parallel
+  const [{data:clubs},{data:assigned}] = await Promise.all([
+    sb.from('clubs').select('id,name,abbreviation').order('name'),
+    sb.from('player_clubs').select('club_id').eq('player_id',pid)
+  ]);
+
+  const assignedIds = new Set((assigned||[]).map(r=>r.club_id));
+
+  const box = document.getElementById('club-assign-checkboxes');
+  if(!clubs?.length){
+    box.innerHTML='<div style="color:var(--muted);font-size:13px">No clubs set up yet — add clubs first.</div>';
+  } else {
+    box.innerHTML = clubs.map(c=>`
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;border:1px solid var(--border);border-radius:8px;${assignedIds.has(c.id)?'background:var(--green-pale);border-color:var(--green-light)':''}">
+        <input type="checkbox" value="${c.id}" ${assignedIds.has(c.id)?'checked':''} style="width:16px;height:16px;accent-color:var(--green)">
+        <span class="badge badge-blue" style="font-size:12px;min-width:48px;text-align:center">${c.abbreviation||'?'}</span>
+        <span style="font-size:14px">${c.name}</span>
+      </label>`).join('');
+  }
+  openModal('club-assign-modal');
+}
+
+async function saveClubAssignments() {
+  const pid = assigningPlayerId;
+  if(!pid) return;
+  const checks = document.querySelectorAll('#club-assign-checkboxes input[type=checkbox]');
+  const selectedIds = Array.from(checks).filter(c=>c.checked).map(c=>c.value);
+
+  // Delete all existing assignments then insert the new set
+  const {error:delErr} = await sb.from('player_clubs').delete().eq('player_id',pid);
+  if(delErr){toast('Error saving: '+delErr.message,'error');return;}
+
+  if(selectedIds.length){
+    const rows = selectedIds.map(cid=>({player_id:pid,club_id:cid}));
+    const {error:insErr} = await sb.from('player_clubs').insert(rows);
+    if(insErr){toast('Error saving: '+insErr.message,'error');return;}
+  }
+
+  toast('Club assignments saved!','success');
+  closeModal('club-assign-modal');
   const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
   loadPlayers(lid);
 }
@@ -1024,7 +1101,7 @@ async function saveClub() {
   if(!name){toast('Club name required','error');return;}
   const btn=document.getElementById('save-club-btn');
   btn.disabled=true; btn.textContent='Saving…';
-  const payload={name,tagline:document.getElementById('club-tagline').value.trim()||null,motto:document.getElementById('club-motto').value.trim()||null,
+  const payload={name,abbreviation:document.getElementById('club-abbrev').value.trim().toUpperCase()||null,tagline:document.getElementById('club-tagline').value.trim()||null,motto:document.getElementById('club-motto').value.trim()||null,
     primary_color:document.getElementById('club-primary-hex').value||'#1B5E20',secondary_color:document.getElementById('club-secondary-hex').value||'#4CAF50',
     accent_color:document.getElementById('club-accent-hex').value||'#F57F17',background_style:document.getElementById('club-bg-style').value,
     logo_position:document.getElementById('club-logo-pos').value,logo_opacity:parseInt(document.getElementById('club-opacity').value),font_style:document.getElementById('club-font').value};
@@ -1040,6 +1117,7 @@ async function editClub(id) {
   document.getElementById('club-modal-title').textContent='Edit Club';
   document.getElementById('save-club-btn').textContent='Save Changes';
   document.getElementById('club-name').value=data.name||'';
+  document.getElementById('club-abbrev').value=data.abbreviation||'';
   document.getElementById('club-tagline').value=data.tagline||'';
   document.getElementById('club-motto').value=data.motto||'';
   document.getElementById('club-primary-hex').value=data.primary_color||'#1B5E20';
