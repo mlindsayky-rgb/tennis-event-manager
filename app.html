@@ -1426,10 +1426,6 @@ async function saveRoster() {
   const included = eventPlayers.filter(p=>p.included);
   const excluded = eventPlayers.filter(p=>!p.included);
 
-async function saveRoster() {
-  const included = eventPlayers.filter(p=>p.included);
-  const excluded = eventPlayers.filter(p=>!p.included);
-
   // Remove excluded players that were previously saved
   const excIds = excluded.filter(p=>p.ep).map(p=>p.ep.id);
   if(excIds.length){
