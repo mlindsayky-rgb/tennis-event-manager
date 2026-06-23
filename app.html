@@ -908,10 +908,18 @@ async function loadPlayers(containerId) {
   const el = document.getElementById(containerId);
   if(!el) return;
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
-  const {data,error} = await sb.from('players').select('id,roster_name,gender,player_type,alias_memory').eq('is_active',true).order('roster_name').limit(100);
+
+  // Load players with home club
+  const {data,error} = await sb.from('players')
+    .select('id,roster_name,gender,player_type,alias_memory,home_club_id,clubs(name)')
+    .eq('is_active',true).order('roster_name').limit(100);
   if(error){el.innerHTML=`<div class="empty-state"><div class="empty-title">Error: ${error.message}</div></div>`;return;}
   if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — ratings looked up automatically</div></div>';return;}
 
+  // Load clubs for dropdown
+  const {data:clubs} = await sb.from('clubs').select('id,name').order('name');
+
+  // Load ratings
   const {data:ratings} = await sb.from('player_ratings').select('player_id,source,value,designation,is_manual,fetched_at').in('player_id',data.map(p=>p.id));
   const rm = {};
   (ratings||[]).forEach(r=>{
@@ -920,7 +928,29 @@ async function loadPlayers(containerId) {
     if(!ex || new Date(r.fetched_at)>new Date(ex.fetched_at)) rm[r.player_id][r.source]=r;
   });
 
+  // Sort: NTRP bucket → TRR within bucket → no-TRR alpha at bottom
+  const NTRP_ORDER = [2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0];
+  data.sort((a,b) => {
+    const ra=rm[a.id]||{}, rb=rm[b.id]||{};
+    const na=ra['NTRP'], nb=rb['NTRP'];
+    const ta=ra['TRR']||ra['UTR'], tb=rb['TRR']||rb['UTR'];
+    // Both unrated — alphabetical
+    if(!na && !nb) return a.roster_name.localeCompare(b.roster_name);
+    // One unrated — unrated goes to bottom
+    if(!na) return 1;
+    if(!nb) return -1;
+    // Both rated — sort by NTRP bucket first
+    const nv_a=parseFloat(na.value), nv_b=parseFloat(nb.value);
+    if(nv_a !== nv_b) return nv_b - nv_a; // higher NTRP first
+    // Same NTRP bucket — sort by TRR descending
+    if(ta && tb) return parseFloat(tb.value) - parseFloat(ta.value);
+    if(ta) return -1; // has TRR goes above no-TRR
+    if(tb) return 1;
+    return a.roster_name.localeCompare(b.roster_name);
+  });
+
   const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
+  const clubOpts = (clubs||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
 
   el.innerHTML=`
     <div id="lp-${containerId}" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>
@@ -932,7 +962,7 @@ async function loadPlayers(containerId) {
       </div>
     </div>`:''}
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Club</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
       <tbody>${data.map(p=>{
         const r=rm[p.id]||{};
         const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],primary=trr||utr;
@@ -943,7 +973,20 @@ async function loadPlayers(containerId) {
         else if(primary) status=`<span class="lookup-status found">✓ Rated</span>`;
         else status=`<span class="lookup-status not-found" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">No rating</span>`;
         return `<tr data-pid="${p.id}" data-pname="${escQ(p.roster_name)}" data-ptype="${p.player_type}">
-          <td><strong>${p.roster_name}</strong>${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              <strong>${p.roster_name}</strong>
+              <button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11px" onclick="editPlayerName('${p.id}','${escQ(p.roster_name)}')" title="Edit name">✏️</button>
+            </div>
+            ${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}
+          </td>
+          <td>
+            <select class="form-select" style="font-size:12px;padding:4px 8px;min-width:120px"
+              onchange="updatePlayerClub('${p.id}',this.value)">
+              <option value="">No club</option>
+              ${(clubs||[]).map(c=>`<option value="${c.id}" ${p.home_club_id===c.id?'selected':''}>${c.name}</option>`).join('')}
+            </select>
+          </td>
           <td><span class="badge ${p.player_type==='AD'?'badge-blue':'badge-gold'}">${p.player_type}</span></td>
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
           <td class="nc">${ntrp?`${parseFloat(ntrp.value).toFixed(1)}<span style="color:var(--muted);font-size:11px"> ${ntrp.designation||''}</span>`:'—'}</td>
@@ -962,6 +1005,28 @@ async function loadPlayers(containerId) {
     const row = el.querySelector('tr[data-pid]');
     if(row && !rm[row.dataset.pid]?.['TRR']) doLookup(row.dataset.pid, row.dataset.pname, row);
   }
+}
+
+// Update player home club
+async function updatePlayerClub(playerId, clubId) {
+  const {error} = await sb.from('players').update({
+    home_club_id: clubId || null
+  }).eq('id', playerId);
+  if(error) toast('Error saving club: ' + error.message, 'error');
+  else toast('Club updated!', 'success');
+}
+
+// Edit player name inline
+async function editPlayerName(playerId, currentName) {
+  const newName = prompt('Edit player name:', currentName);
+  if(!newName || newName.trim() === currentName) return;
+  const {error} = await sb.from('players').update({
+    roster_name: newName.trim()
+  }).eq('id', playerId);
+  if(error) { toast('Error: ' + error.message, 'error'); return; }
+  toast('Name updated!', 'success');
+  const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+  loadPlayers(lid);
 }
 
 function escQ(s) { return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
