@@ -640,6 +640,24 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
   </div>
 </div>
 
+
+<!-- CLUB MEMBERSHIP MODAL -->
+<div class="modal-overlay" id="club-membership-modal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <div class="modal-title" id="club-membership-title">Club Memberships</div>
+      <button class="modal-close" onclick="closeModal('club-membership-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Select all clubs this player is a member of. Directors will only see players from their own club by default.</div>
+      <div id="club-membership-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('club-membership-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast-container"></div>
 
@@ -904,20 +922,47 @@ async function loadDirectors() {
   </tbody></table>`;
 }
 
-async function loadPlayers(containerId) {
+async function loadPlayers(containerId, filterMode) {
   const el = document.getElementById(containerId);
   if(!el) return;
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
 
-  // Load players with home club
-  const {data,error} = await sb.from('players')
-    .select('id,roster_name,gender,player_type,alias_memory,home_club_id,clubs(name)')
-    .eq('is_active',true).order('roster_name').limit(100);
+  // Determine filter mode — directors default to 'my_club', admins see all
+  const isDirector = currentUser?.role === 'director';
+  const mode = filterMode || (isDirector ? 'my_club' : 'all');
+
+  // Load players
+  let query = sb.from('players')
+    .select('id,roster_name,gender,player_type,alias_memory')
+    .eq('is_active',true).order('roster_name').limit(200);
+
+  // For director my_club filter — get player IDs from player_clubs
+  let clubPlayerIds = null;
+  if(mode === 'my_club' && isDirector) {
+    const {data:clubPlayers} = await sb.from('player_clubs')
+      .select('player_id').eq('club_id', currentUser.club_id);
+    clubPlayerIds = (clubPlayers||[]).map(cp=>cp.player_id);
+    if(!clubPlayerIds.length) {
+      el.innerHTML = renderPlayerTable([], [], [], mode, containerId, true);
+      return;
+    }
+    query = query.in('id', clubPlayerIds);
+  }
+
+  const {data,error} = await query;
   if(error){el.innerHTML=`<div class="empty-state"><div class="empty-title">Error: ${error.message}</div></div>`;return;}
   if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — ratings looked up automatically</div></div>';return;}
 
-  // Load clubs for dropdown
+  // Load clubs and player club memberships
   const {data:clubs} = await sb.from('clubs').select('id,name').order('name');
+  const {data:playerClubs} = data?.length ? await sb.from('player_clubs')
+    .select('player_id,club_id,is_primary')
+    .in('player_id', data.map(p=>p.id)) : {data:[]};
+  const pcMap = {}; // playerId -> [club_ids]
+  (playerClubs||[]).forEach(pc=>{
+    if(!pcMap[pc.player_id]) pcMap[pc.player_id]=[];
+    pcMap[pc.player_id].push(pc.club_id);
+  });
 
   // Load ratings
   const {data:ratings} = await sb.from('player_ratings').select('player_id,source,value,designation,is_manual,fetched_at').in('player_id',data.map(p=>p.id));
@@ -950,10 +995,31 @@ async function loadPlayers(containerId) {
   });
 
   const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
-  const clubOpts = (clubs||[]).map(c=>`<option value="${c.id}">${c.name}</option>`).join('');
+  el.innerHTML = renderPlayerTable(data, rm, clubs||[], mode, containerId, false, pcMap||{});
 
-  el.innerHTML=`
+  // Auto-lookup single new unrated player
+  if(unrated===1 && AUTO_LOOKUP) {
+    const row = el.querySelector('tr[data-pid]');
+    if(row && !rm[row.dataset.pid]?.['TRR']) doLookup(row.dataset.pid, row.dataset.pname, row);
+  }
+}
+
+function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) {
+  const isDirector = currentUser?.role === 'director';
+  const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
+
+  const toggleBar = isDirector ? `
+    <div style="padding:10px 16px;background:white;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
+      <button class="btn btn-sm ${mode==='my_club'?'btn-primary':'btn-ghost'}" onclick="loadPlayers('${containerId}','my_club')">🏛 My Club</button>
+      <button class="btn btn-sm ${mode==='all'?'btn-primary':'btn-ghost'}" onclick="loadPlayers('${containerId}','all')">🌐 All Players</button>
+      ${mode==='my_club' && empty ? '<span style="font-size:12px;color:var(--muted)">No players assigned to your club yet</span>' : ''}
+    </div>` : '';
+
+  if(empty) return `${toggleBar}<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players in your club yet</div><div class="empty-sub">Add players and assign them to your club using the 🏛 icon</div></div>`;
+
+  return `
     <div id="lp-${containerId}" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>
+    ${toggleBar}
     ${unrated>0?`<div style="padding:12px 16px;background:var(--gold-light);border-bottom:1px solid #FFE082;display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:13px;color:#5D4037"><strong>${unrated}</strong> player${unrated>1?'s':''} need rating lookup</div>
       <div style="display:flex;gap:8px">
@@ -962,11 +1028,13 @@ async function loadPlayers(containerId) {
       </div>
     </div>`:''}
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Club</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Clubs</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
       <tbody>${data.map(p=>{
         const r=rm[p.id]||{};
         const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],primary=trr||utr;
         const stale=primary&&(new Date()-new Date(primary.fetched_at))>365*24*60*60*1000;
+        const playerClubIds = pcMap[p.id]||[];
+        const playerClubNames = clubs.filter(c=>playerClubIds.includes(c.id)).map(c=>c.name);
         let status;
         if(stale) status=`<span class="lookup-status stale" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">⚑ Stale</span>`;
         else if(primary?.is_manual) status=`<span class="lookup-status manual">✎ Manual</span>`;
@@ -974,18 +1042,17 @@ async function loadPlayers(containerId) {
         else status=`<span class="lookup-status not-found" onclick="openManualEntry('${p.id}','${escQ(p.roster_name)}','${p.player_type}')">No rating</span>`;
         return `<tr data-pid="${p.id}" data-pname="${escQ(p.roster_name)}" data-ptype="${p.player_type}">
           <td>
-            <div style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;align-items:center;gap:6px">
               <strong>${p.roster_name}</strong>
-              <button class="btn btn-sm btn-ghost" style="padding:2px 8px;font-size:11px" onclick="editPlayerName('${p.id}','${escQ(p.roster_name)}')" title="Edit name">✏️</button>
+              <button class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:11px" onclick="editPlayerName('${p.id}','${escQ(p.roster_name)}')" title="Edit name">✏️</button>
             </div>
             ${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}
           </td>
           <td>
-            <select class="form-select" style="font-size:12px;padding:4px 8px;min-width:120px"
-              onchange="updatePlayerClub('${p.id}',this.value)">
-              <option value="">No club</option>
-              ${(clubs||[]).map(c=>`<option value="${c.id}" ${p.home_club_id===c.id?'selected':''}>${c.name}</option>`).join('')}
-            </select>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              ${playerClubNames.map(n=>`<span style="font-size:11px;background:var(--green-pale);color:var(--green);padding:2px 8px;border-radius:10px">${n}</span>`).join('')}
+              <button class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:14px" onclick="openClubMembership('${p.id}','${escQ(p.roster_name)}')" title="Manage club memberships">🏛</button>
+            </div>
           </td>
           <td><span class="badge ${p.player_type==='AD'?'badge-blue':'badge-gold'}">${p.player_type}</span></td>
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
@@ -999,21 +1066,46 @@ async function loadPlayers(containerId) {
         </tr>`;
       }).join('')}</tbody>
     </table>`;
-
-  // Auto-lookup single new unrated player
-  if(unrated===1 && AUTO_LOOKUP) {
-    const row = el.querySelector('tr[data-pid]');
-    if(row && !rm[row.dataset.pid]?.['TRR']) doLookup(row.dataset.pid, row.dataset.pname, row);
-  }
 }
 
-// Update player home club
-async function updatePlayerClub(playerId, clubId) {
-  const {error} = await sb.from('players').update({
-    home_club_id: clubId || null
-  }).eq('id', playerId);
-  if(error) toast('Error saving club: ' + error.message, 'error');
-  else toast('Club updated!', 'success');
+// Open club membership modal
+async function openClubMembership(playerId, playerName) {
+  document.getElementById('club-membership-title').textContent = `Club Memberships — ${playerName}`;
+  const listEl = document.getElementById('club-membership-list');
+  listEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  openModal('club-membership-modal');
+
+  const [{data:clubs}, {data:current}] = await Promise.all([
+    sb.from('clubs').select('id,name').order('name'),
+    sb.from('player_clubs').select('club_id').eq('player_id', playerId)
+  ]);
+
+  const currentIds = new Set((current||[]).map(c=>c.club_id));
+
+  listEl.innerHTML = (clubs||[]).map(c=>`
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)">
+      <input type="checkbox" id="club-${c.id}" ${currentIds.has(c.id)?'checked':''}
+        onchange="togglePlayerClub('${playerId}','${c.id}',this.checked,'${escQ(c.name)}')"
+        style="width:18px;height:18px;accent-color:var(--green);cursor:pointer">
+      <label for="club-${c.id}" style="font-size:14px;cursor:pointer;flex:1">${c.name}</label>
+      ${currentIds.has(c.id)?'<span class="badge badge-green">Member</span>':''}
+    </div>`).join('');
+}
+
+async function togglePlayerClub(playerId, clubId, adding, clubName) {
+  if(adding) {
+    const {error} = await sb.from('player_clubs').insert({player_id:playerId, club_id:clubId});
+    if(error) { toast('Error: '+error.message,'error'); return; }
+    toast(`Added to ${clubName}!`, 'success');
+  } else {
+    const {error} = await sb.from('player_clubs').delete().eq('player_id',playerId).eq('club_id',clubId);
+    if(error) { toast('Error: '+error.message,'error'); return; }
+    toast(`Removed from ${clubName}`, 'default');
+  }
+  // Refresh player list
+  const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+  const mode = document.querySelector(`#${lid} .btn-primary`)?.textContent?.includes('My Club') ? 'my_club' : 'all';
+  loadPlayers(lid, mode);
 }
 
 // Edit player name inline
