@@ -614,28 +614,36 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 
 <!-- XLSX IMPORT MODAL -->
 <div class="modal-overlay" id="xlsx-import-modal">
-  <div class="modal" style="max-width:600px">
-    <div class="modal-header"><div class="modal-title">Import Players from Spreadsheet</div><button class="modal-close" onclick="closeModal('xlsx-import-modal')">×</button></div>
+  <div class="modal" style="max-width:780px">
+    <div class="modal-header">
+      <div class="modal-title">Import Players from Spreadsheet</div>
+      <button class="modal-close" onclick="closeModal('xlsx-import-modal')">×</button>
+    </div>
     <div class="modal-body">
       <div class="alert alert-info" style="margin-bottom:16px">
-        Upload an .xlsx file with columns: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Gender</strong> (M/F), <strong>Type</strong> (AD/JR). Column order and exact header names don't matter much — the importer will try to match them.
+        Columns needed: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Gender</strong> (M/F), <strong>Type</strong> (AD/JR). Add one column per club with <strong>1</strong> for members, blank or 0 for non-members.
       </div>
       <div class="form-group">
-        <label class="form-label">Choose File</label>
         <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" class="form-input" style="padding:8px">
       </div>
-      <div id="xlsx-preview" style="display:none;margin-top:16px">
-        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Preview — <span id="xlsx-row-count">0</span> players found</div>
-        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)">
-          <table class="data-table" id="xlsx-preview-table" style="margin:0"></table>
-        </div>
-      </div>
       <div id="xlsx-error" class="alert alert-error" style="display:none;margin-top:12px"></div>
-      <div id="xlsx-progress" style="display:none;margin-top:16px"></div>
+      <div id="xlsx-preview" style="display:none;margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:14px;font-weight:600" id="xlsx-summary"></div>
+          <div id="xlsx-unresolved-warn" style="font-size:13px;color:var(--gold);display:none">⚠ Resolve fuzzy matches before importing</div>
+        </div>
+        <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)">
+          <table class="data-table" id="xlsx-preview-table" style="margin:0">
+            <thead><tr id="xlsx-thead"></tr></thead>
+            <tbody id="xlsx-tbody"></tbody>
+          </table>
+        </div>
+        <div id="xlsx-progress" style="display:none;margin-top:16px"></div>
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('xlsx-import-modal')">Cancel</button>
-      <button class="btn btn-primary" id="xlsx-import-btn" onclick="runXlsxImport()" style="display:none">Import & Look Up Ratings</button>
+      <button class="btn btn-primary" id="xlsx-import-btn" onclick="runXlsxImport()" style="display:none">Import All</button>
     </div>
   </div>
 </div>
@@ -1634,114 +1642,249 @@ async function retryAllInQueue() {
 }
 
 // ══════════════════════════════════════════════
-// XLSX IMPORT
-// ══════════════════════════════════════════════
-let xlsxParsedRows = [];
+// ── XLSX IMPORT ENGINE ──────────────────────────────────────
+let xlsxParsedRows = [];   // raw parsed rows from file
+let xlsxAnalyzed = [];     // enriched rows with status
+let xlsxClubCols = [];     // detected club column names
+let xlsxExistingPlayers = []; // current players in DB
 
-document.getElementById('xlsx-file-input').addEventListener('change', function(e) {
+document.getElementById('xlsx-file-input').addEventListener('change', async function(e) {
   const file = e.target.files[0];
   if(!file) return;
   const errEl = document.getElementById('xlsx-error');
   errEl.style.display='none';
+  document.getElementById('xlsx-preview').style.display='none';
+  document.getElementById('xlsx-import-btn').style.display='none';
+
   const reader = new FileReader();
-  reader.onload = function(evt) {
+  reader.onload = async function(evt) {
     try {
       const wb = XLSX.read(evt.target.result, {type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
       if(!rows.length) throw new Error('No rows found in spreadsheet');
-      xlsxParsedRows = rows.map(parseXlsxRow).filter(r=>r.firstName && r.lastName);
-      if(!xlsxParsedRows.length) throw new Error('Could not find First Name / Last Name columns. Check your headers.');
-      renderXlsxPreview();
+
+      // Detect columns
+      const keys = Object.keys(rows[0]);
+      const KNOWN = ['first name','last name','firstname','lastname','first','last','fname','lname','gender','sex','type','playertype','category','name'];
+      xlsxClubCols = keys.filter(k => !KNOWN.some(kn => k.toLowerCase().replace(/[^a-z]/g,'').includes(kn.replace(/[^a-z]/g,''))));
+
+      // Parse rows
+      xlsxParsedRows = rows.map(row => {
+        const findCol = (patterns) => { for(const p of patterns){ const k=keys.find(k=>k.toLowerCase().replace(/[^a-z]/g,'').includes(p)); if(k) return row[k]; } return ''; };
+        let firstName = String(findCol(['firstname','first','fname'])||'').trim();
+        let lastName = String(findCol(['lastname','last','lname'])||'').trim();
+        if(!firstName && !lastName){ const n=String(findCol(['name','player'])||'').trim(); if(n){const p=n.split(' ');firstName=p[0];lastName=p.slice(1).join(' ');} }
+        const gRaw = String(findCol(['gender','sex'])||'').trim().toUpperCase();
+        const gender = gRaw.startsWith('M')?'MALE':gRaw.startsWith('F')?'FEMALE':'';
+        const tRaw = String(findCol(['type','playertype','category'])||'').trim().toUpperCase();
+        const type = tRaw.startsWith('J')?'JR':'AD';
+        // Club memberships from this row
+        const clubs = {};
+        xlsxClubCols.forEach(col => { clubs[col] = String(row[col]||'').trim() === '1'; });
+        return { firstName, lastName, gender, type, clubs };
+      }).filter(r => r.firstName && r.lastName);
+
+      if(!xlsxParsedRows.length) throw new Error('Could not find player data. Check First Name / Last Name columns.');
+
+      // Load existing players and clubs from DB
+      const [epRes, clubRes] = await Promise.all([
+        sb.from('players').select('id,roster_name,is_active'),
+        sb.from('clubs').select('id,name')
+      ]);
+      xlsxExistingPlayers = epRes.data || [];
+      const dbClubs = clubRes.data || [];
+
+      // Match club columns to DB clubs (case-insensitive)
+      const clubColMap = {}; // col name -> club id or null
+      xlsxClubCols.forEach(col => {
+        const match = dbClubs.find(c => c.name.toLowerCase().trim() === col.toLowerCase().trim());
+        clubColMap[col] = match ? match.id : null;
+      });
+
+      // Analyze each row
+      xlsxAnalyzed = xlsxParsedRows.map(row => {
+        const fullName = `${row.firstName} ${row.lastName}`.toLowerCase();
+        // Exact match
+        const exact = xlsxExistingPlayers.find(p => p.roster_name.toLowerCase() === fullName);
+        if(exact) return { ...row, status:'exists', matchId: exact.id, matchName: exact.roster_name, clubColMap };
+        // Fuzzy match — check if any player name is within 2 chars
+        const fuzzy = xlsxExistingPlayers.find(p => {
+          const parts = p.roster_name.toLowerCase().split(' ');
+          const rparts = fullName.split(' ');
+          return parts.length === rparts.length && parts.some((part,i) => levenshtein(part, rparts[i]) <= 2 && levenshtein(part, rparts[i]) > 0);
+        });
+        if(fuzzy) return { ...row, status:'fuzzy', matchId: fuzzy.id, matchName: fuzzy.roster_name, fuzzyResolution: null, clubColMap };
+        if(!row.gender) return { ...row, status:'error', error:'Missing gender', clubColMap };
+        return { ...row, status:'new', clubColMap };
+      });
+
+      renderXlsxPreview(dbClubs, clubColMap);
     } catch(err) {
-      errEl.textContent = 'Error reading file: ' + err.message;
+      errEl.textContent = 'Error: ' + err.message;
       errEl.style.display='flex';
-      document.getElementById('xlsx-preview').style.display='none';
-      document.getElementById('xlsx-import-btn').style.display='none';
     }
   };
   reader.readAsArrayBuffer(file);
 });
 
-function parseXlsxRow(row) {
-  // Flexible column matching — look for common header variations
-  const keys = Object.keys(row);
-  const findCol = (patterns) => {
-    for(const pattern of patterns){
-      const k = keys.find(k => k.toLowerCase().replace(/[^a-z]/g,'').includes(pattern));
-      if(k) return row[k];
-    }
-    return '';
-  };
-  let firstName = findCol(['firstname','first','fname']);
-  let lastName = findCol(['lastname','last','lname']);
-  // Handle single "Name" column as fallback
-  if(!firstName && !lastName){
-    const fullName = findCol(['name','player','playername']);
-    if(fullName){
-      const parts = String(fullName).trim().split(' ');
-      firstName = parts[0]; lastName = parts.slice(1).join(' ');
-    }
-  }
-  let genderRaw = String(findCol(['gender','sex'])).trim().toUpperCase();
-  let gender = genderRaw.startsWith('M') ? 'MALE' : genderRaw.startsWith('F') ? 'FEMALE' : '';
-  let typeRaw = String(findCol(['type','playertype','category'])).trim().toUpperCase();
-  let type = typeRaw.startsWith('J') ? 'JR' : 'AD'; // default to AD
-  return { firstName: String(firstName).trim(), lastName: String(lastName).trim(), gender, type };
+function levenshtein(a, b) {
+  const m=a.length, n=b.length;
+  const dp=Array.from({length:m+1},(_,i)=>Array.from({length:n+1},(_,j)=>i===0?j:j===0?i:0));
+  for(let i=1;i<=m;i++) for(let j=1;j<=n;j++)
+    dp[i][j]=a[i-1]===b[j-1]?dp[i-1][j-1]:1+Math.min(dp[i-1][j],dp[i][j-1],dp[i-1][j-1]);
+  return dp[m][n];
 }
 
-function renderXlsxPreview() {
-  document.getElementById('xlsx-row-count').textContent = xlsxParsedRows.length;
-  document.getElementById('xlsx-preview').style.display = 'block';
-  document.getElementById('xlsx-import-btn').style.display = 'inline-block';
-  const table = document.getElementById('xlsx-preview-table');
-  table.innerHTML = `<thead><tr><th>Name</th><th>Gender</th><th>Type</th></tr></thead><tbody>
-    ${xlsxParsedRows.slice(0,50).map(r=>`<tr><td>${r.firstName} ${r.lastName}</td><td>${r.gender||'<span style="color:var(--clay)">missing</span>'}</td><td>${r.type}</td></tr>`).join('')}
-  </tbody>`;
+function renderXlsxPreview(dbClubs, clubColMap) {
+  const counts = { new:0, exists:0, fuzzy:0, error:0 };
+  xlsxAnalyzed.forEach(r => counts[r.status]=(counts[r.status]||0)+1);
+
+  const hasFuzzy = counts.fuzzy > 0;
+  const unknownClubs = xlsxClubCols.filter(c => !clubColMap[c]);
+
+  document.getElementById('xlsx-summary').innerHTML =
+    `<span style="color:var(--green)">✅ ${counts.new} new</span>` +
+    (counts.exists ? ` &nbsp;🔄 ${counts.exists} existing (club update only)` : '') +
+    (counts.fuzzy ? ` &nbsp;<span style="color:var(--gold)">⚠ ${counts.fuzzy} fuzzy match</span>` : '') +
+    (counts.error ? ` &nbsp;<span style="color:var(--clay)">✕ ${counts.error} error</span>` : '');
+
+  if(unknownClubs.length) {
+    document.getElementById('xlsx-error').textContent = `Club columns not found in system: ${unknownClubs.join(', ')} — create these clubs first or check spelling`;
+    document.getElementById('xlsx-error').style.display='flex';
+  }
+
+  document.getElementById('xlsx-unresolved-warn').style.display = hasFuzzy ? 'block' : 'none';
+
+  // Build table
+  const thead = document.getElementById('xlsx-thead');
+  const tbody = document.getElementById('xlsx-tbody');
+  thead.innerHTML = `<th>Name</th><th>Status</th>${xlsxClubCols.map(c=>`<th style="font-size:11px">${c}</th>`).join('')}<th>G</th><th>Type</th>`;
+
+  tbody.innerHTML = xlsxAnalyzed.map((r,i) => {
+    const name = `${r.firstName} ${r.lastName}`;
+    const clubCells = xlsxClubCols.map(c=>`<td style="text-align:center">${r.clubs[c]?'✓':''}</td>`).join('');
+
+    let statusCell = '';
+    if(r.status==='new') statusCell = `<span class="badge badge-green">New</span>`;
+    else if(r.status==='exists') statusCell = `<span class="badge badge-blue">🔄 Club update</span>`;
+    else if(r.status==='error') statusCell = `<span class="badge badge-red">✕ ${r.error}</span>`;
+    else if(r.status==='fuzzy') {
+      const resolved = r.fuzzyResolution;
+      if(resolved==='use_existing') statusCell = `<span class="badge badge-blue">🔄 Use existing</span>`;
+      else if(resolved==='update_name') statusCell = `<span class="badge badge-blue">✏️ Update name</span>`;
+      else if(resolved==='add_new') statusCell = `<span class="badge badge-green">New (confirmed)</span>`;
+      else statusCell = `
+        <div style="font-size:11px;color:var(--gold);margin-bottom:4px">Close match: <strong>${r.matchName}</strong></div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 6px" onclick="resolveXlsx(${i},'use_existing')">Same person</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 6px" onclick="resolveXlsx(${i},'update_name')">Same + fix name</button>
+          <button class="btn btn-sm btn-ghost" style="font-size:11px;padding:2px 6px" onclick="resolveXlsx(${i},'add_new')">Different person</button>
+        </div>`;
+    }
+
+    return `<tr style="${r.status==='error'?'opacity:0.5':''}">
+      <td><strong>${name}</strong></td>
+      <td>${statusCell}</td>
+      ${clubCells}
+      <td>${r.gender==='MALE'?'♂':'♀'}</td>
+      <td>${r.type}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('xlsx-preview').style.display='block';
+  updateImportBtn();
+}
+
+function resolveXlsx(idx, resolution) {
+  xlsxAnalyzed[idx].fuzzyResolution = resolution;
+  // Re-render just that row
+  const unresolved = xlsxAnalyzed.filter(r=>r.status==='fuzzy'&&!r.fuzzyResolution).length;
+  document.getElementById('xlsx-unresolved-warn').style.display = unresolved ? 'block' : 'none';
+  // Refresh tbody
+  const tbody = document.getElementById('xlsx-tbody');
+  const rows = tbody.querySelectorAll('tr');
+  const r = xlsxAnalyzed[idx];
+  const resolved = r.fuzzyResolution;
+  let badge = '';
+  if(resolved==='use_existing') badge=`<span class="badge badge-blue">🔄 Use existing</span>`;
+  else if(resolved==='update_name') badge=`<span class="badge badge-blue">✏️ Update name</span>`;
+  else if(resolved==='add_new') badge=`<span class="badge badge-green">New (confirmed)</span>`;
+  rows[idx].querySelectorAll('td')[1].innerHTML = badge;
+  updateImportBtn();
+}
+
+function updateImportBtn() {
+  const unresolved = xlsxAnalyzed.filter(r=>r.status==='fuzzy'&&!r.fuzzyResolution).length;
+  const importable = xlsxAnalyzed.filter(r=>r.status!=='error').length;
+  const btn = document.getElementById('xlsx-import-btn');
+  btn.style.display = importable > 0 ? 'inline-block' : 'none';
+  btn.disabled = unresolved > 0;
+  btn.textContent = unresolved > 0 ? `Resolve ${unresolved} fuzzy match${unresolved>1?'es':''} first` : `Import All (${importable})`;
 }
 
 async function runXlsxImport() {
-  if(!xlsxParsedRows.length) return;
   const btn = document.getElementById('xlsx-import-btn');
   btn.disabled = true; btn.textContent = 'Importing…';
   const pgEl = document.getElementById('xlsx-progress');
   pgEl.style.display='block';
 
-  let imported=0, skipped=0;
-  const insertedPlayers = [];
+  let added=0, clubsUpdated=0, skipped=0;
+  const newPlayerIds = [];
 
-  for(let i=0;i<xlsxParsedRows.length;i++){
-    const r = xlsxParsedRows[i];
-    pgEl.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Importing ${i+1} of ${xlsxParsedRows.length}…</div><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${Math.round((i/xlsxParsedRows.length)*100)}%"></div></div>`;
-    if(!r.gender){ skipped++; continue; }
-    try {
+  const toProcess = xlsxAnalyzed.filter(r => r.status !== 'error');
+
+  for(let i=0;i<toProcess.length;i++) {
+    const r = toProcess[i];
+    pgEl.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Processing ${i+1} of ${toProcess.length}…</div><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${Math.round(((i+1)/toProcess.length)*100)}%"></div></div>`;
+
+    let playerId = null;
+
+    if(r.status === 'new' || (r.status==='fuzzy' && r.fuzzyResolution==='add_new')) {
+      // Create new player
       const {data,error} = await sb.from('players').insert({
         roster_name: `${r.firstName} ${r.lastName}`,
         gender: r.gender, player_type: r.type
       }).select().single();
       if(error) { skipped++; continue; }
-      insertedPlayers.push(data);
-      imported++;
-    } catch(e){ skipped++; }
+      playerId = data.id;
+      newPlayerIds.push(playerId);
+      added++;
+    } else if(r.status === 'exists' || r.status==='fuzzy') {
+      playerId = r.matchId;
+      // Update name if requested
+      if(r.fuzzyResolution==='update_name') {
+        await sb.from('players').update({roster_name:`${r.firstName} ${r.lastName}`}).eq('id',playerId);
+      }
+    }
+
+    // Update club memberships
+    if(playerId) {
+      for(const [col, isMember] of Object.entries(r.clubs)) {
+        if(!isMember) continue;
+        const clubId = r.clubColMap[col];
+        if(!clubId) continue;
+        // Upsert — add if not already a member
+        const {error} = await sb.from('player_clubs')
+          .upsert({player_id:playerId, club_id:clubId}, {onConflict:'player_id,club_id', ignoreDuplicates:true});
+        if(!error) clubsUpdated++;
+      }
+    }
   }
 
-  pgEl.innerHTML = `<div style="font-size:13px;color:var(--green)">✓ Imported ${imported} players${skipped?`, skipped ${skipped} (missing gender or duplicate)`:''}</div>`;
-  toast(`Imported ${imported} players!`,'success');
+  pgEl.innerHTML = `<div style="font-size:13px;color:var(--green)">✓ Done — ${added} added · ${clubsUpdated} club memberships set · ${skipped} skipped</div>`;
+  toast(`Import complete: ${added} added, ${clubsUpdated} club memberships`, 'success');
 
   setTimeout(async () => {
     closeModal('xlsx-import-modal');
     document.getElementById('xlsx-file-input').value='';
     document.getElementById('xlsx-preview').style.display='none';
-    document.getElementById('xlsx-progress').style.display='none';
-    btn.style.display='none';
-    xlsxParsedRows=[];
+    xlsxParsedRows=[]; xlsxAnalyzed=[];
+    btn.disabled=false; btn.style.display='none';
     const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
     await loadPlayers(lid);
-    if(AUTO_LOOKUP && insertedPlayers.length){
-      toast(`Looking up ratings for ${insertedPlayers.length} new players…`,'default');
-      bulkLookup(lid);
-    }
-  }, 1500);
+    if(AUTO_LOOKUP && newPlayerIds.length) bulkLookup(lid);
+  }, 2000);
 }
 
 
