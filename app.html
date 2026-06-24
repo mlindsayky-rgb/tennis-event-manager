@@ -151,6 +151,7 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
 .toast.success{background:var(--green)}
 .toast.error{background:var(--clay)}
 @keyframes slideIn{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* EVENT CARDS */
 .event-card{background:white;border:1px solid var(--border);border-radius:var(--rlg);padding:20px 24px;cursor:pointer;transition:all .15s;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:space-between}
@@ -662,6 +663,132 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('club-membership-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══ EVENT SCREEN ══ -->
+<div id="event-screen" class="event-screen">
+  <header class="app-header" id="event-header">
+    <div class="app-header-left">
+      <button class="header-btn" onclick="closeEvent()" style="margin-right:8px">← Back</button>
+      <div>
+        <div class="app-header-title" id="event-header-name">Event</div>
+        <div class="app-header-sub" id="event-header-status">Draft</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <div id="event-live-dot" style="display:none;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.8)">
+        <div style="width:8px;height:8px;border-radius:50%;background:#69F0AE;animation:pulse 2s infinite"></div> Live
+      </div>
+      <button class="header-btn" id="event-action-btn" onclick="eventAction()">Start Event</button>
+    </div>
+  </header>
+
+  <!-- Lifecycle bar -->
+  <div class="lifecycle-bar">
+    <div class="lifecycle-step" id="lc-draft">Draft</div>
+    <div class="lifecycle-step" id="lc-roster">Roster</div>
+    <div class="lifecycle-step" id="lc-teams">Teams Set</div>
+    <div class="lifecycle-step" id="lc-live">Live</div>
+    <div class="lifecycle-step" id="lc-complete">Complete</div>
+  </div>
+
+  <!-- Event nav -->
+  <nav class="event-nav">
+    <button class="event-nav-tab active" onclick="eventTab('roster',this)">Roster</button>
+    <button class="event-nav-tab" onclick="eventTab('teams',this)">Team Builder</button>
+    <button class="event-nav-tab" onclick="eventTab('rounds',this)">Rounds</button>
+    <button class="event-nav-tab" onclick="eventTab('notes',this)">Notes</button>
+  </nav>
+
+  <!-- ROSTER TAB -->
+  <div id="etab-roster" style="flex:1;overflow-y:auto">
+    <div style="padding:20px">
+      <div class="section-header">
+        <div>
+          <div class="section-title">Event Roster</div>
+          <div class="section-sub" id="roster-count">0 players</div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary" onclick="openModal('add-players-modal')">+ Add Players</button>
+          <button class="btn btn-primary" onclick="eventTab('teams',document.querySelector('.event-nav-tab:nth-child(2)'))">Build Teams →</button>
+        </div>
+      </div>
+      <div class="roster-panel" id="roster-list">
+        <div class="loading"><div class="spinner"></div> Loading roster…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEAM BUILDER TAB -->
+  <div id="etab-teams" style="display:none;flex:1;overflow-y:auto">
+    <div class="builder-toolbar">
+      <div class="builder-stat">Teams: <strong id="tb-team-count">—</strong></div>
+      <div class="builder-stat">Players: <strong id="tb-player-count">—</strong></div>
+      <div class="builder-stat">Avg NTRP: <strong id="tb-avg-ntrp">—</strong></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="bg-offset-toggle" onchange="toggleBGOffset(this.checked)"
+            style="width:16px;height:16px;accent-color:var(--green)">
+          BG Offset
+        </label>
+        <button class="btn btn-sm btn-ghost" onclick="generateTeams()">↺ Regenerate</button>
+        <button class="btn btn-sm btn-ghost" onclick="suggestTeamNames()">🎲 Name Teams</button>
+        <button class="btn btn-primary btn-sm" onclick="lockTeams()" id="lock-teams-btn">Lock Teams</button>
+      </div>
+    </div>
+    <div class="team-builder">
+      <div class="unassigned-pool" id="unassigned-pool"
+        ondragover="dragOver(event,this)" ondragleave="dragLeave(event,this)" ondrop="dropPlayer(event,null)">
+        <div class="unassigned-title">Unassigned Players</div>
+        <div class="team-players" id="unassigned-players" style="flex-direction:row;flex-wrap:wrap;gap:6px;min-height:40px"></div>
+      </div>
+      <div class="team-grid" id="team-grid">
+        <div class="loading"><div class="spinner"></div> Loading team builder…</div>
+      </div>
+      <div id="constraint-warnings" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <!-- ROUNDS TAB -->
+  <div id="etab-rounds" style="display:none;padding:20px">
+    <div class="empty-state">
+      <div class="empty-icon">🎾</div>
+      <div class="empty-title">Round Setup</div>
+      <div class="empty-sub">Coming in Phase 4 — lock your teams first</div>
+    </div>
+  </div>
+
+  <!-- NOTES TAB -->
+  <div id="etab-notes" style="display:none;padding:20px">
+    <div class="form-group">
+      <label class="form-label">Event Notes</label>
+      <textarea class="form-input" id="event-notes-input" rows="6" placeholder="Private notes for this event…" style="resize:vertical"></textarea>
+    </div>
+    <button class="btn btn-primary" onclick="saveEventNotes()">Save Notes</button>
+    <div id="saved-event-notes" style="margin-top:20px"></div>
+  </div>
+</div>
+
+<!-- ADD PLAYERS MODAL -->
+<div class="modal-overlay" id="add-players-modal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <div class="modal-title">Add Players to Event</div>
+      <button class="modal-close" onclick="closeModal('add-players-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px">
+        <input class="form-input" type="text" placeholder="Search players…" oninput="searchAddPlayers(this.value)" style="max-width:100%">
+      </div>
+      <div id="add-players-list" style="max-height:400px;overflow-y:auto">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('add-players-modal')">Done</button>
     </div>
   </div>
 </div>
@@ -1325,7 +1452,7 @@ function renderEvents() {
   const el=document.getElementById('dir-events-list');
   const f=evFilter==='all'?allEvents:allEvents.filter(e=>e.status===evFilter);
   if(!f.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events</div><button class="btn btn-primary" onclick="openModal(\'new-event-modal\')">+ New Event</button></div>';return;}
-  el.innerHTML=f.map(e=>`<div class="event-card"><div style="flex:1"><div class="event-card-name">${e.name}</div><div class="event-card-meta"><span>${fmtDate(e.event_date)}</span><span>${e.event_type}</span>${e.num_teams?`<span>${e.num_teams} teams</span>`:''}</div></div><div style="display:flex;align-items:center;gap:12px">${statusBadge(e.status)}<span style="color:var(--ghost);font-size:20px">›</span></div></div>`).join('');
+  el.innerHTML=f.map(e=>`<div class="event-card" onclick="openEvent(${JSON.stringify(e).replace(/'/g,'&#39;')})"><div style="flex:1"><div class="event-card-name">${e.name}</div><div class="event-card-meta"><span>${fmtDate(e.event_date)}</span><span>${e.event_type}</span>${e.num_teams?`<span>${e.num_teams} teams</span>`:''}</div></div><div style="display:flex;align-items:center;gap:12px">${statusBadge(e.status)}<span style="color:var(--ghost);font-size:20px">›</span></div></div>`).join('');
 }
 
 // ══════════════════════════════════════════════
