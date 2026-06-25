@@ -1797,8 +1797,12 @@ async function loadRounds(){
 async function loadRoundPairings(round,teams,eps,soCount){
   const el=document.getElementById('rb-'+round.round_number);
   if(!el) return;
-  const {data:pairings}=await sb.from('pairings').select('*').eq('round_id',round.id);
-  if(!pairings?.length){el.innerHTML='<div style="padding:16px;color:var(--ink-muted);font-size:13px">No pairings found for this round.</div>';return;}
+  const {data:pairings,error:pErr}=await sb.from('pairings').select('*').eq('round_id',round.id);
+  console.log('Round',round.round_number,'id:',round.id,'pairings:',pairings,'error:',pErr);
+  if(!pairings?.length){
+    el.innerHTML='<div style="padding:16px;color:var(--ink-muted);font-size:13px">No pairings found. <button class="btn btn-sm btn-secondary" onclick="redeployRound('+round.round_number+')">Redeploy Round '+round.round_number+'</button></div>';
+    return;
+  }
   const {data:scores}=await sb.from('scores').select('*').in('pairing_id',pairings.map(p=>p.id));
   const epIds=eps.map(e=>e.id);
   const {data:sitouts}=epIds.length?await sb.from('sitout_log').select('event_player_id')
