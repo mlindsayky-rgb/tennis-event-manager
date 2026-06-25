@@ -1048,7 +1048,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           BG Offset
         </label>
         <button class="btn btn-sm btn-ghost" onclick="generateTeams()">↺ Regenerate</button>
-        <button class="btn btn-sm btn-ghost" onclick="suggestTeamNames()">🎲 Name Teams</button>
+        <button class="btn btn-sm btn-ghost" onclick="openNameTeamsModal()">🎲 Name Teams</button>
         <button class="btn btn-primary btn-sm" onclick="lockTeams()" id="lock-teams-btn">Lock Teams</button>
       </div>
     </div>
@@ -1107,6 +1107,27 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-footer">
       <div style="font-size:13px;color:var(--muted)" id="add-players-count"></div>
       <button class="btn btn-primary" onclick="closeModal('add-players-modal');loadRoster()">Done — Back to Roster</button>
+    </div>
+  </div>
+</div>
+
+<!-- NAME TEAMS MODAL -->
+<div class="modal-overlay" id="name-teams-modal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <div class="modal-title">🎲 Name Your Teams</div>
+      <button class="modal-close" onclick="closeModal('name-teams-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:20px">
+        <button class="btn btn-secondary" onclick="applyRandomNames()">🎲 Random Names</button>
+        <button class="btn btn-ghost" onclick="clearTeamNames()">Clear All</button>
+      </div>
+      <div id="name-teams-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('name-teams-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTeamNames()">Apply Names</button>
     </div>
   </div>
 </div>
@@ -1550,24 +1571,71 @@ async function initTeamBuilder(){
 async function generateTeams(){
   const n=currentEvent.num_teams;
   if(!n){toast('No team count set','error');return;}
+
+  // Save current team names before regenerating
+  const savedNames=teamData.map(t=>t.name);
+
   const pids=eventRoster.map(ep=>ep.player_id);
   const {data:ratings}=await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids);
   const rm=buildRatingMap(ratings||[]);
+
   let players=eventRoster.filter(ep=>ep.status==='ACTIVE').map(ep=>({
-    ...ep.players,event_player_id:ep.id,ratings:rm[ep.player_id]||{}
+    ...ep.players, event_player_id:ep.id, ratings:rm[ep.player_id]||{}
   }));
-  players.sort((a,b)=>{
+
+  // ── TWO-PASS BALANCED SNAKE DRAFT ──
+  // Pass 1: Split into gender groups
+  const women=players.filter(p=>p.gender==='FEMALE');
+  const men=players.filter(p=>p.gender==='MALE');
+
+  // Sort each gender group by rating descending, shuffle within same bucket
+  const ratingSort=(a,b)=>{
     const av=sortVal(a),bv=sortVal(b);
-    if(av!==bv) return bv-av;
+    if(Math.abs(av-bv)>0.25) return bv-av; // different NTRP buckets — sort strictly
     const at=a.ratings['TRR']||a.ratings['UTR'],bt=b.ratings['TRR']||b.ratings['UTR'];
-    if(at&&bt) return parseFloat(bt.value)-parseFloat(at.value);
-    return at?-1:bt?1:a.roster_name.localeCompare(b.roster_name);
-  });
-  teamData=Array.from({length:n},(_,i)=>({id:'new_'+i,name:'Team '+(i+1),color:TEAM_COLORS[i%TEAM_COLORS.length],players:[]}));
-  let dir=1,ti=0;
-  players.forEach(p=>{teamData[ti].players.push(p);ti+=dir;if(ti>=n){ti=n-1;dir=-1;}else if(ti<0){ti=0;dir=1;}});
-  renderTeams();updateBuilderStats();checkConstraints();
-  toast('Teams generated!','success');
+    const atv=at?parseFloat(at.value):0,btv=bt?parseFloat(bt.value):0;
+    if(Math.abs(atv-btv)>0.1) return btv-atv; // meaningfully different TRR
+    return Math.random()-0.5; // same level — shuffle for variety
+  };
+  women.sort(ratingSort);
+  men.sort(ratingSort);
+
+  // Pass 2: Snake draft each gender group separately into teams
+  teamData=Array.from({length:n},(_,i)=>({
+    id:'new_'+i,
+    name: savedNames[i]||(NAME_SETS[0][i%NAME_SETS[0].length])||'Team '+(i+1),
+    color:TEAM_COLORS[i%TEAM_COLORS.length],
+    players:[]
+  }));
+
+  // Restore saved custom names if they exist
+  if(savedNames.length===n) teamData.forEach((t,i)=>t.name=savedNames[i]);
+
+  const snakeDraft=(group)=>{
+    let dir=1,ti=0;
+    group.forEach(p=>{
+      teamData[ti].players.push(p);
+      ti+=dir;
+      if(ti>=n){ti=n-1;dir=-1;}
+      else if(ti<0){ti=0;dir=1;}
+    });
+  };
+
+  snakeDraft(women);
+  snakeDraft(men);
+
+  // Show balance summary
+  const avgNTRP=t=>{
+    const rated=t.players.filter(p=>p.ratings?.['NTRP']);
+    return rated.length?(rated.reduce((s,p)=>s+parseFloat(p.ratings['NTRP'].value),0)/rated.length).toFixed(2):'N/A';
+  };
+  const summary=teamData.map(t=>`${t.name}: ${avgNTRP(t)} avg (${t.players.filter(p=>p.gender==='FEMALE').length}W/${t.players.filter(p=>p.gender==='MALE').length}M)`).join(' · ');
+  console.log('Team balance:',summary);
+
+  renderTeams();
+  updateBuilderStats();
+  checkConstraints();
+  toast('Teams balanced! '+summary,'success');
 }
 
 function renderTeams(){
@@ -1635,8 +1703,93 @@ function dDrop(e,toId){
 }
 
 function toggleBGOffset(v){bgOffsetEnabled=v;if(teamData.length) generateTeams();}
-function suggestAllNames(){const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];teamData.forEach((t,i)=>{t.name=s[i%s.length];const inp=document.querySelector('#tc-'+t.id+' .team-name-input');if(inp)inp.value=t.name;});}
-function quickName(tid,i){const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];const t=teamData.find(x=>x.id===tid);if(t){t.name=s[i%s.length];const inp=document.querySelector('#tc-'+tid+' .team-name-input');if(inp)inp.value=t.name;}}
+function suggestAllNames(){
+  const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];
+  teamData.forEach((t,i)=>{
+    t.name=s[i%s.length];
+    const inp=document.querySelector('#tc-'+t.id+' .team-name-input');
+    if(inp){inp.value=t.name;inp.style.color='var(--court)';setTimeout(()=>inp.style.color='',800);}
+  });
+}
+
+function quickName(tid,i){
+  const allNames=NAME_SETS.flatMap(s=>s);
+  const used=teamData.map(t=>t.name);
+  const available=allNames.filter(n=>!used.includes(n));
+  const pool=available.length?available:allNames;
+  const name=pool[Math.floor(Math.random()*pool.length)];
+  const t=teamData.find(x=>x.id===tid);
+  if(t){
+    t.name=name;
+    const inp=document.querySelector('#tc-'+tid+' .team-name-input');
+    if(inp){inp.value=name;inp.style.color='var(--court)';setTimeout(()=>inp.style.color='',800);}
+    toast(name+'!','success');
+  }
+}
+
+function openNameTeamsModal(){
+  if(!teamData.length){toast('Generate teams first','error');return;}
+  const list=document.getElementById('name-teams-list');
+  list.innerHTML=teamData.map((t,i)=>`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <div style="width:12px;height:12px;border-radius:50%;background:${t.color};flex-shrink:0"></div>
+      <div style="flex:1">
+        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Team ${i+1}</div>
+        <input class="form-input" id="tname-${i}" value="${escQ(t.name)}" placeholder="Enter team name" style="font-family:var(--font-display);font-size:15px">
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="randomOneName(${i})" title="Random name">🎲</button>
+    </div>`).join('');
+  openModal('name-teams-modal');
+}
+
+function randomOneName(idx){
+  const allNames=NAME_SETS.flatMap(s=>s);
+  const used=teamData.map((t,i)=>document.getElementById('tname-'+i)?.value||t.name);
+  const available=allNames.filter(n=>!used.includes(n));
+  const pool=available.length?available:allNames;
+  const name=pool[Math.floor(Math.random()*pool.length)];
+  const inp=document.getElementById('tname-'+idx);
+  if(inp){inp.value=name;inp.style.borderColor='var(--court)';setTimeout(()=>inp.style.borderColor='',800);}
+}
+
+function applyRandomNames(){
+  const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];
+  teamData.forEach((_,i)=>{
+    const inp=document.getElementById('tname-'+i);
+    if(inp){inp.value=s[i%s.length];inp.style.borderColor='var(--court)';setTimeout(()=>inp.style.borderColor='',600);}
+  });
+}
+
+function clearTeamNames(){
+  teamData.forEach((_,i)=>{
+    const inp=document.getElementById('tname-'+i);
+    if(inp) inp.value='';
+  });
+}
+
+function saveTeamNames(){
+  teamData.forEach((t,i)=>{
+    const inp=document.getElementById('tname-'+i);
+    if(inp&&inp.value.trim()) t.name=inp.value.trim();
+  });
+  renderTeams();
+  closeModal('name-teams-modal');
+  toast('Names saved!','success');
+}
+
+// Alias for button compatibility
+function suggestTeamNames(){openNameTeamsModal();}
+
+// Show/hide strategy picker based on format
+function updateStrategyVisibility(roundNum){
+  const fmt=document.getElementById('rf-'+roundNum)?.value;
+  const cell=document.getElementById('strategy-cell-'+roundNum);
+  if(cell){
+    const noStrategy=fmt==='TD'||fmt==='OPEN';
+    cell.style.opacity=noStrategy?'0.3':'1';
+    cell.style.pointerEvents=noStrategy?'none':'auto';
+  }
+}
 
 async function checkConstraints(){
   const {data:cons}=await sb.from('player_constraints').select('player_a_id,player_b_id,constraint_type');
@@ -1665,13 +1818,28 @@ async function lockTeams(){
   const btn=document.getElementById('lock-teams-btn');
   btn.disabled=true;btn.textContent='Saving…';
   try{
-    await sb.from('teams').delete().eq('event_id',currentEvent.id);
+    // Delete old team_players first, then teams, then recreate
+    const {data:oldTeams}=await sb.from('teams').select('id').eq('event_id',currentEvent.id);
+    if(oldTeams?.length){
+      await sb.from('team_players').delete().in('team_id',oldTeams.map(t=>t.id));
+      await sb.from('teams').delete().eq('event_id',currentEvent.id);
+    }
+    // Also clear old pairings/rounds since team IDs are changing
+    const {data:oldRounds}=await sb.from('rounds').select('id').eq('event_id',currentEvent.id);
+    if(oldRounds?.length){
+      await sb.from('pairings').delete().in('round_id',oldRounds.map(r=>r.id));
+      await sb.from('rounds').delete().eq('event_id',currentEvent.id);
+    }
+    currentRounds=[];
     for(const t of teamData){
       const {data:nt,error}=await sb.from('teams').insert({event_id:currentEvent.id,name:t.name,color:t.color}).select().single();
       if(error) throw error;
       if(t.players.length) await sb.from('team_players').insert(t.players.map(p=>({team_id:nt.id,event_player_id:p.event_player_id})));
       t.id=nt.id;
     }
+    // Sync num_teams on event record
+    await sb.from('events').update({num_teams:teamData.length}).eq('id',currentEvent.id);
+    currentEvent.num_teams=teamData.length;
     await setEventStatus('TEAMS_SET');
     toast('Teams locked! Ready to go live 🎾','success');
     btn.textContent='✓ Teams Locked';
@@ -1696,6 +1864,7 @@ async function loadRounds(){
       return {
         num: i+1,
         format: saved?.format || (i===numRounds-1?'OPEN':'BG'),
+        strategy: saved?.strategy||'AE',
         golden: saved?.golden_game_enabled||false,
         timer: saved?.timer_minutes||0,
         scoring: saved?.scoring_mode||(i===numRounds-1?'DIRECTOR_POINTS':'GAMES')
@@ -1715,6 +1884,7 @@ async function loadRounds(){
           <thead><tr>
             <th>#</th>
             <th>Format</th>
+            <th>Strategy</th>
             <th>Scoring</th>
             <th>Timer (min)</th>
             <th>Golden Game</th>
@@ -1723,11 +1893,18 @@ async function loadRounds(){
             ${rounds.map(r=>`<tr>
               <td><span class="round-num">Round ${r.num}${r.num===numRounds?' <span class="badge badge-navy">Final</span>':''}</span></td>
               <td>
-                <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rf-${r.num}">
+                <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rf-${r.num}" onchange="updateStrategyVisibility(${r.num})">
                   <option value="BG" ${r.format==='BG'?'selected':''}>BG — Mixed doubles</option>
                   <option value="BB" ${r.format==='BB'?'selected':''}>BB — Boys doubles</option>
                   <option value="GG" ${r.format==='GG'?'selected':''}>GG — Girls doubles</option>
+                  <option value="TD" ${r.format==='TD'?'selected':''}>TD — Top Down</option>
                   <option value="OPEN" ${r.format==='OPEN'?'selected':''}>OPEN — Captain picks</option>
+                </select>
+              </td>
+              <td id="strategy-cell-${r.num}" style="${(r.format==='TD'||r.format==='OPEN')?'opacity:.3;pointer-events:none':''}">
+                <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rstr-${r.num}">
+                  <option value="AE" ${(r.strategy||'AE')==='AE'?'selected':''}>AE — All Even</option>
+                  <option value="YY" ${r.strategy==='YY'?'selected':''}>YY — Yin Yang</option>
                 </select>
               </td>
               <td>
@@ -1897,7 +2074,9 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
     .eq('event_id',currentEvent.id).eq('round_number',roundNum).eq('is_complete',false);
   const cfg=savedRounds?.[0];
   const fmt=cfg?.format||currentEvent.default_round_format||'BG';
+  const strategy=cfg?.strategy||'AE';
   const scoring=cfg?.scoring_mode||'GAMES';
+  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy);
 
   // Create the round record
   const {data:nr,error:rErr}=await sb.from('rounds').insert({
@@ -1937,11 +2116,12 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
   const usedEPIds=new Set();
 
   // Standard round-robin: rotate all teams except first
-  // This ensures every team plays different opponents each round
+  // Add random salt so redeploying the same round gives different pairings
+  const redeploySalt=Math.floor(Math.random()*100);
   const rotated=[...teams];
   if(n>1){
     const rotating=rotated.slice(1);
-    const shift=(roundNum-1)%(n-1);
+    const shift=((roundNum-1)+redeploySalt)%(n-1);
     for(let i=0;i<shift;i++) rotating.push(rotating.shift());
     rotated.splice(1,rotating.length,...rotating);
   }
@@ -1951,6 +2131,8 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
   for(let i=0;i<Math.floor(n/2);i++){
     matchups.push([rotated[i],rotated[n-1-i]]);
   }
+  // Shuffle players within each team's available pool for pairing variety
+  const shuffled=[...playing].sort(()=>Math.random()-0.5);
 
   console.log('Round',roundNum,'matchups:',matchups.map(m=>m[0].name+' vs '+m[1].name));
 
@@ -1970,30 +2152,116 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
     );
 
     for(let mc=0;mc<courtsForThisMatchup;mc++){
-      const avA=playing.filter(p=>byTeam[tA.id]?.includes(p.id)&&!usedEPIds.has(p.id));
-      const avB=playing.filter(p=>byTeam[tB.id]?.includes(p.id)&&!usedEPIds.has(p.id));
+      const avA=shuffled.filter(p=>byTeam[tA.id]?.includes(p.id)&&!usedEPIds.has(p.id));
+      const avB=shuffled.filter(p=>byTeam[tB.id]?.includes(p.id)&&!usedEPIds.has(p.id));
+
+        // ── RATING HELPERS ──────────────────────────────────────
+      // Actual NTRP (or TRR fallback, unrated = 2.5 estimate)
+      const pRating=p=>{
+        const ntrp=p.ratings?.['NTRP'];
+        const trr=p.ratings?.['TRR']||p.ratings?.['UTR'];
+        if(ntrp) return parseFloat(ntrp.value);
+        if(trr) return Math.min(parseFloat(trr.value),6.0); // cap TRR to NTRP scale
+        return 2.5; // unrated estimate
+      };
+      // Effective rating for BG balance math: women get -0.5 offset (3.5F = 3.0M effective)
+      const pEffRating=p=>{
+        const r=pRating(p);
+        return (p.players?.gender||p.gender)==='FEMALE' ? r-0.5 : r;
+      };
+      const sortByEff=arr=>[...arr].sort((a,b)=>pEffRating(b)-pEffRating(a));
+      const sortByRating=arr=>[...arr].sort((a,b)=>pRating(b)-pRating(a));
+      const gender=p=>(p.players?.gender||p.gender);
 
       let p1a,p2a,p1b,p2b;
-      const getM=arr=>arr.find(p=>(p.players?.gender||p.gender)==='MALE');
-      const getF=arr=>arr.find(p=>(p.players?.gender||p.gender)==='FEMALE');
 
-      if(fmt==='BG'){
-        p1a=getM(avA); p2a=getF(avA);
-        p1b=getM(avB); p2b=getF(avB);
-        if(!p1a||!p2a){[p1a,p2a]=avA;}
-        if(!p1b||!p2b){[p1b,p2b]=avB;}
-      } else if(fmt==='BB'){
-        [p1a,p2a]=avA.filter(p=>(p.players?.gender||p.gender)==='MALE');
-        [p1b,p2b]=avB.filter(p=>(p.players?.gender||p.gender)==='MALE');
-        if(!p1a||!p2a){[p1a,p2a]=avA;}
-        if(!p1b||!p2b){[p1b,p2b]=avB;}
-      } else if(fmt==='GG'){
-        [p1a,p2a]=avA.filter(p=>(p.players?.gender||p.gender)==='FEMALE');
-        [p1b,p2b]=avB.filter(p=>(p.players?.gender||p.gender)==='FEMALE');
-        if(!p1a||!p2a){[p1a,p2a]=avA;}
-        if(!p1b||!p2b){[p1b,p2b]=avB;}
+      // Build all possible same-gender-valid pairs for a pool of players
+      const buildPairs=(pool, fmtType)=>{
+        const pairs=[];
+        if(fmtType==='BB'){
+          const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
+          for(let i=0;i<men.length-1;i+=2)
+            if(men[i]&&men[i+1]) pairs.push({p1:men[i],p2:men[i+1],combined:pEffRating(men[i])+pEffRating(men[i+1])});
+        } else if(fmtType==='GG'){
+          const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
+          for(let i=0;i<women.length-1;i+=2)
+            if(women[i]&&women[i+1]) pairs.push({p1:women[i],p2:women[i+1],combined:pEffRating(women[i])+pEffRating(women[i+1])});
+        } else if(fmtType==='BG'){
+          const men=pool.filter(p=>gender(p)==='MALE');
+          const women=pool.filter(p=>gender(p)==='FEMALE');
+          for(const m of men) for(const f of women)
+            pairs.push({p1:m,p2:f,combined:pEffRating(m)+pEffRating(f)});
+        } else {
+          // TD or OPEN — any two players
+          const sorted=sortByEff(pool);
+          for(let i=0;i<sorted.length-1;i+=2)
+            if(sorted[i]&&sorted[i+1]) pairs.push({p1:sorted[i],p2:sorted[i+1],combined:pEffRating(sorted[i])+pEffRating(sorted[i+1])});
+        }
+        return pairs;
+      };
+
+      const fmtType=fmt; // BG, BB, GG, TD, OPEN
+      const pairsA=buildPairs(avA,fmtType);
+      const pairsB=buildPairs(avB,fmtType);
+
+      if(!pairsA.length||!pairsB.length){
+        // No valid pairs — skip this court
+        console.warn('No valid pairs for court',courtNum,'fmt:',fmtType);
+        continue;
+      }
+
+      // Find best cross-team pairing based on strategy
+      let chosenA=null, chosenB=null;
+
+      if(strategy==='AE'){
+        // AE — All Even: find combination with smallest rating gap
+        let bestDiff=Infinity;
+        for(const pa of pairsA){
+          for(const pb of pairsB){
+            if(pa.p1.id===pb.p1.id||pa.p1.id===pb.p2.id||pa.p2.id===pb.p1.id||pa.p2.id===pb.p2.id) continue;
+            const diff=Math.abs(pa.combined-pb.combined);
+            if(diff<bestDiff){bestDiff=diff;chosenA=pa;chosenB=pb;}
+          }
+        }
+        console.log('AE Court',courtNum,'gap:',chosenA&&chosenB?Math.abs(chosenA.combined-chosenB.combined).toFixed(2):'N/A');
+
+      } else if(strategy==='YY'){
+        // YY — Yin Yang: within each team pair strongest with weakest,
+        // then match those pairs across teams by closest combined
+        const yyPair=(pool,fmtType)=>{
+          if(fmtType==='BG'){
+            const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
+            const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
+            if(!men.length||!women.length) return null;
+            // Strongest M with weakest F
+            const m=men[0], f=women[women.length-1];
+            return {p1:m,p2:f,combined:pEffRating(m)+pEffRating(f)};
+          } else if(fmtType==='BB'){
+            const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
+            if(men.length<2) return null;
+            return {p1:men[0],p2:men[men.length-1],combined:pEffRating(men[0])+pEffRating(men[men.length-1])};
+          } else if(fmtType==='GG'){
+            const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
+            if(women.length<2) return null;
+            return {p1:women[0],p2:women[women.length-1],combined:pEffRating(women[0])+pEffRating(women[women.length-1])};
+          } else {
+            const sorted=sortByEff(pool);
+            if(sorted.length<2) return null;
+            return {p1:sorted[0],p2:sorted[sorted.length-1],combined:pEffRating(sorted[0])+pEffRating(sorted[sorted.length-1])};
+          }
+        };
+        chosenA=yyPair(avA,fmtType)||pairsA[0];
+        chosenB=yyPair(avB,fmtType)||pairsB[0];
+        console.log('YY Court',courtNum,'A:',chosenA?.combined?.toFixed(2),'B:',chosenB?.combined?.toFixed(2));
+      }
+
+      if(chosenA&&chosenB){
+        p1a=chosenA.p1; p2a=chosenA.p2;
+        p1b=chosenB.p1; p2b=chosenB.p2;
       } else {
-        [p1a,p2a]=avA; [p1b,p2b]=avB;
+        // Fallback
+        [p1a,p2a]=sortByEff(avA);
+        [p1b,p2b]=sortByEff(avB);
       }
 
       if(p1a&&p2a&&p1b&&p2b){
@@ -2153,6 +2421,7 @@ async function saveRoundConfig() {
       event_id: currentEvent.id,
       round_number: i,
       format: document.getElementById('rf-'+i)?.value||'BG',
+      strategy: document.getElementById('rstr-'+i)?.value||'AE',
       scoring_mode: document.getElementById('rs-'+i)?.value||'GAMES',
       timer_minutes: parseInt(document.getElementById('rt-'+i)?.value)||null,
       golden_game_enabled: document.getElementById('rg-'+i)?.checked||false,
