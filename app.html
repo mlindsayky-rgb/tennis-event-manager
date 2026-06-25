@@ -967,6 +967,636 @@ function logout() {
   showScreen('pin-screen');
 }
 
+
+// ══════════════════════════════════════════════
+// PHASE 3 — EVENT DETAIL + TEAM BUILDER + LIVE
+// ══════════════════════════════════════════════
+
+let currentEvent = null;
+let eventRoster = [];
+let teamData = [];
+let bgOffsetEnabled = false;
+let draggedChip = null;
+let currentRounds = [];
+
+const TEAM_COLORS = ['#1B5E20','#1565C0','#B71C1C','#F57F17','#4A148C','#006064','#BF360C','#33691E'];
+const NAME_SETS = [
+  ['Aces','Baseline Bashers','Court Crushers','Drop Shot Dragons','Lob Stars'],
+  ['Net Ninjas','Rally Kings','Slice Squad','Topspin Tigers','Volley Vipers'],
+  ['Deuce Demons','Love Club','Match Points','Second Serve','Wild Cards'],
+];
+
+function openEvent(event) {
+  currentEvent = typeof event === 'string' ? JSON.parse(decodeURIComponent(event)) : event;
+  document.getElementById('event-header-name').textContent = currentEvent.name;
+  document.getElementById('event-header-sub').textContent = (currentEvent.status||'').replace(/_/g,' ');
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('event-screen').classList.add('active');
+  updateLifecycle(currentEvent.status);
+  updateActionBtn(currentEvent.status);
+  const firstTab = document.querySelector('.event-nav-tab');
+  eventTab('roster', firstTab);
+  loadRoster();
+}
+
+function closeEvent() {
+  currentEvent=null; teamData=[]; eventRoster=[];
+  document.getElementById('event-screen').classList.remove('active');
+  const s=currentUser?.role==='admin'?'admin-screen':'director-screen';
+  document.getElementById(s).classList.add('active');
+  if(currentUser?.role==='director') loadDirectorEvents();
+  else loadAdminData();
+}
+
+function eventTab(name, btn) {
+  document.querySelectorAll('.event-nav-tab').forEach(t=>t.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  ['roster','teams','rounds','notes'].forEach(t=>{
+    const el=document.getElementById('etab-'+t);
+    if(el) el.style.display=t===name?'block':'none';
+  });
+  if(name==='teams') initTeamBuilder();
+  if(name==='rounds') loadRounds();
+  if(name==='notes') loadNotes();
+}
+
+function updateLifecycle(status) {
+  const steps=['DRAFT','ROSTER_LOADED','TEAMS_SET','LIVE','COMPLETE'];
+  const ids=['lc-draft','lc-roster','lc-teams','lc-live','lc-complete'];
+  const idx=steps.indexOf(status);
+  ids.forEach((id,i)=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.className='lifecycle-step';
+    if(i<idx) el.classList.add('done');
+    else if(i===idx) el.classList.add('active');
+  });
+}
+
+function updateActionBtn(status) {
+  const btn=document.getElementById('event-action-btn');
+  if(!btn) return;
+  const map={DRAFT:'Build Teams →',ROSTER_LOADED:'Build Teams →',TEAMS_SET:'Go Live 🎾',LIVE:'End Event',COMPLETE:'View Summary'};
+  btn.textContent=map[status]||'Start Event';
+  btn.style.background=status==='LIVE'?'var(--clay)':status==='TEAMS_SET'?'rgba(245,127,23,0.8)':'rgba(255,255,255,.15)';
+}
+
+async function eventAction() {
+  const s=currentEvent.status;
+  if(s==='DRAFT'||s==='ROSTER_LOADED'){
+    eventTab('teams',document.querySelectorAll('.event-nav-tab')[1]);
+    toast('Build and lock your teams first','default');
+  } else if(s==='TEAMS_SET'){
+    await setEventStatus('LIVE');
+    const dot=document.getElementById('event-live-dot');
+    if(dot) dot.style.display='flex';
+    toast('Event is LIVE! 🎾','success');
+  } else if(s==='LIVE'){
+    if(!confirm('End this event?')) return;
+    await setEventStatus('COMPLETE');
+    toast('Event complete!','success');
+  }
+}
+
+async function setEventStatus(newStatus) {
+  const {error}=await sb.from('events').update({status:newStatus}).eq('id',currentEvent.id);
+  if(error){toast('Error: '+error.message,'error');return;}
+  currentEvent.status=newStatus;
+  updateLifecycle(newStatus);
+  updateActionBtn(newStatus);
+  const sub=document.getElementById('event-header-sub');
+  if(sub) sub.textContent=newStatus.replace(/_/g,' ');
+}
+
+// ── ROSTER ───────────────────────────────────
+async function loadRoster() {
+  const el=document.getElementById('roster-list');
+  if(!el) return;
+  el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const {data,error}=await sb.from('event_players')
+    .select('id,status,player_id,players(id,roster_name,gender,player_type)')
+    .eq('event_id',currentEvent.id).order('created_at');
+  if(error){el.innerHTML='<div class="empty-state"><div class="empty-title">Error loading roster</div></div>';return;}
+  eventRoster=data||[];
+  const rc=document.getElementById('roster-count');
+  if(rc) rc.textContent=eventRoster.length+' player'+(eventRoster.length!==1?'s':'');
+  const pids=eventRoster.map(ep=>ep.player_id);
+  const {data:ratings}=pids.length?await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids):{data:[]};
+  const rm=buildRatingMap(ratings||[]);
+  if(!eventRoster.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players to get started</div></div>';
+    return;
+  }
+  el.innerHTML=eventRoster.map(ep=>{
+    const p=ep.players;
+    const r=rm[ep.player_id]||{};
+    const ntrp=r['NTRP'],trr=r['TRR']||r['UTR'];
+    return `<div class="roster-player-row">
+      <span style="font-size:16px">${p.gender==='MALE'?'♂':'♀'}</span>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:14px">${p.roster_name}</div>
+        <div style="font-size:12px;color:var(--muted)">${ntrp?'NTRP '+parseFloat(ntrp.value).toFixed(1)+(ntrp.designation?' '+ntrp.designation:''):''}${trr?' · TRR '+parseFloat(trr.value).toFixed(3):''}${!ntrp&&!trr?'<span style="color:var(--clay)">No rating</span>':''}</div>
+      </div>
+      <select class="form-select" style="font-size:12px;padding:4px 8px;width:auto" onchange="updateEPStatus('${ep.id}',this.value)">
+        <option value="ACTIVE" ${ep.status==='ACTIVE'?'selected':''}>Active</option>
+        <option value="OUT" ${ep.status==='OUT'?'selected':''}>Out</option>
+        <option value="PENDING" ${ep.status==='PENDING'?'selected':''}>Pending</option>
+      </select>
+      <button class="btn btn-sm btn-ghost" style="color:var(--clay)" onclick="removeEP('${ep.id}','${escQ(p.roster_name)}')">✕</button>
+    </div>`;
+  }).join('');
+  if(currentEvent.status==='DRAFT'&&eventRoster.length>0) setEventStatus('ROSTER_LOADED');
+}
+
+async function updateEPStatus(epId,status){
+  await sb.from('event_players').update({status}).eq('id',epId);
+  const ep=eventRoster.find(e=>e.id===epId);if(ep)ep.status=status;
+  toast('Status updated','success');
+}
+
+async function removeEP(epId,name){
+  if(!confirm('Remove '+name+' from this event?')) return;
+  await sb.from('event_players').delete().eq('id',epId);
+  toast(name+' removed','default');
+  loadRoster();
+}
+
+async function searchAddPlayers(q){
+  const el=document.getElementById('add-players-list');
+  if(!el) return;
+  const rids=new Set(eventRoster.map(ep=>ep.player_id));
+  let query=sb.from('players').select('id,roster_name,gender,player_type').eq('is_active',true);
+  if(q) query=query.ilike('roster_name','%'+q+'%');
+  if(currentUser?.role==='director'){
+    const {data:cp}=await sb.from('player_clubs').select('player_id').eq('club_id',currentUser.club_id);
+    const cids=(cp||[]).map(c=>c.player_id);
+    if(cids.length) query=query.in('id',cids);
+  }
+  const {data}=await query.order('roster_name').limit(40);
+  if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-title">No players found</div></div>';return;}
+  el.innerHTML=data.map(p=>{
+    const inR=rids.has(p.id);
+    return '<div class="roster-player-row" style="'+(inR?'opacity:.5':'')+'">'+
+      '<span>'+(p.gender==='MALE'?'♂':'♀')+'</span>'+
+      '<div style="flex:1"><div style="font-weight:600;font-size:13px">'+p.roster_name+'</div><div style="font-size:11px;color:var(--muted)">'+p.player_type+'</div></div>'+
+      (inR?'<span class="badge badge-green">In roster</span>':`<button class="btn btn-sm btn-primary" onclick="addEP('${p.id}','${escQ(p.roster_name)}',this)">Add</button>`)+
+      '</div>';
+  }).join('');
+}
+
+async function addEP(pid,name,btn){
+  btn.disabled=true;btn.textContent='Adding…';
+  const {error}=await sb.from('event_players').insert({event_id:currentEvent.id,player_id:pid,status:'ACTIVE'});
+  if(error){btn.disabled=false;btn.textContent='Add';toast('Error: '+error.message,'error');return;}
+  btn.textContent='✓ Added';
+  await loadRoster();
+  searchAddPlayers(document.querySelector('#add-players-modal input')?.value||'');
+}
+
+// ── TEAM BUILDER ─────────────────────────────
+function buildRatingMap(ratings){
+  const rm={};
+  ratings.forEach(r=>{
+    if(!rm[r.player_id]) rm[r.player_id]={};
+    const ex=rm[r.player_id][r.source];
+    if(!ex||new Date(r.fetched_at)>new Date(ex.fetched_at)) rm[r.player_id][r.source]=r;
+  });
+  return rm;
+}
+
+function sortVal(p){
+  if(!p.ratings?.['NTRP']) return 0;
+  let v=parseFloat(p.ratings['NTRP'].value);
+  if(bgOffsetEnabled&&p.gender==='FEMALE') v-=0.5;
+  return v;
+}
+
+async function initTeamBuilder(){
+  const grid=document.getElementById('team-grid');
+  if(!grid) return;
+  if(!eventRoster.length){
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted)">Add players to the roster first</div>';
+    return;
+  }
+  const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
+  if(teams?.length){
+    const {data:tps}=await sb.from('team_players').select('id,team_id,event_player_id').in('team_id',teams.map(t=>t.id));
+    const pids=eventRoster.map(ep=>ep.player_id);
+    const {data:ratings}=await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids);
+    const rm=buildRatingMap(ratings||[]);
+    teamData=teams.map(t=>({...t,players:(tps||[]).filter(tp=>tp.team_id===t.id).map(tp=>{
+      const ep=eventRoster.find(e=>e.id===tp.event_player_id);
+      return ep?{...ep.players,event_player_id:ep.id,tp_id:tp.id,ratings:rm[ep.player_id]||{}}:null;
+    }).filter(Boolean)}));
+    renderTeams();updateBuilderStats();
+  } else {
+    grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:60px 20px">'+
+      '<div style="font-size:48px;margin-bottom:12px">👥</div>'+
+      '<div style="font-size:16px;font-weight:600;color:var(--mid);margin-bottom:6px">Ready to build teams</div>'+
+      '<div style="font-size:14px;color:var(--muted);margin-bottom:20px">'+eventRoster.length+' players · '+currentEvent.num_teams+' teams</div>'+
+      '<button class="btn btn-primary btn-lg" onclick="generateTeams()">⚡ Generate Teams</button></div>';
+  }
+  const bgo=document.getElementById('bg-offset-toggle');
+  if(bgo) bgo.checked=bgOffsetEnabled;
+}
+
+async function generateTeams(){
+  const n=currentEvent.num_teams;
+  if(!n){toast('No team count set','error');return;}
+  const pids=eventRoster.map(ep=>ep.player_id);
+  const {data:ratings}=await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids);
+  const rm=buildRatingMap(ratings||[]);
+  let players=eventRoster.filter(ep=>ep.status==='ACTIVE').map(ep=>({
+    ...ep.players,event_player_id:ep.id,ratings:rm[ep.player_id]||{}
+  }));
+  players.sort((a,b)=>{
+    const av=sortVal(a),bv=sortVal(b);
+    if(av!==bv) return bv-av;
+    const at=a.ratings['TRR']||a.ratings['UTR'],bt=b.ratings['TRR']||b.ratings['UTR'];
+    if(at&&bt) return parseFloat(bt.value)-parseFloat(at.value);
+    return at?-1:bt?1:a.roster_name.localeCompare(b.roster_name);
+  });
+  teamData=Array.from({length:n},(_,i)=>({id:'new_'+i,name:'Team '+(i+1),color:TEAM_COLORS[i%TEAM_COLORS.length],players:[]}));
+  let dir=1,ti=0;
+  players.forEach(p=>{teamData[ti].players.push(p);ti+=dir;if(ti>=n){ti=n-1;dir=-1;}else if(ti<0){ti=0;dir=1;}});
+  renderTeams();updateBuilderStats();checkConstraints();
+  toast('Teams generated!','success');
+}
+
+function renderTeams(){
+  const grid=document.getElementById('team-grid');
+  if(!grid) return;
+  grid.innerHTML=teamData.map((team,ti)=>`
+    <div class="team-card" id="tc-${team.id}"
+      ondragover="dOver(event,this)" ondragleave="dLeave(event,this)" ondrop="dDrop(event,'${team.id}')">
+      <div class="team-card-header">
+        <div style="display:flex;align-items:center;gap:8px;flex:1">
+          <div style="width:12px;height:12px;border-radius:50%;background:${team.color};flex-shrink:0"></div>
+          <input class="team-name-input" value="${escQ(team.name)}"
+            onchange="teamData.find(t=>t.id==='${team.id}').name=this.value"
+            placeholder="Team name">
+        </div>
+        <button class="btn btn-sm btn-ghost" style="padding:2px 8px" onclick="quickName('${team.id}',${ti})">🎲</button>
+      </div>
+      <div class="team-stats" id="ts-${team.id}">${teamStats(team)}</div>
+      <div class="team-players" id="tplayers-${team.id}">
+        ${team.players.map(p=>playerChip(p,team.id)).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function playerChip(p,teamId){
+  const ntrp=p.ratings?.['NTRP'],trr=p.ratings?.['TRR']||p.ratings?.['UTR'];
+  const rating=ntrp?parseFloat(ntrp.value).toFixed(1)+(ntrp.designation||''):trr?parseFloat(trr.value).toFixed(2):'NR';
+  return `<div class="player-chip" draggable="true" data-pid="${p.id}" data-epid="${p.event_player_id}" data-team="${teamId}" ondragstart="dStart(event,this,'${teamId}')" ondragend="dEnd(event,this)">`+
+    '<span class="player-chip-gender">'+(p.gender==='MALE'?'♂':'♀')+'</span>'+
+    '<span class="player-chip-name">'+p.roster_name+'</span>'+
+    '<span class="player-chip-rating">'+rating+'</span></div>';
+}
+
+function teamStats(team){
+  const rated=team.players.filter(p=>p.ratings?.['NTRP']);
+  const avg=rated.length?(rated.reduce((s,p)=>s+parseFloat(p.ratings['NTRP'].value),0)/rated.length).toFixed(2):'—';
+  const f=team.players.filter(p=>p.gender==='FEMALE').length;
+  const m=team.players.filter(p=>p.gender==='MALE').length;
+  return '<span>'+team.players.length+' players</span><span>Avg: <strong>'+avg+'</strong></span><span>♂'+m+' ♀'+f+'</span>';
+}
+
+function updateBuilderStats(){
+  const all=teamData.flatMap(t=>t.players);
+  const rated=all.filter(p=>p.ratings?.['NTRP']);
+  const avg=rated.length?(rated.reduce((s,p)=>s+parseFloat(p.ratings['NTRP'].value),0)/rated.length).toFixed(2):'—';
+  ['tb-team-count','tb-player-count','tb-avg-ntrp'].forEach((id,i)=>{
+    const el=document.getElementById(id);
+    if(el) el.textContent=[teamData.length,all.length,avg][i];
+  });
+}
+
+// Drag/drop
+function dStart(e,el,fromId){draggedChip={pid:el.dataset.pid,epid:el.dataset.epid,teamId:fromId};el.classList.add('dragging');e.dataTransfer.effectAllowed='move';}
+function dEnd(e,el){el.classList.remove('dragging');draggedChip=null;}
+function dOver(e,el){e.preventDefault();el.classList.add('drag-over');}
+function dLeave(e,el){el.classList.remove('drag-over');}
+function dDrop(e,toId){
+  e.preventDefault();e.currentTarget.classList.remove('drag-over');
+  if(!draggedChip||draggedChip.teamId===toId) return;
+  const fromT=teamData.find(t=>t.id===draggedChip.teamId),toT=teamData.find(t=>t.id===toId);
+  if(!fromT||!toT) return;
+  const idx=fromT.players.findIndex(p=>p.id===draggedChip.pid);
+  if(idx>-1){const [p]=fromT.players.splice(idx,1);toT.players.push(p);}
+  renderTeams();updateBuilderStats();checkConstraints();
+}
+
+function toggleBGOffset(v){bgOffsetEnabled=v;if(teamData.length) generateTeams();}
+function suggestAllNames(){const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];teamData.forEach((t,i)=>{t.name=s[i%s.length];const inp=document.querySelector('#tc-'+t.id+' .team-name-input');if(inp)inp.value=t.name;});}
+function quickName(tid,i){const s=NAME_SETS[Math.floor(Math.random()*NAME_SETS.length)];const t=teamData.find(x=>x.id===tid);if(t){t.name=s[i%s.length];const inp=document.querySelector('#tc-'+tid+' .team-name-input');if(inp)inp.value=t.name;}}
+
+async function checkConstraints(){
+  const {data:cons}=await sb.from('player_constraints').select('player_a_id,player_b_id,constraint_type');
+  const w=document.getElementById('constraint-warnings');
+  if(!cons?.length){if(w)w.innerHTML='';return;}
+  const ptm={};teamData.forEach(t=>t.players.forEach(p=>{ptm[p.id]=t.id;}));
+  const warns=[];
+  cons.forEach(c=>{
+    const ta=ptm[c.player_a_id],tb=ptm[c.player_b_id];
+    if(!ta||!tb) return;
+    const pa=teamData.flatMap(t=>t.players).find(p=>p.id===c.player_a_id);
+    const pb=teamData.flatMap(t=>t.players).find(p=>p.id===c.player_b_id);
+    if(!pa||!pb) return;
+    const same=ta===tb,tna=teamData.find(t=>t.id===ta)?.name,tnb=teamData.find(t=>t.id===tb)?.name;
+    if(c.constraint_type==='NO_TEAM'&&same) warns.push('⚠ '+pa.roster_name+' & '+pb.roster_name+' should NOT be on same team ('+tna+')');
+    if(c.constraint_type==='MUST_TEAM'&&!same) warns.push('⚠ '+pa.roster_name+' & '+pb.roster_name+' MUST be on same team');
+    if(c.constraint_type==='COUPLE_SPLIT'&&same) warns.push('⚠ '+pa.roster_name+' & '+pb.roster_name+' should be on DIFFERENT teams');
+    if(c.constraint_type==='COUPLE_TOGETHER'&&!same) warns.push('⚠ '+pa.roster_name+' & '+pb.roster_name+' should be on SAME team');
+  });
+  if(w) w.innerHTML=warns.length?warns.map(x=>'<div class="alert alert-error" style="margin-bottom:6px">'+x+'</div>').join(''):'<div class="alert alert-success" style="margin:0">✓ No constraint violations</div>';
+}
+
+async function lockTeams(){
+  if(!teamData.length){toast('Generate teams first','error');return;}
+  if(!confirm('Lock '+teamData.length+' teams and proceed?')) return;
+  const btn=document.getElementById('lock-teams-btn');
+  btn.disabled=true;btn.textContent='Saving…';
+  try{
+    await sb.from('teams').delete().eq('event_id',currentEvent.id);
+    for(const t of teamData){
+      const {data:nt,error}=await sb.from('teams').insert({event_id:currentEvent.id,name:t.name,color:t.color}).select().single();
+      if(error) throw error;
+      if(t.players.length) await sb.from('team_players').insert(t.players.map(p=>({team_id:nt.id,event_player_id:p.event_player_id})));
+      t.id=nt.id;
+    }
+    await setEventStatus('TEAMS_SET');
+    toast('Teams locked! Ready to go live 🎾','success');
+    btn.textContent='✓ Teams Locked';
+    updateActionBtn('TEAMS_SET');
+  }catch(e){toast('Error: '+e.message,'error');btn.disabled=false;btn.textContent='Lock Teams';}
+}
+
+// ── ROUNDS ───────────────────────────────────
+async function loadRounds(){
+  const el=document.getElementById('etab-rounds');
+  if(!el) return;
+  if(currentEvent.status==='DRAFT'||currentEvent.status==='ROSTER_LOADED'){
+    el.innerHTML='<div style="padding:20px"><div class="empty-state"><div class="empty-icon">🔒</div><div class="empty-title">Lock teams first</div></div></div>';
+    return;
+  }
+  el.innerHTML='<div style="padding:20px"><div class="loading"><div class="spinner"></div> Loading rounds…</div></div>';
+  const [{data:rounds},{data:teams},{data:eps}]=await Promise.all([
+    sb.from('rounds').select('*').eq('event_id',currentEvent.id).order('round_number'),
+    sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id),
+    sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id)
+  ]);
+  currentRounds=rounds||[];
+  const {data:sitouts}=await sb.from('sitout_log').select('event_player_id,sitout_type,round_number').in('event_player_id',(eps||[]).map(e=>e.id));
+  const soCount={};
+  (sitouts||[]).forEach(s=>{if(s.sitout_type!=='STRATEGIC') soCount[s.event_player_id]=(soCount[s.event_player_id]||0)+1;});
+
+  const nextRound=(rounds?.length||0)+1;
+  const canDeploy=currentEvent.status==='TEAMS_SET'||currentEvent.status==='LIVE';
+
+  el.innerHTML='<div style="padding:20px">'+
+    (canDeploy?'<div style="margin-bottom:20px;display:flex;align-items:center;gap:10px">'+
+      '<button class="btn btn-primary" onclick="deployRound('+nextRound+')">⚡ Deploy Round '+nextRound+'</button>'+
+      '<span style="font-size:13px;color:var(--muted)">'+((eps||[]).filter(e=>e.status==='ACTIVE').length)+' active players</span>'+
+    '</div>':'')+
+    (!rounds?.length?'<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No rounds yet</div></div>'
+    :rounds.map(r=>'<div class="card" style="margin-bottom:16px">'+
+      '<div class="card-header">'+
+        '<div class="card-title">Round '+r.round_number+' — '+r.format+'</div>'+
+        '<div style="display:flex;gap:8px">'+
+          (!r.is_complete?'<button class="btn btn-sm btn-secondary" onclick="redeployRound('+r.round_number+')">↺ Redeploy</button>':'')+
+          '<span class="badge '+(r.is_complete?'badge-green':'badge-gold')+'">'+(r.is_complete?'Complete':'In Progress')+'</span>'+
+        '</div>'+
+      '</div>'+
+      '<div class="card-body" id="rb-'+r.round_number+'"><div class="loading"><div class="spinner"></div></div></div>'+
+    '</div>').join(''))+
+  '</div>';
+
+  // Load pairings for each round
+  for(const r of rounds||[]){
+    loadRoundPairings(r,teams||[],eps||[],soCount);
+  }
+}
+
+async function loadRoundPairings(round,teams,eps,soCount){
+  const el=document.getElementById('rb-'+round.round_number);
+  if(!el) return;
+  const {data:pairings}=await sb.from('pairings').select('*').eq('round_id',round.id);
+  const {data:scores}=await sb.from('scores').select('*').in('pairing_id',(pairings||[]).map(p=>p.id));
+  const {data:sitouts}=await sb.from('sitout_log').select('event_player_id').eq('round_number',round.round_number);
+  
+  const pname=id=>{const ep=eps.find(e=>e.player_id===id||e.id===id);return ep?.players?.roster_name||id;};
+  const tname=id=>teams.find(t=>t.id===id)?.name||'?';
+  const tcolor=id=>teams.find(t=>t.id===id)?.color||'#666';
+  
+  const soPlayers=(sitouts||[]).map(s=>{const ep=eps.find(e=>e.id===s.event_player_id);return ep?.players?.roster_name||'?';});
+
+  el.innerHTML='<div style="display:flex;flex-direction:column;gap:8px">'+
+    (pairings||[]).map(p=>{
+      const sc=scores?.find(s=>s.pairing_id===p.id);
+      return '<div style="display:flex;align-items:center;gap:12px;padding:8px;background:var(--green-ghost);border-radius:8px;font-size:13px">'+
+        '<span style="font-weight:700;color:var(--muted);min-width:60px">Court '+p.court_number+'</span>'+
+        '<div style="flex:1">'+
+          '<span style="color:'+tcolor(p.team_a_id)+';font-weight:600">'+tname(p.team_a_id)+'</span> '+pname(p.team_a_player1_id)+' / '+pname(p.team_a_player2_id)+
+          ' <span style="color:var(--muted)"> vs </span>'+
+          '<span style="color:'+tcolor(p.team_b_id)+';font-weight:600">'+tname(p.team_b_id)+'</span> '+pname(p.team_b_player1_id)+' / '+pname(p.team_b_player2_id)+
+        '</div>'+
+        (sc?'<span style="font-weight:700">'+sc.team_a_games+' – '+sc.team_b_games+'</span>':
+          (!round.is_complete?`<button class="btn btn-sm btn-ghost" onclick="enterScore('${p.id}','${round.round_number}')">Score</button>`:""))+
+      '</div>';
+    }).join('')+
+    (soPlayers.length?'<div style="font-size:12px;color:var(--muted);padding:4px 8px">Sitting out: '+soPlayers.join(', ')+'</div>':'')+
+  '</div>';
+}
+
+async function deployRound(roundNum){
+  const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
+  const {data:tps}=await sb.from('team_players').select('team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
+  const {data:eps}=await sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id).eq('status','ACTIVE');
+  const {data:sitouts}=await sb.from('sitout_log').select('event_player_id,sitout_type,round_number').in('event_player_id',(eps||[]).map(e=>e.id));
+  
+  const soCount={};
+  const lastSitRound={};
+  (sitouts||[]).forEach(s=>{
+    if(s.sitout_type!=='STRATEGIC'){
+      soCount[s.event_player_id]=(soCount[s.event_player_id]||0)+1;
+      if(!lastSitRound[s.event_player_id]||s.round_number>lastSitRound[s.event_player_id])
+        lastSitRound[s.event_player_id]=s.round_number;
+    }
+  });
+
+  const numCourts=currentEvent.num_courts||4;
+  const activePlayers=eps||[];
+  const playersNeeded=numCourts*4;
+  const sitOutCount=Math.max(0,activePlayers.length-playersNeeded);
+
+  // Pick sit-outs — fewest sit-outs first, then longest since last sat
+  let sitOutPlayers=[];
+  if(sitOutCount>0){
+    const sorted=[...activePlayers].sort((a,b)=>{
+      const ac=soCount[a.id]||0,bc=soCount[b.id]||0;
+      if(ac!==bc) return ac-bc;
+      const al=lastSitRound[a.id]||0,bl=lastSitRound[b.id]||0;
+      return al-bl; // sat longest ago goes first
+    });
+    sitOutPlayers=sorted.slice(0,sitOutCount);
+  }
+
+  const playing=activePlayers.filter(p=>!sitOutPlayers.find(s=>s.id===p.id));
+  const actualCourts=Math.min(numCourts,Math.floor(playing.length/4));
+
+  if(playing.length<actualCourts*4){
+    showCourtChoice(playing,sitOutPlayers,actualCourts,roundNum,teams||[],soCount);
+    return;
+  }
+
+  await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts);
+}
+
+async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
+  const fmt=currentEvent.default_round_format||'BG';
+  const {data:nr,error}=await sb.from('rounds').insert({
+    event_id:currentEvent.id,round_number:roundNum,format:fmt,scoring_mode:'GAMES'
+  }).select().single();
+  if(error){toast('Error: '+error.message,'error');return;}
+
+  const dirId=currentUser.director_id||'00000000-0000-0000-0000-000000000000';
+  for(const p of sitOutPlayers){
+    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId});
+  }
+
+  // Generate pairings
+  const byTeam={};
+  tps.forEach(tp=>{if(!byTeam[tp.team_id])byTeam[tp.team_id]=[];byTeam[tp.team_id].push(tp.event_player_id);});
+  
+  const pairings=[];
+  const used=new Set();
+
+  for(let c=0;c<courts;c++){
+    const tA=teams[c%teams.length],tB=teams[(c+Math.floor(teams.length/2))%teams.length];
+    if(!tA||!tB||tA.id===tB.id) continue;
+    
+    const tAP=playing.filter(p=>byTeam[tA.id]?.includes(p.id)&&!used.has(p.id));
+    const tBP=playing.filter(p=>byTeam[tB.id]?.includes(p.id)&&!used.has(p.id));
+    
+    let p1a,p2a,p1b,p2b;
+    if(fmt==='BG'){
+      p1a=tAP.find(p=>p.players?.gender==='MALE');
+      p2a=tAP.find(p=>p.players?.gender==='FEMALE');
+      p1b=tBP.find(p=>p.players?.gender==='MALE');
+      p2b=tBP.find(p=>p.players?.gender==='FEMALE');
+    } else {
+      [p1a,p2a]=[tAP[0],tAP[1]];
+      [p1b,p2b]=[tBP[0],tBP[1]];
+    }
+    
+    if(p1a&&p2a&&p1b&&p2b){
+      [p1a,p2a,p1b,p2b].forEach(p=>used.add(p.id));
+      pairings.push({round_id:nr.id,court_number:c+1,
+        team_a_id:tA.id,team_b_id:tB.id,
+        team_a_player1_id:p1a.player_id,team_a_player2_id:p2a.player_id,
+        team_b_player1_id:p1b.player_id,team_b_player2_id:p2b.player_id
+      });
+    }
+  }
+  
+  if(pairings.length) await sb.from('pairings').insert(pairings);
+  if(currentEvent.status==='TEAMS_SET') await setEventStatus('LIVE');
+  toast('Round '+roundNum+' deployed! '+pairings.length+' courts set.','success');
+  loadRounds();
+}
+
+function showCourtChoice(playing,sitouts,courts,roundNum,teams,soCount){
+  const lessC=courts-1;
+  let html=`<div class="modal-overlay open" id="court-choice-modal" style="z-index:2000">
+    <div class="modal" style="max-width:440px">
+      <div class="modal-header"><div class="modal-title">Court ${courts} can't be fully filled</div></div>
+      <div class="modal-body">
+        <div class="alert alert-warn" style="margin-bottom:16px">Not enough players for ${courts} full courts this round.</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn btn-primary" onclick="document.getElementById('court-choice-modal').remove();deployRoundWithCourts(${lessC},${roundNum})">
+            Play ${lessC} courts — leave Court ${courts} empty
+          </button>`;
+  if(sitouts.length){
+    html+=`<div style="font-size:13px;font-weight:600;margin-top:4px;color:var(--muted)">— or pull a volunteer to fill Court ${courts} —</div>`;
+    sitouts.forEach(p=>{
+      const n=p.players?.roster_name||'Player';
+      const sc=soCount[p.id]||0;
+      html+=`<button class="btn btn-secondary" onclick="document.getElementById('court-choice-modal').remove();pullVolunteer('${p.id}',${roundNum})">Pull ${n} (${sc} sit-outs)</button>`;
+    });
+  }
+  html+=`</div></div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="document.getElementById('court-choice-modal').remove()">Cancel</button></div>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+
+async function deployRoundWithCourts(courts,roundNum){
+  currentEvent.num_courts=courts;
+  await deployRound(roundNum);
+  currentEvent.num_courts=currentEvent.num_courts; // restore
+}
+
+async function pullVolunteer(epId,roundNum){
+  // Mark as active (un-sit-out) and redeploy
+  await sb.from('event_players').update({status:'ACTIVE'}).eq('id',epId);
+  toast('Player pulled back in — redeploying round...','default');
+  await deployRound(roundNum);
+}
+
+async function redeployRound(roundNum){
+  if(!confirm('Redeploy Round '+roundNum+'? Current pairings will be recalculated.')) return;
+  const round=currentRounds.find(r=>r.round_number===roundNum);
+  if(round){
+    await sb.from('sitout_log').delete().eq('round_number',roundNum).in('event_player_id',
+      eventRoster.map(ep=>ep.id));
+    await sb.from('pairings').delete().eq('round_id',round.id);
+    await sb.from('rounds').delete().eq('id',round.id);
+  }
+  await deployRound(roundNum);
+}
+
+async function enterScore(pairingId,roundNum){
+  const a=prompt('Score for Team A (games won):');
+  if(a===null) return;
+  const b=prompt('Score for Team B (games won):');
+  if(b===null) return;
+  const dirId=currentUser.director_id||'00000000-0000-0000-0000-000000000000';
+  const {error}=await sb.from('scores').upsert({
+    pairing_id:pairingId,
+    team_a_games:parseInt(a)||0,
+    team_b_games:parseInt(b)||0,
+    entered_by_director_id:dirId
+  },{onConflict:'pairing_id'});
+  if(error){toast('Error: '+error.message,'error');return;}
+  toast('Score saved!','success');
+  loadRounds();
+}
+
+// ── NOTES ────────────────────────────────────
+async function loadNotes(){
+  const {data}=await sb.from('event_notes').select('*,directors(name)').eq('event_id',currentEvent.id).order('created_at',{ascending:false});
+  const el=document.getElementById('saved-event-notes');
+  if(!el) return;
+  el.innerHTML=(data||[]).map(n=>'<div style="padding:10px;background:var(--green-ghost);border-radius:8px;margin-bottom:8px;font-size:13px">'+
+    '<div style="color:var(--muted);font-size:11px;margin-bottom:4px">'+(n.directors?.name||'Admin')+' · '+fmtDate(n.created_at)+'</div>'+
+    n.note+'</div>').join('');
+}
+
+async function saveEventNotes(){
+  const note=document.getElementById('event-notes-input')?.value?.trim();
+  if(!note) return;
+  const {error}=await sb.from('event_notes').insert({
+    event_id:currentEvent.id,
+    director_id:currentUser.director_id||'00000000-0000-0000-0000-000000000000',
+    note
+  });
+  if(error){toast('Error: '+error.message,'error');return;}
+  document.getElementById('event-notes-input').value='';
+  toast('Note saved!','success');
+  loadNotes();
+}
+
 function resetConnection() {
   if(confirm('This will clear saved connection. You will need to update the source file. Continue?')) {
     toast('Update SUPABASE_KEY in the app source file to reconnect.','default');
