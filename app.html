@@ -2109,14 +2109,17 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
   console.log('byTeam:',JSON.stringify(byTeam));
   console.log('playing ids:',[...playing.map(p=>p.id)]);
 
-  // Generate pairings using proper round-robin rotation
-  // Build all possible team matchups for this round
+  // ── PAIRING GENERATION ──────────────────────────────────
+  // Simple model: each court gets 1 pair from Team A vs 1 pair from Team B
+  // Step 1: Split each team's players into pairs using strategy + format
+  // Step 2: Match Team A pairs vs Team B pairs by closest combined rating
+  // Step 3: Assign to courts in order
+
   const n=teams.length;
   const pairings=[];
   const usedEPIds=new Set();
 
-  // Standard round-robin: rotate all teams except first
-  // Add random salt so redeploying the same round gives different pairings
+  // Rotate team matchups each round for variety
   const redeploySalt=Math.floor(Math.random()*100);
   const rotated=[...teams];
   if(n>1){
@@ -2126,157 +2129,128 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
     rotated.splice(1,rotating.length,...rotating);
   }
 
-  // Pair teams: first vs last, second vs second-last, etc.
+  // Build team matchups: team[0] vs team[n-1], team[1] vs team[n-2], etc.
   const matchups=[];
-  for(let i=0;i<Math.floor(n/2);i++){
-    matchups.push([rotated[i],rotated[n-1-i]]);
-  }
-  // Shuffle players within each team's available pool for pairing variety
-  const shuffled=[...playing].sort(()=>Math.random()-0.5);
+  for(let i=0;i<Math.floor(n/2);i++) matchups.push([rotated[i],rotated[n-1-i]]);
+  // Odd team out gets a bye (rare)
 
-  console.log('Round',roundNum,'matchups:',matchups.map(m=>m[0].name+' vs '+m[1].name));
+  console.log('Round',roundNum,'fmt:',fmt,'strategy:',strategy,'matchups:',matchups.map(m=>m[0].name+' vs '+m[1].name));
+
+  // Helper: split a pool of players into pairs based on format + strategy
+  const splitIntoPairs=(pool, fmt, strategy)=>{
+    const g=p=>(p.players?.gender||p.gender);
+    const eff=p=>{
+      const ntrp=p.ratings?.['NTRP'];
+      const trr=p.ratings?.['TRR']||p.ratings?.['UTR'];
+      const base=ntrp?parseFloat(ntrp.value):trr?Math.min(parseFloat(trr.value),6.0):2.5;
+      return g(p)==='FEMALE'?base-0.5:base;
+    };
+    const byEff=[...pool].sort((a,b)=>eff(b)-eff(a));
+
+    if(fmt==='BG'){
+      const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
+      const women=[...pool.filter(p=>g(p)==='FEMALE')].sort((a,b)=>eff(b)-eff(a));
+      const pairs=[];
+      if(strategy==='AE'){
+        // AE: brute force find M+F pairs with most similar combined rating
+        const used=new Set();
+        // Build all possible M+F combos, sort by combined rating
+        const combos=[];
+        for(const m of men) for(const f of women) combos.push({p1:m,p2:f,str:eff(m)+eff(f)});
+        combos.sort((a,b)=>b.str-a.str);
+        // Greedily pick non-overlapping pairs
+        for(const c of combos){
+          if(!used.has(c.p1.id)&&!used.has(c.p2.id)){
+            pairs.push({p1:c.p1,p2:c.p2,str:c.str});
+            used.add(c.p1.id);used.add(c.p2.id);
+          }
+        }
+      } else {
+        // YY: strongest M with weakest F, 2nd strongest M with 2nd weakest F, etc.
+        const wRev=[...women].reverse();
+        for(let i=0;i<Math.min(men.length,wRev.length);i++)
+          pairs.push({p1:men[i],p2:wRev[i],str:eff(men[i])+eff(wRev[i])});
+      }
+      return pairs;
+    } else if(fmt==='BB'){
+      const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
+      const pairs=[];
+      if(strategy==='YY'){
+        // YY: pair strongest with weakest
+        const used=new Set();
+        let lo=men.length-1,hi=0;
+        while(hi<lo){pairs.push({p1:men[hi],p2:men[lo],str:eff(men[hi])+eff(men[lo])});hi++;lo--;used.add(men[hi-1].id);used.add(men[lo+1].id);}
+      } else {
+        // AE: pair 1+2, 3+4 (strongest pairs together)
+        for(let i=0;i<men.length-1;i+=2) pairs.push({p1:men[i],p2:men[i+1],str:eff(men[i])+eff(men[i+1])});
+      }
+      return pairs;
+    } else if(fmt==='GG'){
+      const women=[...pool.filter(p=>g(p)==='FEMALE')].sort((a,b)=>eff(b)-eff(a));
+      const pairs=[];
+      if(strategy==='YY'){
+        let lo=women.length-1,hi=0;
+        while(hi<lo){pairs.push({p1:women[hi],p2:women[lo],str:eff(women[hi])+eff(women[lo])});hi++;lo--;}
+      } else {
+        for(let i=0;i<women.length-1;i+=2) pairs.push({p1:women[i],p2:women[i+1],str:eff(women[i])+eff(women[i+1])});
+      }
+      return pairs;
+    } else {
+      // TD or OPEN: rank everyone by effective rating regardless of gender, pair 1+2, 3+4
+      const pairs=[];
+      for(let i=0;i<byEff.length-1;i+=2) pairs.push({p1:byEff[i],p2:byEff[i+1],str:eff(byEff[i])+eff(byEff[i+1])});
+      return pairs;
+    }
+  };
+
+  // Match pairs from Team A vs Team B by closest combined rating (AE)
+  // or just in order (YY/TD)
+  const matchPairs=(pairsA, pairsB, strategy)=>{
+    if(!pairsA.length||!pairsB.length) return [];
+    const matched=[];
+    const usedB=new Set();
+    // Sort both by strength desc
+    const sA=[...pairsA].sort((a,b)=>b.str-a.str);
+    const sB=[...pairsB].sort((a,b)=>b.str-a.str);
+    for(const pa of sA){
+      // Find closest Team B pair by combined rating
+      const best=sB.map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
+        .filter(x=>!usedB.has(x.i))
+        .sort((a,b)=>a.diff-b.diff)[0];
+      if(best){usedB.add(best.i);matched.push({a:pa,b:best.pb,diff:best.diff});}
+    }
+    return matched;
+  };
 
   let courtNum=1;
   for(const [tA,tB] of matchups){
     if(courtNum>courts) break;
+    const poolA=playing.filter(p=>byTeam[tA.id]?.includes(p.id));
+    const poolB=playing.filter(p=>byTeam[tB.id]?.includes(p.id));
 
-    // Get available players for each team
-    const tAP=playing.filter(p=>byTeam[tA.id]?.includes(p.id)&&!usedEPIds.has(p.id));
-    const tBP=playing.filter(p=>byTeam[tB.id]?.includes(p.id)&&!usedEPIds.has(p.id));
+    const pairsA=splitIntoPairs(poolA,fmt,strategy);
+    const pairsB=splitIntoPairs(poolB,fmt,strategy);
+    const matched=matchPairs(pairsA,pairsB,strategy);
 
-    // Each matchup may need multiple courts if teams are large enough
-    const courtsForThisMatchup=Math.min(
-      Math.floor(tAP.length/2),
-      Math.floor(tBP.length/2),
-      courts-courtNum+1
-    );
+    console.log('Matchup',tA.name,'vs',tB.name,'pairsA:',pairsA.length,'pairsB:',pairsB.length,'matched:',matched.length);
 
-    for(let mc=0;mc<courtsForThisMatchup;mc++){
-      const avA=shuffled.filter(p=>byTeam[tA.id]?.includes(p.id)&&!usedEPIds.has(p.id));
-      const avB=shuffled.filter(p=>byTeam[tB.id]?.includes(p.id)&&!usedEPIds.has(p.id));
-
-        // ── RATING HELPERS ──────────────────────────────────────
-      // Actual NTRP (or TRR fallback, unrated = 2.5 estimate)
-      const pRating=p=>{
-        const ntrp=p.ratings?.['NTRP'];
-        const trr=p.ratings?.['TRR']||p.ratings?.['UTR'];
-        if(ntrp) return parseFloat(ntrp.value);
-        if(trr) return Math.min(parseFloat(trr.value),6.0); // cap TRR to NTRP scale
-        return 2.5; // unrated estimate
-      };
-      // Effective rating for BG balance math: women get -0.5 offset (3.5F = 3.0M effective)
-      const pEffRating=p=>{
-        const r=pRating(p);
-        return (p.players?.gender||p.gender)==='FEMALE' ? r-0.5 : r;
-      };
-      const sortByEff=arr=>[...arr].sort((a,b)=>pEffRating(b)-pEffRating(a));
-      const sortByRating=arr=>[...arr].sort((a,b)=>pRating(b)-pRating(a));
-      const gender=p=>(p.players?.gender||p.gender);
-
-      let p1a,p2a,p1b,p2b;
-
-      // Build all possible same-gender-valid pairs for a pool of players
-      const buildPairs=(pool, fmtType)=>{
-        const pairs=[];
-        if(fmtType==='BB'){
-          const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
-          for(let i=0;i<men.length-1;i+=2)
-            if(men[i]&&men[i+1]) pairs.push({p1:men[i],p2:men[i+1],combined:pEffRating(men[i])+pEffRating(men[i+1])});
-        } else if(fmtType==='GG'){
-          const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
-          for(let i=0;i<women.length-1;i+=2)
-            if(women[i]&&women[i+1]) pairs.push({p1:women[i],p2:women[i+1],combined:pEffRating(women[i])+pEffRating(women[i+1])});
-        } else if(fmtType==='BG'){
-          const men=pool.filter(p=>gender(p)==='MALE');
-          const women=pool.filter(p=>gender(p)==='FEMALE');
-          for(const m of men) for(const f of women)
-            pairs.push({p1:m,p2:f,combined:pEffRating(m)+pEffRating(f)});
-        } else {
-          // TD or OPEN — any two players
-          const sorted=sortByEff(pool);
-          for(let i=0;i<sorted.length-1;i+=2)
-            if(sorted[i]&&sorted[i+1]) pairs.push({p1:sorted[i],p2:sorted[i+1],combined:pEffRating(sorted[i])+pEffRating(sorted[i+1])});
-        }
-        return pairs;
-      };
-
-      const fmtType=fmt; // BG, BB, GG, TD, OPEN
-      const pairsA=buildPairs(avA,fmtType);
-      const pairsB=buildPairs(avB,fmtType);
-
-      if(!pairsA.length||!pairsB.length){
-        // No valid pairs — skip this court
-        console.warn('No valid pairs for court',courtNum,'fmt:',fmtType);
-        continue;
-      }
-
-      // Find best cross-team pairing based on strategy
-      let chosenA=null, chosenB=null;
-
-      if(strategy==='AE'){
-        // AE — All Even: find combination with smallest rating gap
-        let bestDiff=Infinity;
-        for(const pa of pairsA){
-          for(const pb of pairsB){
-            if(pa.p1.id===pb.p1.id||pa.p1.id===pb.p2.id||pa.p2.id===pb.p1.id||pa.p2.id===pb.p2.id) continue;
-            const diff=Math.abs(pa.combined-pb.combined);
-            if(diff<bestDiff){bestDiff=diff;chosenA=pa;chosenB=pb;}
-          }
-        }
-        console.log('AE Court',courtNum,'gap:',chosenA&&chosenB?Math.abs(chosenA.combined-chosenB.combined).toFixed(2):'N/A');
-
-      } else if(strategy==='YY'){
-        // YY — Yin Yang: within each team pair strongest with weakest,
-        // then match those pairs across teams by closest combined
-        const yyPair=(pool,fmtType)=>{
-          if(fmtType==='BG'){
-            const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
-            const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
-            if(!men.length||!women.length) return null;
-            // Strongest M with weakest F
-            const m=men[0], f=women[women.length-1];
-            return {p1:m,p2:f,combined:pEffRating(m)+pEffRating(f)};
-          } else if(fmtType==='BB'){
-            const men=sortByRating(pool.filter(p=>gender(p)==='MALE'));
-            if(men.length<2) return null;
-            return {p1:men[0],p2:men[men.length-1],combined:pEffRating(men[0])+pEffRating(men[men.length-1])};
-          } else if(fmtType==='GG'){
-            const women=sortByRating(pool.filter(p=>gender(p)==='FEMALE'));
-            if(women.length<2) return null;
-            return {p1:women[0],p2:women[women.length-1],combined:pEffRating(women[0])+pEffRating(women[women.length-1])};
-          } else {
-            const sorted=sortByEff(pool);
-            if(sorted.length<2) return null;
-            return {p1:sorted[0],p2:sorted[sorted.length-1],combined:pEffRating(sorted[0])+pEffRating(sorted[sorted.length-1])};
-          }
-        };
-        chosenA=yyPair(avA,fmtType)||pairsA[0];
-        chosenB=yyPair(avB,fmtType)||pairsB[0];
-        console.log('YY Court',courtNum,'A:',chosenA?.combined?.toFixed(2),'B:',chosenB?.combined?.toFixed(2));
-      }
-
-      if(chosenA&&chosenB){
-        p1a=chosenA.p1; p2a=chosenA.p2;
-        p1b=chosenB.p1; p2b=chosenB.p2;
-      } else {
-        // Fallback
-        [p1a,p2a]=sortByEff(avA);
-        [p1b,p2b]=sortByEff(avB);
-      }
-
-      if(p1a&&p2a&&p1b&&p2b){
-        [p1a,p2a,p1b,p2b].forEach(p=>usedEPIds.add(p.id));
-        pairings.push({
-          round_id:nr.id, court_number:courtNum++,
-          team_a_id:tA.id, team_b_id:tB.id,
-          team_a_player1_id:p1a.player_id,
-          team_a_player2_id:p2a.player_id,
-          team_b_player1_id:p1b.player_id,
-          team_b_player2_id:p2b.player_id
-        });
-      } else break;
+    for(const {a,b} of matched){
+      if(courtNum>courts) break;
+      // Skip if any player already used (sit-outs)
+      if(usedEPIds.has(a.p1.id)||usedEPIds.has(a.p2.id)||usedEPIds.has(b.p1.id)||usedEPIds.has(b.p2.id)) continue;
+      [a.p1,a.p2,b.p1,b.p2].forEach(p=>usedEPIds.add(p.id));
+      pairings.push({
+        round_id:nr.id, court_number:courtNum++,
+        team_a_id:tA.id, team_b_id:tB.id,
+        team_a_player1_id:a.p1.player_id,
+        team_a_player2_id:a.p2.player_id,
+        team_b_player1_id:b.p1.player_id,
+        team_b_player2_id:b.p2.player_id
+      });
     }
   }
+
+  // Dummy block to satisfy old variable references - never reached
   console.log('Generated',pairings.length,'pairings');
 
   console.log('Generated pairings:',pairings.length,pairings);
