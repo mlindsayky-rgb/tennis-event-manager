@@ -728,13 +728,16 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
     <div style="padding:20px">
       <div class="section-header">
         <div>
-          <div class="section-title">Event Roster</div>
-          <div class="section-sub" id="roster-count">0 players</div>
+          <div class="section-title">Who's Playing?</div>
+          <div class="section-sub" id="roster-count">Tap + Add Players to build your roster</div>
         </div>
         <div style="display:flex;gap:10px">
-          <button class="btn btn-secondary" onclick="openModal('add-players-modal')">+ Add Players</button>
-          <button class="btn btn-primary" onclick="eventTab('teams',document.querySelector('.event-nav-tab:nth-child(2)'))">Build Teams →</button>
+          <button class="btn btn-primary" onclick="openModal('add-players-modal')">+ Add Players</button>
         </div>
+      </div>
+      <div id="roster-empty-hint" style="margin-bottom:16px;padding:16px;background:var(--sky-light);border-radius:var(--r);border:1px solid #90CAF9;font-size:13px;color:var(--sky);display:none">
+        <strong>How to add players:</strong> Click "+ Add Players" above to search your club roster and add players to this event. 
+        Players from your club appear by default — use the search to find anyone.
       </div>
       <div class="roster-panel" id="roster-list">
         <div class="loading"><div class="spinner"></div> Loading roster…</div>
@@ -800,15 +803,20 @@ body{background:var(--green-ghost);color:var(--dark);min-height:100vh}
       <button class="modal-close" onclick="closeModal('add-players-modal')">×</button>
     </div>
     <div class="modal-body">
-      <div style="margin-bottom:12px">
-        <input class="form-input" type="text" placeholder="Search players…" oninput="searchAddPlayers(this.value)" style="max-width:100%">
+      <div style="margin-bottom:12px;display:flex;gap:8px">
+        <input class="form-input" id="add-players-search" type="text" placeholder="Search by name…" oninput="searchAddPlayers(this.value)">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('add-players-search').value='';searchAddPlayers('')">Clear</button>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        Showing players from your club. Search to find anyone in the global pool.
       </div>
       <div id="add-players-list" style="max-height:400px;overflow-y:auto">
         <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('add-players-modal')">Done</button>
+      <div style="font-size:13px;color:var(--muted)" id="add-players-count"></div>
+      <button class="btn btn-primary" onclick="closeModal('add-players-modal');loadRoster()">Done — Back to Roster</button>
     </div>
   </div>
 </div>
@@ -1103,10 +1111,18 @@ async function loadRoster() {
   const pids=eventRoster.map(ep=>ep.player_id);
   const {data:ratings}=pids.length?await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids):{data:[]};
   const rm=buildRatingMap(ratings||[]);
+  const hint = document.getElementById('roster-empty-hint');
   if(!eventRoster.length){
-    el.innerHTML='<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players to get started</div></div>';
+    if(hint) hint.style.display='block';
+    el.innerHTML=`<div class="empty-state">
+      <div class="empty-icon">👥</div>
+      <div class="empty-title">No players yet</div>
+      <div class="empty-sub">Click "+ Add Players" to add players from your club roster</div>
+      <button class="btn btn-primary" onclick="openModal('add-players-modal')">+ Add Players</button>
+    </div>`;
     return;
   }
+  if(hint) hint.style.display='none';
   el.innerHTML=eventRoster.map(ep=>{
     const p=ep.players;
     const r=rm[ep.player_id]||{};
@@ -1669,7 +1685,7 @@ function renderAdminEvents() {
     return;
   }
   el.innerHTML = filtered.map(e=>`
-    <div class="event-card" onclick='openEvent(${JSON.stringify(e)})'>
+    <div class="event-card" onclick="openEventById('${e.id}')">
       <div style="flex:1">
         <div class="event-card-name">${e.name}</div>
         <div class="event-card-meta">
@@ -2063,6 +2079,10 @@ async function toggleDirector(id,active) {
 const _origOpen = openModal;
 window.openModal = async function(id) {
   _origOpen(id);
+  if(id==='add-players-modal') {
+    document.getElementById('add-players-search').value='';
+    searchAddPlayers('');
+  }
   if(id==='director-modal') {
     const sel=document.getElementById('director-club');
     sel.innerHTML='<option value="">Select club…</option>';
@@ -2107,23 +2127,53 @@ async function createEvent() {
   errEl.style.display='none';
   if(!name){errEl.textContent='Event name required.';errEl.style.display='flex';return;}
   if(!date){errEl.textContent='Date required.';errEl.style.display='flex';return;}
-  const payload={name,event_date:date,event_type:type,club_id:currentUser.club_id,director_id:currentUser.director_id,status:'DRAFT',num_courts:4};
+
+  // Admin must pick a club and director
+  if(currentUser.role==='admin') {
+    errEl.textContent='Log in as a Director to create events, or use the Events tab to view all club events.';
+    errEl.style.display='flex';
+    return;
+  }
+
+  const payload={
+    name, event_date:date, event_type:type,
+    club_id:currentUser.club_id,
+    director_id:currentUser.director_id,
+    status:'DRAFT', num_courts:4
+  };
+
   if(type!=='INDIVIDUAL'){
     const teams=parseInt(document.getElementById('event-teams').value);
     if(!teams||teams<2){errEl.textContent='Number of teams required (min 2).';errEl.style.display='flex';return;}
-    payload.num_teams=teams; payload.num_courts=parseInt(document.getElementById('event-courts').value)||4;
+    payload.num_teams=teams;
+    payload.num_courts=parseInt(document.getElementById('event-courts').value)||4;
   }
+
+  const btn = document.querySelector('#new-event-modal .btn-primary');
+  btn.disabled=true; btn.textContent='Creating…';
+
   const {data,error}=await sb.from('events').insert(payload).select().single();
+  btn.disabled=false; btn.textContent='Create Event Draft';
+
   if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+
   if(type==='INDIVIDUAL'){
-    await sb.from('draws').insert({event_id:data.id,draw_size:parseInt(document.getElementById('event-draw-size').value),elimination_type:document.getElementById('event-elim-type').value,match_format:'GAMES',games_target:6});
+    await sb.from('draws').insert({
+      event_id:data.id,
+      draw_size:parseInt(document.getElementById('event-draw-size').value),
+      elimination_type:document.getElementById('event-elim-type').value,
+      match_format:'GAMES', games_target:6
+    });
   }
-  toast(`"${name}" created!`,'success');
+
+  toast('"'+name+'" created!','success');
   closeModal('new-event-modal');
   document.getElementById('event-name').value='';
   document.getElementById('event-date').value='';
   document.getElementById('event-teams').value='';
   loadDirectorEvents();
+  // Open the new event immediately
+  openEvent(data);
 }
 
 function toggleEventTypeFields(type) {
