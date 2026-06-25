@@ -1520,6 +1520,11 @@ async function initTeamBuilder(){
     grid.innerHTML='<div style="grid-column:1/-1;text-align:center;padding:40px;color:var(--muted)">Add players to the roster first</div>';
     return;
   }
+  // If teamData already has unsaved generated teams, just re-render them
+  if(teamData.length && teamData[0].id.startsWith('new_')){
+    renderTeams(); updateBuilderStats();
+    return;
+  }
   const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
   if(teams?.length){
     const {data:tps}=await sb.from('team_players').select('id,team_id,event_player_id').in('team_id',teams.map(t=>t.id));
@@ -1793,13 +1798,31 @@ async function loadRoundPairings(round,teams,eps,soCount){
   const el=document.getElementById('rb-'+round.round_number);
   if(!el) return;
   const {data:pairings}=await sb.from('pairings').select('*').eq('round_id',round.id);
-  const {data:scores}=await sb.from('scores').select('*').in('pairing_id',(pairings||[]).map(p=>p.id));
-  const {data:sitouts}=await sb.from('sitout_log').select('event_player_id').eq('round_number',round.round_number);
+  if(!pairings?.length){el.innerHTML='<div style="padding:16px;color:var(--ink-muted);font-size:13px">No pairings found for this round.</div>';return;}
+  const {data:scores}=await sb.from('scores').select('*').in('pairing_id',pairings.map(p=>p.id));
+  const epIds=eps.map(e=>e.id);
+  const {data:sitouts}=epIds.length?await sb.from('sitout_log').select('event_player_id')
+    .eq('round_number',round.round_number).in('event_player_id',epIds):{data:[]};
+
+  // Build player name map from all players in DB for this event
+  const allPlayerIds=[...new Set([
+    ...pairings.flatMap(p=>[p.team_a_player1_id,p.team_a_player2_id,p.team_b_player1_id,p.team_b_player2_id])
+  ])].filter(Boolean);
   
-  const pname=id=>{const ep=eps.find(e=>e.player_id===id||e.id===id);return ep?.players?.roster_name||id;};
+  // Try to find names from eps first, fall back to DB
+  const nameCache={};
+  eps.forEach(ep=>{if(ep.players) nameCache[ep.player_id]=ep.players.roster_name;});
+  
+  // Fetch any missing player names
+  const missing=allPlayerIds.filter(id=>!nameCache[id]);
+  if(missing.length){
+    const {data:players}=await sb.from('players').select('id,roster_name').in('id',missing);
+    (players||[]).forEach(p=>nameCache[p.id]=p.roster_name);
+  }
+
+  const pname=id=>nameCache[id]||'?';
   const tname=id=>teams.find(t=>t.id===id)?.name||'?';
   const tcolor=id=>teams.find(t=>t.id===id)?.color||'#666';
-  
   const soPlayers=(sitouts||[]).map(s=>{const ep=eps.find(e=>e.id===s.event_player_id);return ep?.players?.roster_name||'?';});
 
   const pairingRows=(pairings||[]).map(p=>{
