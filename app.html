@@ -1014,6 +1014,17 @@ const NAME_SETS = [
   ['Deuce Demons','Love Club','Match Points','Second Serve','Wild Cards'],
 ];
 
+function openEventById(eid) {
+  const event = allEvents.find(e=>e.id===eid) || adminAllEvents.find(e=>e.id===eid);
+  if(event) openEvent(event);
+  else {
+    // Fetch from DB if not in local cache
+    sb.from('events').select('*').eq('id',eid).single().then(({data})=>{
+      if(data) openEvent(data);
+    });
+  }
+}
+
 function openEvent(event) {
   currentEvent = typeof event === 'string' ? JSON.parse(decodeURIComponent(event)) : event;
   document.getElementById('event-header-name').textContent = currentEvent.name;
@@ -2198,9 +2209,27 @@ function filterEvents(s,btn) {
 }
 function renderEvents() {
   const el=document.getElementById('dir-events-list');
+  if(!el) return;
   const f=evFilter==='all'?allEvents:allEvents.filter(e=>e.status===evFilter);
-  if(!f.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events</div><button class="btn btn-primary" onclick="openModal(\'new-event-modal\')">+ New Event</button></div>';return;}
-  el.innerHTML=f.map(e=>`<div class="event-card" onclick="openEvent(${JSON.stringify(e).replace(/'/g,'&#39;')})"><div style="flex:1"><div class="event-card-name">${e.name}</div><div class="event-card-meta"><span>${fmtDate(e.event_date)}</span><span>${e.event_type}</span>${e.num_teams?`<span>${e.num_teams} teams</span>`:''}</div></div><div style="display:flex;align-items:center;gap:12px">${statusBadge(e.status)}<span style="color:var(--ghost);font-size:20px">›</span></div></div>`).join('');
+  if(!f.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events yet</div><div class="empty-sub">Create your first event to get started</div><button class="btn btn-primary" onclick="openModal(\'new-event-modal\')">+ New Event</button></div>';
+    return;
+  }
+  el.innerHTML=f.map(e=>`
+    <div class="event-card" onclick="openEventById('${e.id}')">
+      <div style="flex:1">
+        <div class="event-card-name">${e.name}</div>
+        <div class="event-card-meta">
+          <span>${fmtDate(e.event_date)}</span>
+          <span>${e.event_type}</span>
+          ${e.num_teams?`<span>${e.num_teams} teams</span>`:''}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        ${statusBadge(e.status)}
+        <span style="color:var(--ghost);font-size:20px">›</span>
+      </div>
+    </div>`).join('');
 }
 
 // ══════════════════════════════════════════════
