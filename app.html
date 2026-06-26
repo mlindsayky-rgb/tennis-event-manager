@@ -2434,8 +2434,21 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   });
 
   console.log('saveRound debug:','playing:',playing.length,'courts:',courts,'teams:',teams.length);
-  console.log('byTeam:',JSON.stringify(byTeam));
-  console.log('playing ids:',[...playing.map(p=>p.id)]);
+
+  // Load ratings for all playing players — needed for TD and pairing balance
+  const playingPlayerIds=[...new Set(playing.map(p=>p.player_id).filter(Boolean))];
+  let ratingMap={};
+  if(playingPlayerIds.length){
+    const {data:ratingRows}=await sb.from('player_ratings')
+      .select('player_id,source,value,designation,fetched_at')
+      .in('player_id',playingPlayerIds);
+    (ratingRows||[]).forEach(r=>{
+      if(!ratingMap[r.player_id]) ratingMap[r.player_id]={};
+      const ex=ratingMap[r.player_id][r.source];
+      if(!ex||new Date(r.fetched_at)>new Date(ex.fetched_at)) ratingMap[r.player_id][r.source]=r;
+    });
+  }
+  console.log('Ratings loaded for',Object.keys(ratingMap).length,'players');
 
   // ── PAIRING GENERATION ──────────────────────────────────
   // Simple model: each court gets 1 pair from Team A vs 1 pair from Team B
@@ -2632,16 +2645,29 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
 
     if(fmt==='TD'){
       // TD: rank each team's players by effective rating independently
-      // Then pair Team A's #1+#2 vs Team B's #1+#2, etc.
+      // Ratings are loaded into ratingMap from the top of saveRound
       const effRating=p=>{
-        const n=p.ratings?.['NTRP'],t=p.ratings?.['TRR']||p.ratings?.['UTR'];
+        const pid=p.player_id||p.id;
+        const rm=ratingMap[pid]||{};
+        const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
         const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;
-        return (p.players?.gender||p.gender)==='FEMALE'?base-0.5:base;
+        const gender=(p.players?.gender||p.gender);
+        return gender==='FEMALE'?base-0.5:base;
       };
       const rankA=[...poolA].sort((a,b)=>effRating(b)-effRating(a));
       const rankB=[...poolB].sort((a,b)=>effRating(b)-effRating(a));
-      console.log('TD - '+tA.name+':',rankA.map(p=>(p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+')'));
-      console.log('TD - '+tB.name+':',rankB.map(p=>(p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+')'));
+      console.log('TD - '+tA.name+':',rankA.map(p=>{
+        const pid=p.player_id||p.id;
+        const rm=ratingMap[pid]||{};
+        const n=rm['NTRP'];
+        return (p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+' raw:'+(n?parseFloat(n.value).toFixed(1):'NR')+' gender:'+(p.players?.gender||p.gender)+')';
+      }));
+      console.log('TD - '+tB.name+':',rankB.map(p=>{
+        const pid=p.player_id||p.id;
+        const rm=ratingMap[pid]||{};
+        const n=rm['NTRP'];
+        return (p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+' raw:'+(n?parseFloat(n.value).toFixed(1):'NR')+' gender:'+(p.players?.gender||p.gender)+')';
+      }));
       // Pair position by position: A[0]+A[1] vs B[0]+B[1], A[2]+A[3] vs B[2]+B[3]
       const numCourts=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts);
       for(let i=0;i<numCourts;i++){
@@ -2653,8 +2679,8 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
         matched.push({a:{p1:p1a,p2:p2a,str:strA,teamId:tA.id},b:{p1:p1b,p2:p2b,str:strB,teamId:tB.id},diff:Math.abs(strA-strB)});
       }
     } else {
-      const pairsA=splitIntoPairs(poolA,fmt,strategy);
-      const pairsB=splitIntoPairs(poolB,fmt,strategy);
+      const pairsA=splitIntoPairs(poolA,fmt,strategy,ratingMap);
+      const pairsB=splitIntoPairs(poolB,fmt,strategy,ratingMap);
       matched=matchPairs(pairsA,pairsB,strategy);
     }
 
