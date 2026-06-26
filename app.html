@@ -1680,12 +1680,20 @@ function renderTeams(){
       <div class="team-stats" id="ts-${team.id}">${teamStats(team)}</div>
       <div class="team-players" id="tplayers-${team.id}">
         ${[...team.players].sort((a,b)=>{
-          const getR=p=>{
+          const getEff=p=>{
             const n=p.ratings?.['NTRP'];
             const t=p.ratings?.['TRR']||p.ratings?.['UTR'];
-            return n?parseFloat(n.value):t?parseFloat(t.value):0;
+            const base=n?parseFloat(n.value):t?parseFloat(t.value):0;
+            // Apply BG offset: women effective = actual - 0.5
+            return (p.gender==='FEMALE'?base-0.5:base);
           };
-          return getR(b)-getR(a);
+          const getTRR=p=>{
+            const t=p.ratings?.['TRR']||p.ratings?.['UTR'];
+            return t?parseFloat(t.value):0;
+          };
+          const ae=getEff(a), be=getEff(b);
+          if(Math.abs(ae-be)>0.01) return be-ae; // different effective rating
+          return getTRR(b)-getTRR(a); // same effective rating — sort by TRR
         }).map(p=>playerChip(p,team.id)).join('')}
       </div>
     </div>`).join('');
@@ -2171,16 +2179,32 @@ async function deployRound(roundNum){
   window._pendingSitOuts = sitOutPlayers;
 
   // Fetch round config for format check
-  // Fetch round config — look for any saved config for this round number
-  // (saved by saveRoundConfig before deployment)
-  const {data:cfgRows}=await sb.from('rounds')
-    .select('format,strategy,scoring_mode,golden_game_enabled,timer_minutes')
-    .eq('event_id',currentEvent.id)
-    .eq('round_number',roundNum)
-    .order('created_at',{ascending:true}) // get the original config, not a redeployed one
-    .limit(1);
-  const cfg=cfgRows?.[0]||{format:'BG',strategy:'AE'};
-  console.log('Round',roundNum,'config from DB:',cfg?.format, cfg?.strategy);
+  // Use in-memory config cache if available (set by saveRoundConfig this session)
+  // Otherwise fetch from DB — look for non-complete records which are config stubs
+  let cfgByRound = window._savedRoundConfigs || {};
+
+  if(!Object.keys(cfgByRound).length) {
+    // No memory cache — fetch from DB, prefer most recently saved configs
+    const {data:allCfgRows}=await sb.from('rounds')
+      .select('round_number,format,strategy,scoring_mode,golden_game_enabled,timer_minutes,is_complete,created_at')
+      .eq('event_id',currentEvent.id)
+      .order('created_at',{ascending:false}); // most recent first
+
+    // For each round number, prefer is_complete=false records (config stubs)
+    // over completed/deployed records
+    const byRoundAll={};
+    (allCfgRows||[]).forEach(r=>{
+      if(!byRoundAll[r.round_number]) byRoundAll[r.round_number]=r;
+      else if(!r.is_complete && byRoundAll[r.round_number].is_complete) {
+        byRoundAll[r.round_number]=r; // prefer config stub
+      }
+    });
+    cfgByRound=byRoundAll;
+    window._savedRoundConfigs=cfgByRound;
+  }
+
+  const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
+  console.log('Round',roundNum,'config:',cfg?.format, cfg?.strategy);
 
   // Pre-deploy format check
   const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
@@ -2321,12 +2345,12 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   const _override=cfg?._override||null; // 'BG_THEN_TD' etc
   console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy,'Override:',_override);
 
-  // Delete any existing config stub for this round before creating the live record
+  // Delete only THIS round's existing records (config stub + any previous deploy)
+  // DO NOT delete other rounds' configs
   await sb.from('rounds')
     .delete()
     .eq('event_id',currentEvent.id)
-    .eq('round_number',roundNum)
-    .eq('is_complete',false);
+    .eq('round_number',roundNum);
 
   // Create the live round record
   const {data:nr,error:rErr}=await sb.from('rounds').insert({
@@ -2694,7 +2718,12 @@ async function saveRoundConfig() {
   }
   const {error} = await sb.from('rounds').insert(rows);
   if(error){toast('Error saving: '+error.message,'error');}
-  else{toast('Round setup saved!','success');}
+  else{
+    // Also cache in memory for immediate use this session
+    window._savedRoundConfigs = {};
+    rows.forEach(r=>{ window._savedRoundConfigs[r.round_number]=r; });
+    toast('Round setup saved!','success');
+  }
   if(btn){btn.disabled=false;btn.textContent='Save Setup';}
 }
 
