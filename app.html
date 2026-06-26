@@ -2101,11 +2101,19 @@ async function loadRounds(){
 
   const nextRound=(rounds?.length||0)+1;
   const canDeploy=currentEvent.status==='TEAMS_SET'||currentEvent.status==='LIVE';
+  const activeCt=(eps||[]).filter(e=>e.status==='ACTIVE').length;
+  const curCourts=currentEvent.num_courts||4;
 
   el.innerHTML='<div style="padding:20px">'+
-    (canDeploy?'<div style="margin-bottom:20px;display:flex;align-items:center;gap:10px">'+
+    (canDeploy?'<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
       '<button class="btn btn-primary" onclick="deployRound('+nextRound+')">⚡ Deploy Round '+nextRound+'</button>'+
-      '<span style="font-size:13px;color:var(--muted)">'+((eps||[]).filter(e=>e.status==='ACTIVE').length)+' active players</span>'+
+      '<span style="font-size:13px;color:var(--ink-muted)">'+activeCt+' active players</span>'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px">'+
+        '<span style="font-size:12px;color:var(--ink-muted);font-weight:600">Courts:</span>'+
+        '<button onclick="adjustCourts(-1)" style="width:28px;height:28px;border:none;background:none;font-size:18px;cursor:pointer;color:var(--ink-mid);line-height:1">−</button>'+
+        '<span id="live-court-count" style="font-size:16px;font-weight:700;min-width:20px;text-align:center">'+curCourts+'</span>'+
+        '<button onclick="adjustCourts(1)" style="width:28px;height:28px;border:none;background:none;font-size:18px;cursor:pointer;color:var(--ink-mid);line-height:1">+</button>'+
+      '</div>'+
     '</div>':'')+
     (!rounds?.length?'<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No rounds yet</div></div>'
     :rounds.map(r=>'<div class="card" style="margin-bottom:16px">'+
@@ -2273,12 +2281,19 @@ async function deployRound(roundNum){
     return g(p)==='FEMALE'?base-0.5:base;
   };
 
-  // Sort by fewest sits, then longest since last sat, then random
+  // Sort for PLAYING selection:
+  // Priority 1: players who sat last round play first (no consecutive sits)
+  // Priority 2: most total sits plays first (most overdue)
+  // Priority 3: random tiebreak for variety
   const fairSort=(a,b)=>{
+    const aLastSit=lastSitRound[a.id]||0, bLastSit=lastSitRound[b.id]||0;
+    const aSatLast=aLastSit===roundNum-1, bSatLast=bLastSit===roundNum-1;
+    // Players who sat last round get absolute priority to play this round
+    if(aSatLast&&!bSatLast) return -1;
+    if(!aSatLast&&bSatLast) return 1;
+    // Among players in same category, most total sits plays first
     const ac=soCount[a.id]||0,bc=soCount[b.id]||0;
-    if(ac!==bc) return ac-bc;
-    const al=lastSitRound[a.id]||0,bl=lastSitRound[b.id]||0;
-    if(al!==bl) return al-bl;
+    if(ac!==bc) return bc-ac;
     return Math.random()-.5;
   };
 
@@ -2319,10 +2334,7 @@ async function deployRound(roundNum){
     return;
   }
 
-  // ── STEP 4: Format warning check ──────────────────────
-  const formatCheck=await checkFormatBeforeDeploy(roundNum,uniqueTeams,tps||[],eps||[],{...cfg,num_courts:numCourts});
-  if(formatCheck){showFormatWarning(formatCheck,null);window._pendingPlaying=playing;window._pendingSitOuts=sitOutPlayers;return;}
-
+  // ── STEP 4: Deploy ────────────────────────────────────
   await saveRound(roundNum,playing,sitOutPlayers,tps||[],uniqueTeams,numCourts,cfg,ratingMap,prevPartners);
 }
 
@@ -3145,6 +3157,18 @@ async function confirmOpenPairings() {
   toast(`Round ${roundNum} deployed! ${pairings.length} courts set.`,'success');
   closeModal('open-court-modal');
   loadRounds();
+}
+
+
+function adjustCourts(delta) {
+  const current = currentEvent.num_courts||4;
+  const next = Math.max(1, current + delta);
+  currentEvent.num_courts = next;
+  const el = document.getElementById('live-court-count');
+  if(el) el.textContent = next;
+  // Persist to DB
+  sb.from('events').update({num_courts:next}).eq('id',currentEvent.id)
+    .then(()=>toast('Courts set to '+next,'success'));
 }
 
 function resetConnection() {
