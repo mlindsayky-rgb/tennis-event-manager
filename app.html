@@ -2624,9 +2624,35 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     const poolB=playing.filter(p=>byTeamUnique[tB.id]?.includes(p.id));
     console.log('Pool sizes - '+tA.name+':',poolA.length,'(M:'+poolA.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolA.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')',tB.name+':',poolB.length,'(M:'+poolB.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolB.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')')
 
-    const pairsA=splitIntoPairs(poolA,fmt,strategy);
-    const pairsB=splitIntoPairs(poolB,fmt,strategy);
-    const matched=matchPairs(pairsA,pairsB,strategy);
+    let matched=[];
+
+    if(fmt==='TD'){
+      // TD: rank each team's players by effective rating independently
+      // Then pair Team A's #1+#2 vs Team B's #1+#2, etc.
+      const effRating=p=>{
+        const n=p.ratings?.['NTRP'],t=p.ratings?.['TRR']||p.ratings?.['UTR'];
+        const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+        return (p.players?.gender||p.gender)==='FEMALE'?base-0.5:base;
+      };
+      const rankA=[...poolA].sort((a,b)=>effRating(b)-effRating(a));
+      const rankB=[...poolB].sort((a,b)=>effRating(b)-effRating(a));
+      console.log('TD - '+tA.name+':',rankA.map(p=>(p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+')'));
+      console.log('TD - '+tB.name+':',rankB.map(p=>(p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+')'));
+      // Pair position by position: A[0]+A[1] vs B[0]+B[1], A[2]+A[3] vs B[2]+B[3]
+      const numCourts=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts);
+      for(let i=0;i<numCourts;i++){
+        const p1a=rankA[i*2], p2a=rankA[i*2+1];
+        const p1b=rankB[i*2], p2b=rankB[i*2+1];
+        if(!p1a||!p2a||!p1b||!p2b) break;
+        const strA=effRating(p1a)+effRating(p2a);
+        const strB=effRating(p1b)+effRating(p2b);
+        matched.push({a:{p1:p1a,p2:p2a,str:strA,teamId:tA.id},b:{p1:p1b,p2:p2b,str:strB,teamId:tB.id},diff:Math.abs(strA-strB)});
+      }
+    } else {
+      const pairsA=splitIntoPairs(poolA,fmt,strategy);
+      const pairsB=splitIntoPairs(poolB,fmt,strategy);
+      matched=matchPairs(pairsA,pairsB,strategy);
+    }
 
     console.log('Matchup',tA.name,'vs',tB.name,'pairsA:',pairsA.length,'pairsB:',pairsB.length,'matched:',matched.length);
     // Log each matched court with ratings for balance analysis
@@ -2637,14 +2663,14 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
       console.log(`Court ${i+1}: ${name(m.a.p1)}(${eff(m.a.p1).toFixed(1)}) + ${name(m.a.p2)}(${eff(m.a.p2).toFixed(1)}) = ${m.a.str.toFixed(1)} vs ${name(m.b.p1)}(${eff(m.b.p1).toFixed(1)}) + ${name(m.b.p2)}(${eff(m.b.p2).toFixed(1)}) = ${m.b.str.toFixed(1)} | gap: ${m.diff.toFixed(1)}`);
     });
 
-    for(const {a,b} of matched){
+    for(const m of matched){
       if(courtNum>courts) break;
-      // Skip if any player already used (sit-outs)
+      const {a,b}=m;
       if(usedEPIds.has(a.p1.id)||usedEPIds.has(a.p2.id)||usedEPIds.has(b.p1.id)||usedEPIds.has(b.p2.id)) continue;
       [a.p1,a.p2,b.p1,b.p2].forEach(p=>usedEPIds.add(p.id));
       pairings.push({
         round_id:nr.id, court_number:courtNum++,
-        team_a_id:tA.id, team_b_id:tB.id,
+        team_a_id:a.teamId||tA.id, team_b_id:b.teamId||tB.id,
         team_a_player1_id:a.p1.player_id,
         team_a_player2_id:a.p2.player_id,
         team_b_player1_id:b.p1.player_id,
