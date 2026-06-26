@@ -1981,7 +1981,11 @@ async function loadRounds(){
           <div class="section-title">Round Setup</div>
           <div class="section-sub">Configure each round before the event starts. You can change these anytime before going live.</div>
         </div>
-        <button class="btn btn-primary" onclick="saveRoundConfig()">Save Setup</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="removeRound()" id="remove-round-btn">− Round</button>
+          <button class="btn btn-secondary" onclick="addRound()">+ Round</button>
+          <button class="btn btn-primary" onclick="saveRoundConfig()">Save Setup</button>
+        </div>
       </div>
       <div class="card">
         <table class="round-setup-grid">
@@ -2654,7 +2658,7 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
       matched=matchPairs(pairsA,pairsB,strategy);
     }
 
-    console.log('Matchup',tA.name,'vs',tB.name,'pairsA:',pairsA.length,'pairsB:',pairsB.length,'matched:',matched.length);
+    console.log('Matchup',tA.name,'vs',tB.name,'matched:',matched.length);
     // Log each matched court with ratings for balance analysis
     matched.forEach((m,i)=>{
       const g=p=>(p.players?.gender||p.gender);
@@ -2884,6 +2888,20 @@ async function saveEventNotes(){
   loadNotes();
 }
 
+
+
+function addRound() {
+  const numRounds = currentEvent.num_rounds||4;
+  currentEvent.num_rounds = numRounds + 1;
+  loadRounds(); // re-renders the setup grid with new row
+}
+
+function removeRound() {
+  const numRounds = currentEvent.num_rounds||4;
+  if(numRounds <= 1) { toast('Must have at least 1 round','error'); return; }
+  currentEvent.num_rounds = numRounds - 1;
+  loadRounds();
+}
 
 async function saveRoundConfig() {
   const numRounds = currentEvent.num_rounds||4;
