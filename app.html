@@ -1679,7 +1679,14 @@ function renderTeams(){
       </div>
       <div class="team-stats" id="ts-${team.id}">${teamStats(team)}</div>
       <div class="team-players" id="tplayers-${team.id}">
-        ${team.players.map(p=>playerChip(p,team.id)).join('')}
+        ${[...team.players].sort((a,b)=>{
+          const getR=p=>{
+            const n=p.ratings?.['NTRP'];
+            const t=p.ratings?.['TRR']||p.ratings?.['UTR'];
+            return n?parseFloat(n.value):t?parseFloat(t.value):0;
+          };
+          return getR(b)-getR(a);
+        }).map(p=>playerChip(p,team.id)).join('')}
       </div>
     </div>`).join('');
 }
