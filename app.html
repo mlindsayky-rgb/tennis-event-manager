@@ -2010,6 +2010,7 @@ async function loadRounds(){
         num: i+1,
         format: saved?.format || (i===numRounds-1?'OPEN':'BG'),
         strategy: saved?.strategy||'AE',
+        num_courts: saved?.num_courts||currentEvent.num_courts||4,
         golden: saved?.golden_game_enabled||false,
         timer: saved?.timer_minutes||0,
         scoring: saved?.scoring_mode||(i===numRounds-1?'DIRECTOR_POINTS':'GAMES')
@@ -2034,6 +2035,7 @@ async function loadRounds(){
             <th>#</th>
             <th>Format</th>
             <th>Strategy</th>
+            <th>Courts</th>
             <th>Scoring</th>
             <th>Timer (min)</th>
             <th>Golden Game</th>
@@ -2055,6 +2057,10 @@ async function loadRounds(){
                   <option value="AE" ${(r.strategy||'AE')==='AE'?'selected':''}>AE — All Even</option>
                   <option value="YY" ${r.strategy==='YY'?'selected':''}>YY — Yin Yang</option>
                 </select>
+              </td>
+              <td>
+                <input type="number" class="form-input" id="rc-${r.num}" value="${r.num_courts||currentEvent.num_courts||4}"
+                  min="1" max="20" style="width:60px;font-size:12px;padding:6px 10px" title="Courts for this round">
               </td>
               <td>
                 <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rs-${r.num}">
@@ -2183,14 +2189,16 @@ async function loadRoundPairings(round,teams,eps,soCount){
 }
 
 async function deployRound(roundNum){
+  // ── STEP 0: Load all data ──────────────────────────────
   const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
   const {data:tps}=await sb.from('team_players').select('team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
   const {data:eps}=await sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id).eq('status','ACTIVE');
-  const {data:sitouts}=await sb.from('sitout_log').select('event_player_id,sitout_type,round_number').in('event_player_id',(eps||[]).map(e=>e.id));
-  
-  const soCount={};
-  const lastSitRound={};
-  (sitouts||[]).forEach(s=>{
+  const activePlayers=eps||[];
+
+  // Load sit-out history for this event
+  const {data:sitLogs}=await sb.from('sitout_log').select('event_player_id,round_number,sitout_type').in('event_player_id',activePlayers.map(e=>e.id));
+  const soCount={}, lastSitRound={};
+  (sitLogs||[]).forEach(s=>{
     if(s.sitout_type!=='STRATEGIC'){
       soCount[s.event_player_id]=(soCount[s.event_player_id]||0)+1;
       if(!lastSitRound[s.event_player_id]||s.round_number>lastSitRound[s.event_player_id])
@@ -2198,623 +2206,312 @@ async function deployRound(roundNum){
     }
   });
 
-  const numCourts=currentEvent.num_courts||4;
-  const activePlayers=eps||[];
-  const playersNeeded=numCourts*4;
-  const sitOutCount=Math.max(0,activePlayers.length-playersNeeded);
-
-  // ── SIT-OUT FAIRNESS ALGORITHM ──────────────────────────
-  // Approach: SELECT WHO PLAYS first (guarantees courts filled),
-  // then everyone else sits. Fairness is applied within the playing selection.
-  //
-  // For each team, select the required players by format:
-  //   BB: top numCourts*2 men by fewest sits (rotate men fairly)
-  //   GG: top numCourts*2 women by fewest sits
-  //   BG: top numCourts men + top numCourts women by fewest sits
-  //   TD/OPEN: top numCourts*2 players by fewest sits regardless of gender
-
-  // Fetch round format
-  const {data:rCfg}=await sb.from('rounds')
-    .select('format').eq('event_id',currentEvent.id)
-    .eq('round_number',roundNum).eq('is_complete',false).maybeSingle();
-  const roundFmt=rCfg?.format||'BG';
-
-  // Build team membership map
-  const epTeamMap={};
-  (tps||[]).forEach(tp=>epTeamMap[tp.event_player_id]=tp.team_id);
-
-  // Fairness sort: fewest sits first, then longest since last sat, then random
-  const fairSort=(a,b)=>{
-    const ac=soCount[a.id]||0, bc=soCount[b.id]||0;
-    if(ac!==bc) return ac-bc;
-    const al=lastSitRound[a.id]||0, bl=lastSitRound[b.id]||0;
-    if(al!==bl) return al-bl;
-    return Math.random()-.5;
-  };
-
-  const gender=p=>(p.players?.gender||p.gender);
-  const playingSet=new Set();
-
-  // Get unique team IDs from tps
-  const teamIds=[...new Set((tps||[]).map(tp=>tp.team_id))];
-
-  for(const teamId of teamIds){
-    const teamPlayers=activePlayers.filter(p=>epTeamMap[p.id]===teamId);
-    const men=[...teamPlayers.filter(p=>gender(p)==='MALE')].sort(fairSort);
-    const women=[...teamPlayers.filter(p=>gender(p)==='FEMALE')].sort(fairSort);
-    const all=[...teamPlayers].sort(fairSort);
-
-    let selected=[];
-    if(roundFmt==='BB'){
-      // Need numCourts*2 men — if not enough men, fill remainder with anyone
-      selected=[...men.slice(0,numCourts*2)];
-      if(selected.length<numCourts*2){
-        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
-        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
-      }
-    } else if(roundFmt==='GG'){
-      selected=[...women.slice(0,numCourts*2)];
-      if(selected.length<numCourts*2){
-        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
-        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
-      }
-    } else if(roundFmt==='BG'){
-      const selMen=men.slice(0,numCourts);
-      const selWomen=women.slice(0,numCourts);
-      selected=[...selMen,...selWomen];
-      // Fill any gaps if gender imbalance
-      if(selected.length<numCourts*2){
-        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
-        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
-      }
-    } else {
-      // TD/OPEN: top numCourts*2 players regardless of gender
-      selected=all.slice(0,numCourts*2);
-    }
-    selected.forEach(p=>playingSet.add(p.id));
-  }
-
-  const sitOutPlayers=activePlayers.filter(p=>!playingSet.has(p.id));
-  console.log('Playing:',playingSet.size,'Sitting:',sitOutPlayers.length);
-  console.log('Sit-outs:',sitOutPlayers.map(p=>(p.players?.roster_name||'?')+' ('+( soCount[p.id]||0)+' prev sits)'));
-
-  const playing=activePlayers.filter(p=>playingSet.has(p.id));
-  const actualCourts=Math.min(numCourts,Math.floor(playing.length/4));
-
-  if(playing.length<actualCourts*4){
-    showCourtChoice(playing,sitOutPlayers,actualCourts,roundNum,teams||[],soCount);
-    return;
-  }
-
-  // Store for potential format warning use
-  window._pendingPlaying = playing;
-  window._pendingSitOuts = sitOutPlayers;
-
-  // Fetch round config for format check
-  // Load round configs — memory cache → event.round_configs → fallback BG
-  let cfgByRound = window._savedRoundConfigs || {};
-
-  if(!Object.keys(cfgByRound).length) {
-    // Load from event record (most reliable — saved directly on event)
-    if(currentEvent.round_configs && Object.keys(currentEvent.round_configs).length) {
-      cfgByRound = currentEvent.round_configs;
-    } else {
-      // Fetch fresh from events table
-      const {data:ev} = await sb.from('events').select('round_configs').eq('id',currentEvent.id).single();
-      if(ev?.round_configs && Object.keys(ev.round_configs).length) {
-        cfgByRound = ev.round_configs;
-        currentEvent.round_configs = cfgByRound;
-      }
-    }
-    window._savedRoundConfigs = cfgByRound;
-  }
-
-  const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
-  console.log('Round',roundNum,'→ format:',cfg.format,'strategy:',cfg.strategy);
-
-  // Pre-deploy format check
-  const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
-  if(formatCheck) {
-    showFormatWarning(formatCheck, null);
-    return;
-  }
-
-  // OPEN format — show court builder instead of auto-generating
-  if(cfg?.format==='OPEN') {
-    openCourtBuilder(roundNum, playing, sitOutPlayers, tps||[], teams||[], actualCourts, cfg);
-    return;
-  }
-
-  await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts,cfg);
-}
-
-
-// ── PRE-DEPLOY FORMAT CHECK ──────────────────────────────
-async function checkFormatBeforeDeploy(roundNum, teams, tps, eps, cfg) {
-  const fmt = cfg?.format || 'BG';
-  const strategy = cfg?.strategy || 'AE';
-  const numCourts = currentEvent.num_courts || 4;
-
-  // Count active players per team by gender
-  const byTeam = {};
-  tps.forEach(tp => {
-    if(!byTeam[tp.team_id]) byTeam[tp.team_id] = [];
-    byTeam[tp.team_id].push(tp.event_player_id);
-  });
-
-  const g = p => p.players?.gender || p.gender;
-  const teamStats = teams.map(t => {
-    const players = eps.filter(ep => byTeam[t.id]?.includes(ep.id) && ep.status === 'ACTIVE');
-    const men = players.filter(p => (p.players?.gender||p.gender) === 'MALE').length;
-    const women = players.filter(p => (p.players?.gender||p.gender) === 'FEMALE').length;
-    return { team: t, men, women, total: players.length };
-  });
-
-  // Check if format can fill all courts
-  const problems = [];
-  const suggestions = [];
-
-  for(const ts of teamStats) {
-    if(fmt === 'BG') {
-      const bgCourts = Math.min(ts.men, ts.women);
-      if(bgCourts < numCourts) {
-        problems.push(`${ts.team.name} has ${ts.men}M / ${ts.women}F — can only fill ${bgCourts} BG court${bgCourts !== 1 ? 's' : ''} of ${numCourts}`);
-      }
-    } else if(fmt === 'BB') {
-      const bbCourts = Math.floor(ts.men / 2);
-      if(bbCourts < numCourts) {
-        problems.push(`${ts.team.name} has ${ts.men} men — can only fill ${bbCourts} BB court${bbCourts !== 1 ? 's' : ''} of ${numCourts}`);
-      }
-    } else if(fmt === 'GG') {
-      const ggCourts = Math.floor(ts.women / 2);
-      if(ggCourts < numCourts) {
-        problems.push(`${ts.team.name} has ${ts.women} women — can only fill ${ggCourts} GG court${ggCourts !== 1 ? 's' : ''} of ${numCourts}`);
-      }
-    }
-  }
-
-  if(!problems.length) return null; // All good — proceed normally
-
-  // Build suggestions based on what would work
-  const minMen = Math.min(...teamStats.map(t => t.men));
-  const minWomen = Math.min(...teamStats.map(t => t.women));
-  const minTotal = Math.min(...teamStats.map(t => t.total));
-  const maxBGCourts = Math.min(minMen, minWomen);
-  const maxBBCourts = Math.floor(minMen / 2);
-  const maxGGCourts = Math.floor(minWomen / 2);
-  const maxTDCourts = Math.floor(minTotal / 2);
-
-  if(fmt === 'BG' && maxBGCourts > 0) {
-    suggestions.push({
-      label: `✓ Keep BG for ${maxBGCourts} court${maxBGCourts !== 1 ? 's' : ''}, use TD for remaining ${numCourts - maxBGCourts}`,
-      fmt: 'BG', strategy, override: 'BG_THEN_TD', courts: numCourts
-    });
-  }
-  if(maxTDCourts >= numCourts) {
-    suggestions.push({
-      label: `Switch to TD — fills all ${numCourts} courts (any 2 players by rating, gender ignored)`,
-      fmt: 'TD', strategy: 'AE', override: null, courts: numCourts
-    });
-  }
-  if(fmt !== 'BB' && maxBBCourts >= numCourts) {
-    suggestions.push({
-      label: `Switch to BB — ${numCourts} courts, men only`,
-      fmt: 'BB', strategy, override: null, courts: numCourts
-    });
-  }
-  if(fmt !== 'GG' && maxGGCourts >= numCourts) {
-    suggestions.push({
-      label: `Switch to GG — ${numCourts} courts, women only`,
-      fmt: 'GG', strategy, override: null, courts: numCourts
-    });
-  }
-  if(maxBGCourts > 0 && maxBGCourts < numCourts) {
-    suggestions.push({
-      label: `Reduce to ${maxBGCourts} BG court${maxBGCourts !== 1 ? 's' : ''} — only use players who fit the format`,
-      fmt: 'BG', strategy, override: null, courts: maxBGCourts
+  // Load previous round pairings for repeat-partner avoidance
+  const {data:prevRounds}=await sb.from('rounds').select('id,round_number').eq('event_id',currentEvent.id).eq('round_number',roundNum-1);
+  const prevPartners={}; // player_id -> Set of player_ids they partnered with last round
+  if(prevRounds?.length){
+    const {data:prevPairings}=await sb.from('pairings').select('*').eq('round_id',prevRounds[0].id);
+    (prevPairings||[]).forEach(p=>{
+      // team_a partners
+      if(!prevPartners[p.team_a_player1_id]) prevPartners[p.team_a_player1_id]=new Set();
+      if(!prevPartners[p.team_a_player2_id]) prevPartners[p.team_a_player2_id]=new Set();
+      prevPartners[p.team_a_player1_id].add(p.team_a_player2_id);
+      prevPartners[p.team_a_player2_id].add(p.team_a_player1_id);
+      // team_b partners
+      if(!prevPartners[p.team_b_player1_id]) prevPartners[p.team_b_player1_id]=new Set();
+      if(!prevPartners[p.team_b_player2_id]) prevPartners[p.team_b_player2_id]=new Set();
+      prevPartners[p.team_b_player1_id].add(p.team_b_player2_id);
+      prevPartners[p.team_b_player2_id].add(p.team_b_player1_id);
     });
   }
 
-  return { problems, suggestions, roundNum, teams, tps, eps, cfg };
-}
-
-function showFormatWarning(check, deployFn) {
-  document.getElementById('format-warn-message').innerHTML =
-    check.problems.map(p => `<div style="margin-bottom:4px">• ${p}</div>`).join('');
-
-  const optsEl = document.getElementById('format-warn-options');
-  optsEl.innerHTML = check.suggestions.map((s, i) => `
-    <button class="btn btn-secondary" style="text-align:left;justify-content:flex-start;padding:12px 16px;height:auto;line-height:1.4"
-      onclick="applyFormatSuggestion(${i})">
-      ${s.label}
-    </button>`).join('');
-
-  // Store for use when option is picked
-  window._formatWarnCheck = check;
-  window._formatWarnDeployFn = deployFn;
-  openModal('format-warn-modal');
-}
-
-async function applyFormatSuggestion(idx) {
-  const check = window._formatWarnCheck;
-  const s = check.suggestions[idx];
-  closeModal('format-warn-modal');
-  toast(`Deploying with: ${s.fmt}${s.override ? ' (hybrid)' : ''}`, 'default');
-  // Override the config and deploy
-  const overrideCfg = {...check.cfg, format: s.fmt, strategy: s.strategy, _courts: s.courts, _override: s.override};
-  await saveRound(check.roundNum, window._pendingPlaying, window._pendingSitOuts, check.tps, check.teams, s.courts, overrideCfg);
-}
-
-async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride){
-  // Config is passed directly from deployRound — no need to re-fetch from DB
-  const cfg=cfgOverride||{format:'BG',strategy:'AE'};
-  const fmt=cfg?.format||'BG';
-  const strategy=cfg?.strategy||'AE';
-  const scoring=cfg?.scoring_mode||'GAMES';
-  const _override=cfg?._override||null;
-  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy);
-
-  // Delete only THIS round's existing records (config stub + any previous deploy)
-  // DO NOT delete other rounds' configs
-  await sb.from('rounds')
-    .delete()
-    .eq('event_id',currentEvent.id)
-    .eq('round_number',roundNum);
-
-  // Create the live round record
-  const {data:nr,error:rErr}=await sb.from('rounds').insert({
-    event_id:currentEvent.id,
-    round_number:roundNum,
-    format:fmt,
-    strategy:strategy,
-    scoring_mode:scoring,
-    golden_game_enabled:cfg?.golden_game_enabled||false,
-    timer_minutes:cfg?.timer_minutes||null,
-    is_complete:false
-  }).select().single();
-  if(rErr){toast('Error creating round: '+rErr.message,'error');return;}
-
-  // Log sit-outs
-  const dirId=currentUser.director_id||'00000000-0000-0000-0000-000000000000';
-  for(const p of sitOutPlayers){
-    await sb.from('sitout_log').insert({
-      event_player_id:p.id,round_number:roundNum,
-      sitout_type:'FORCED',triggered_by_director_id:dirId
-    });
-  }
-
-  // Build team->players map using event_player_id
-  const byTeam={};
-  tps.forEach(tp=>{
-    if(!byTeam[tp.team_id]) byTeam[tp.team_id]=[];
-    byTeam[tp.team_id].push(tp.event_player_id);
-  });
-
-  console.log('saveRound debug:','playing:',playing.length,'courts:',courts,'teams:',teams.length);
-
-  // Load ratings for all playing players — needed for TD and pairing balance
-  const playingPlayerIds=[...new Set(playing.map(p=>p.player_id).filter(Boolean))];
-  let ratingMap={};
-  if(playingPlayerIds.length){
-    const {data:ratingRows}=await sb.from('player_ratings')
-      .select('player_id,source,value,designation,fetched_at')
-      .in('player_id',playingPlayerIds);
-    (ratingRows||[]).forEach(r=>{
+  // Load ratings for all active players
+  const playerIds=[...new Set(activePlayers.map(p=>p.player_id).filter(Boolean))];
+  const ratingMap={};
+  if(playerIds.length){
+    const {data:rats}=await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',playerIds);
+    (rats||[]).forEach(r=>{
       if(!ratingMap[r.player_id]) ratingMap[r.player_id]={};
       const ex=ratingMap[r.player_id][r.source];
       if(!ex||new Date(r.fetched_at)>new Date(ex.fetched_at)) ratingMap[r.player_id][r.source]=r;
     });
   }
-  console.log('Ratings loaded for',Object.keys(ratingMap).length,'players');
 
-  // ── PAIRING GENERATION ──────────────────────────────────
-  // Simple model: each court gets 1 pair from Team A vs 1 pair from Team B
-  // Step 1: Split each team's players into pairs using strategy + format
-  // Step 2: Match Team A pairs vs Team B pairs by closest combined rating
-  // Step 3: Assign to courts in order
+  // Load round config
+  let cfgByRound=window._savedRoundConfigs||{};
+  if(!Object.keys(cfgByRound).length){
+    if(currentEvent.round_configs&&Object.keys(currentEvent.round_configs).length){
+      cfgByRound=currentEvent.round_configs;
+    } else {
+      const {data:ev}=await sb.from('events').select('round_configs').eq('id',currentEvent.id).single();
+      if(ev?.round_configs) { cfgByRound=ev.round_configs; currentEvent.round_configs=cfgByRound; }
+    }
+    window._savedRoundConfigs=cfgByRound;
+  }
+  const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
+  const fmt=cfg.format||'BG';
+  const strategy=cfg.strategy||'AE';
+  const numCourts=cfg.num_courts||currentEvent.num_courts||4;
+  console.log('Round',roundNum,'→ format:',fmt,'strategy:',strategy,'courts:',numCourts);
 
-  const n=teams.length;
-  const pairings=[];
-  const usedEPIds=new Set();
+  // ── STEP 1: Build team membership ─────────────────────
+  const epTeamMap={};
+  (tps||[]).forEach(tp=>epTeamMap[tp.event_player_id]=tp.team_id);
+  const uniqueTeams=[...new Map((teams||[]).map(t=>[t.id,t])).values()];
 
-  // Rotate team matchups each round for variety
-  const redeploySalt=Math.floor(Math.random()*100);
-  const rotated=[...teams];
-  if(n>1){
-    const rotating=rotated.slice(1);
-    const shift=((roundNum-1)+redeploySalt)%(n-1);
-    for(let i=0;i<shift;i++) rotating.push(rotating.shift());
-    rotated.splice(1,rotating.length,...rotating);
+  // ── STEP 2: Select who plays (fill courts first, fairness second) ──
+  // Helper functions
+  const g=p=>(p.players?.gender||p.gender);
+  const actualR=p=>{
+    const pid=p.player_id||p.id;
+    const rm=ratingMap[pid]||{};
+    const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
+    return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+  };
+  const effR=p=>{
+    const base=actualR(p);
+    return g(p)==='FEMALE'?base-0.5:base;
+  };
+
+  // Sort by fewest sits, then longest since last sat, then random
+  const fairSort=(a,b)=>{
+    const ac=soCount[a.id]||0,bc=soCount[b.id]||0;
+    if(ac!==bc) return ac-bc;
+    const al=lastSitRound[a.id]||0,bl=lastSitRound[b.id]||0;
+    if(al!==bl) return al-bl;
+    return Math.random()-.5;
+  };
+
+  const playingSet=new Set();
+  for(const team of uniqueTeams){
+    const pool=activePlayers.filter(p=>epTeamMap[p.id]===team.id);
+    const men=[...pool.filter(p=>g(p)==='MALE')].sort(fairSort);
+    const women=[...pool.filter(p=>g(p)==='FEMALE')].sort(fairSort);
+    const all=[...pool].sort(fairSort);
+    let selected=[];
+    if(fmt==='BB'){
+      selected=men.slice(0,numCourts*2);
+      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+    } else if(fmt==='GG'){
+      selected=women.slice(0,numCourts*2);
+      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+    } else if(fmt==='BG'){
+      const selM=men.slice(0,numCourts), selW=women.slice(0,numCourts);
+      selected=[...selM,...selW];
+      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+    } else {
+      // TD/OPEN: top numCourts*2 by fairness
+      selected=all.slice(0,numCourts*2);
+    }
+    selected.forEach(p=>playingSet.add(p.id));
   }
 
-  // Build team matchups: team[0] vs team[n-1], team[1] vs team[n-2], etc.
-  // Deduplicate teams first to avoid ghost records from DB
+  const playing=activePlayers.filter(p=>playingSet.has(p.id));
+  const sitOutPlayers=activePlayers.filter(p=>!playingSet.has(p.id));
+  console.log('Playing:',playing.length,'Sitting out:',sitOutPlayers.length);
+  console.log('Sit-outs:',sitOutPlayers.map(p=>(p.players?.roster_name||'?')+'('+(soCount[p.id]||0)+'sits)'));
+
+  // ── STEP 3: OPEN format — show court builder ───────────
+  if(fmt==='OPEN'){
+    window._pendingPlaying=playing;
+    window._pendingSitOuts=sitOutPlayers;
+    openCourtBuilder(roundNum,playing,sitOutPlayers,tps||[],uniqueTeams,numCourts,cfg);
+    return;
+  }
+
+  // ── STEP 4: Format warning check ──────────────────────
+  const formatCheck=await checkFormatBeforeDeploy(roundNum,uniqueTeams,tps||[],eps||[],{...cfg,num_courts:numCourts});
+  if(formatCheck){showFormatWarning(formatCheck,null);window._pendingPlaying=playing;window._pendingSitOuts=sitOutPlayers;return;}
+
+  await saveRound(roundNum,playing,sitOutPlayers,tps||[],uniqueTeams,numCourts,cfg,ratingMap,prevPartners);
+}
+
+async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride,ratingMap,prevPartners){
+  const cfg=cfgOverride||{format:'BG',strategy:'AE'};
+  const fmt=cfg.format||'BG';
+  const strategy=cfg.strategy||'AE';
+  const scoring=cfg.scoring_mode||'GAMES';
+  console.log('saveRound: fmt=',fmt,'strategy=',strategy,'courts=',courts,'players=',playing.length);
+
+  // ── HELPERS ───────────────────────────────────────────
+  ratingMap=ratingMap||{};
+  prevPartners=prevPartners||{};
+  const g=p=>(p.players?.gender||p.gender);
+  const actualR=p=>{
+    const pid=p.player_id||p.id;
+    const rm=ratingMap[pid]||{};
+    const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
+    return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+  };
+  const effR=p=>{const base=actualR(p);return g(p)==='FEMALE'?base-0.5:base;};
+  const ratingSort=(a,b)=>actualR(b)-actualR(a);
+  const effSort=(a,b)=>effR(b)-effR(a);
+
+  // ── STEP A: Log sit-outs ──────────────────────────────
+  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
+  for(const p of sitOutPlayers){
+    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId}).catch(()=>{});
+  }
+
+  // ── STEP B: Build team pools ──────────────────────────
+  const byTeam={};
+  (tps||[]).forEach(tp=>{if(!byTeam[tp.team_id])byTeam[tp.team_id]=[];byTeam[tp.team_id].push(tp.event_player_id);});
   const uniqueTeams=[...new Map(teams.map(t=>[t.id,t])).values()];
-  const nu=uniqueTeams.length;
-  console.log('Unique teams:',nu,uniqueTeams.map(t=>t.name));
 
-  // Re-rotate with deduplicated teams
-  const rotated2=[...uniqueTeams];
-  if(nu>1){
-    const rotating2=rotated2.slice(1);
-    const shift2=((roundNum-1)+redeploySalt)%(nu-1);
-    for(let i=0;i<shift2;i++) rotating2.push(rotating2.shift());
-    rotated2.splice(1,rotating2.length,...rotating2);
-  }
+  // ── STEP C: Delete old round records ─────────────────
+  await sb.from('rounds').delete().eq('event_id',currentEvent.id).eq('round_number',roundNum);
 
-  const matchups=[];
-  for(let i=0;i<Math.floor(nu/2);i++){
-    const tA=rotated2[i], tB=rotated2[nu-1-i];
-    if(tA&&tB&&tA.id!==tB.id) matchups.push([tA,tB]); // never pair team vs itself
-  }
-  // Odd team out gets a bye (rare)
+  // ── STEP D: Create round record ───────────────────────
+  const {data:nr,error:rErr}=await sb.from('rounds').insert({
+    event_id:currentEvent.id,round_number:roundNum,format:fmt,strategy:strategy,
+    scoring_mode:scoring,golden_game_enabled:cfg.golden_game_enabled||false,
+    timer_minutes:cfg.timer_minutes||null,is_complete:false
+  }).select().single();
+  if(rErr){toast('Error creating round: '+rErr.message,'error');return;}
 
-  console.log('Round',roundNum,'fmt:',fmt,'strategy:',strategy,'matchups:',matchups.map(m=>m[0].name+' vs '+m[1].name));
-
-  // Helper: split a pool of players into pairs based on format + strategy
-  const splitIntoPairs=(pool, fmt, strategy)=>{
-    const g=p=>(p.players?.gender||p.gender);
-    const eff=p=>{
-      const ntrp=p.ratings?.['NTRP'];
-      const trr=p.ratings?.['TRR']||p.ratings?.['UTR'];
-      const base=ntrp?parseFloat(ntrp.value):trr?Math.min(parseFloat(trr.value),6.0):2.5;
-      return g(p)==='FEMALE'?base-0.5:base;
-    };
-    const byEff=[...pool].sort((a,b)=>eff(b)-eff(a));
+  // ── STEP E: Build pairs within each team ─────────────
+  const buildTeamPairs=(pool,fmt,strategy)=>{
+    // Sort pool by format
+    let sorted;
+    if(fmt==='TD') sorted=[...pool].sort(ratingSort);
+    else if(fmt==='BB') sorted=[...pool.filter(p=>g(p)==='MALE')].sort(ratingSort);
+    else if(fmt==='GG') sorted=[...pool.filter(p=>g(p)==='FEMALE')].sort(ratingSort);
+    else sorted=[...pool].sort(effSort); // BG: sort by effective rating
 
     if(fmt==='BG'){
-      const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
-      const women=[...pool.filter(p=>g(p)==='FEMALE')].sort((a,b)=>eff(b)-eff(a));
+      // BG: match each man with closest-rated available woman
+      const men=[...pool.filter(p=>g(p)==='MALE')].sort(ratingSort);
+      const women=[...pool.filter(p=>g(p)==='FEMALE')].sort(ratingSort);
       const pairs=[];
-      const usedInBG=new Set();
-
-      if(strategy==='AE'){
-        // AE: pair each man with the woman whose effective rating is closest to his
-        // This guarantees we use min(men,women) pairs with no player reused
-        const availWomen=[...women];
-        for(const m of men){
-          if(!availWomen.length) break;
-          // Find closest woman by effective rating
-          const mEff=eff(m);
-          let bestIdx=0, bestDiff=Infinity;
-          availWomen.forEach((f,i)=>{
-            const diff=Math.abs(mEff-eff(f));
-            if(diff<bestDiff){bestDiff=diff;bestIdx=i;}
-          });
-          const f=availWomen.splice(bestIdx,1)[0];
-          pairs.push({p1:m,p2:f,str:eff(m)+eff(f)});
-          usedInBG.add(m.id);usedInBG.add(f.id);
+      const usedW=new Set();
+      for(const m of men){
+        const avW=women.filter(w=>!usedW.has(w.id));
+        if(!avW.length) break;
+        // For AE: find closest effective rating; for YY: take weakest woman
+        let f;
+        if(strategy==='YY'){
+          f=avW[avW.length-1]; // weakest available woman
+        } else {
+          f=avW.reduce((best,w)=>Math.abs(effR(m)-effR(w))<Math.abs(effR(m)-effR(best))?w:best,avW[0]);
         }
-      } else {
-        // YY: strongest M with weakest F
-        const wRev=[...women].reverse();
-        for(let i=0;i<Math.min(men.length,wRev.length);i++){
-          pairs.push({p1:men[i],p2:wRev[i],str:eff(men[i])+eff(wRev[i])});
-          usedInBG.add(men[i].id);usedInBG.add(wRev[i].id);
+        usedW.add(f.id);
+        // Avoid repeat partners if possible
+        const pid_m=m.player_id,pid_f=f.player_id;
+        if(prevPartners[pid_m]?.has(pid_f)&&avW.length>1){
+          const alt=avW.filter(w=>w.id!==f.id&&!prevPartners[pid_m]?.has(w.player_id));
+          if(alt.length){usedW.delete(f.id);f=alt[0];usedW.add(f.id);}
         }
+        pairs.push({p1:m,p2:f,str:effR(m)+effR(f)});
       }
-
-      // FALLBACK: if gender imbalance means we can't fill all courts with BG pairs,
-      // fill remaining slots with TD pairing (any 2 players by effective rating)
-      const remaining=pool.filter(p=>!usedInBG.has(p.id));
-      const byEffR=[...remaining].sort((a,b)=>eff(b)-eff(a));
-      for(let i=0;i<byEffR.length-1;i+=2){
-        pairs.push({p1:byEffR[i],p2:byEffR[i+1],str:eff(byEffR[i])+eff(byEffR[i+1]),fallback:true});
-      }
-
-      return pairs;
-    } else if(fmt==='BB'){
-      const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
-      const pairs=[];
-      if(strategy==='YY'){
-        // YY: pair strongest with weakest
-        const used=new Set();
-        let lo=men.length-1,hi=0;
-        while(hi<lo){pairs.push({p1:men[hi],p2:men[lo],str:eff(men[hi])+eff(men[lo])});hi++;lo--;used.add(men[hi-1].id);used.add(men[lo+1].id);}
-      } else {
-        // AE: pair 1+2, 3+4 (strongest pairs together)
-        for(let i=0;i<men.length-1;i+=2) pairs.push({p1:men[i],p2:men[i+1],str:eff(men[i])+eff(men[i+1])});
-      }
-      return pairs;
-    } else if(fmt==='GG'){
-      const women=[...pool.filter(p=>g(p)==='FEMALE')].sort((a,b)=>eff(b)-eff(a));
-      const pairs=[];
-      if(strategy==='YY'){
-        let lo=women.length-1,hi=0;
-        while(hi<lo){pairs.push({p1:women[hi],p2:women[lo],str:eff(women[hi])+eff(women[lo])});hi++;lo--;}
-      } else {
-        for(let i=0;i<women.length-1;i+=2) pairs.push({p1:women[i],p2:women[i+1],str:eff(women[i])+eff(women[i+1])});
-      }
-      return pairs;
-    } else {
-      // TD or OPEN: rank everyone by effective rating regardless of gender, pair 1+2, 3+4
-      const pairs=[];
-      for(let i=0;i<byEff.length-1;i+=2) pairs.push({p1:byEff[i],p2:byEff[i+1],str:eff(byEff[i])+eff(byEff[i+1])});
+      // Fallback TD pairs for any remaining players
+      const usedIds=new Set(pairs.flatMap(p=>[p.p1.id,p.p2.id]));
+      const remaining=[...pool.filter(p=>!usedIds.has(p.id))].sort(effSort);
+      for(let i=0;i<remaining.length-1;i+=2) pairs.push({p1:remaining[i],p2:remaining[i+1],str:effR(remaining[i])+effR(remaining[i+1])});
       return pairs;
     }
+
+    // BB/GG/TD: pair 1+2, 3+4, with repeat-partner avoidance
+    const pairs=[];
+    const used=new Set();
+    for(let i=0;i<sorted.length&&pairs.length<courts;i++){
+      if(used.has(sorted[i].id)) continue;
+      // Find partner: next unused, prefer non-repeat
+      let partner=null;
+      for(let j=i+1;j<sorted.length;j++){
+        if(used.has(sorted[j].id)) continue;
+        if(!prevPartners[sorted[i].player_id]?.has(sorted[j].player_id)){partner=sorted[j];break;}
+      }
+      if(!partner){
+        // All available are repeats — just take next unused
+        for(let j=i+1;j<sorted.length;j++){if(!used.has(sorted[j].id)){partner=sorted[j];break;}}
+      }
+      if(!partner) break;
+      used.add(sorted[i].id);used.add(partner.id);
+      const str=fmt==='TD'?actualR(sorted[i])+actualR(partner):effR(sorted[i])+effR(partner);
+      pairs.push({p1:sorted[i],p2:partner,str});
+    }
+    return pairs;
   };
 
-  // Match pairs from Team A vs Team B by closest combined rating (AE)
-  // or just in order (YY/TD)
-  const matchPairs=(pairsA, pairsB, strategy)=>{
-    if(!pairsA.length||!pairsB.length) return [];
-
-    // Sort both by strength desc
+  // ── STEP F: Match pairs across teams by closest str ──
+  const matchAcrossTeams=(pairsA,pairsB)=>{
     const sA=[...pairsA].sort((a,b)=>b.str-a.str);
     const sB=[...pairsB].sort((a,b)=>b.str-a.str);
-
-    // Try to find optimal assignment that keeps all courts within 0.5 gap
-    // Use Hungarian-style greedy: for each Team A pair find the closest Team B pair
-    // Prefer gap ≤ 0.5, fall back to closest available
-    const usedB=new Set();
     const matched=[];
-
-    // First pass: match pairs within 0.5 gap
-    const unmatched=[];
+    const usedB=new Set();
     for(const pa of sA){
-      const candidates=sB
-        .map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
-        .filter(x=>!usedB.has(x.i)&&x.diff<=0.5)
-        .sort((a,b)=>a.diff-b.diff);
-      if(candidates.length){
-        const best=candidates[0];
-        usedB.add(best.i);
-        matched.push({a:pa,b:best.pb,diff:best.diff});
-      } else {
-        unmatched.push(pa);
-      }
+      // Find Team B pair within 0.5 gap first, else closest
+      const candidates=sB.map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)})).filter(x=>!usedB.has(x.i)).sort((a,b)=>a.diff-b.diff);
+      const best=candidates[0];
+      if(best){usedB.add(best.i);matched.push({a:pa,b:best.pb,diff:best.diff});}
     }
-
-    // Second pass: match remaining pairs to closest available (fallback)
-    for(const pa of unmatched){
-      const candidates=sB
-        .map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
-        .filter(x=>!usedB.has(x.i))
-        .sort((a,b)=>a.diff-b.diff);
-      if(candidates.length){
-        const best=candidates[0];
-        usedB.add(best.i);
-        matched.push({a:pa,b:best.pb,diff:best.diff});
-      }
-    }
-
-    // Sort final courts: best matched (smallest gap) first, then by combined strength
-    matched.sort((a,b)=>{
-      if(Math.abs(a.diff-b.diff)>0.3) return a.diff-b.diff; // closest gap first
-      return (b.a.str+b.b.str)-(a.a.str+a.b.str); // then strongest court first
-    });
-
-    return matched;
+    // Sort: smallest gap first, then strongest court
+    return matched.sort((a,b)=>a.diff===b.diff?(b.a.str+b.b.str)-(a.a.str+a.b.str):a.diff-b.diff);
   };
 
-  // Update byTeam to use only unique team IDs
-  const byTeamUnique={};
-  uniqueTeams.forEach(t=>{byTeamUnique[t.id]=byTeam[t.id]||[];});
+  // ── STEP G: Generate pairings ─────────────────────────
+  const pairings=[];
+  // Build matchups (round-robin rotation with random salt for variety)
+  const n=uniqueTeams.length;
+  const salt=Math.floor(Math.random()*100);
+  const rotated=[...uniqueTeams];
+  if(n>1){const rot=rotated.slice(1);const shift=((roundNum-1)+salt)%(n-1);for(let i=0;i<shift;i++)rot.push(rot.shift());rotated.splice(1,rot.length,...rot);}
+  const matchups=[];
+  for(let i=0;i<Math.floor(n/2);i++){if(rotated[i].id!==rotated[n-1-i].id)matchups.push([rotated[i],rotated[n-1-i]]);}
 
   let courtNum=1;
+  const usedEPIds=new Set();
+
   for(const [tA,tB] of matchups){
     if(courtNum>courts) break;
-    const poolA=playing.filter(p=>byTeamUnique[tA.id]?.includes(p.id));
-    const poolB=playing.filter(p=>byTeamUnique[tB.id]?.includes(p.id));
-    console.log('Pool sizes - '+tA.name+':',poolA.length,'(M:'+poolA.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolA.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')',tB.name+':',poolB.length,'(M:'+poolB.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolB.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')')
+    const poolA=playing.filter(p=>byTeam[tA.id]?.includes(p.id)&&!usedEPIds.has(p.id));
+    const poolB=playing.filter(p=>byTeam[tB.id]?.includes(p.id)&&!usedEPIds.has(p.id));
 
     let matched=[];
-
-
     if(fmt==='TD'){
-      // TD: rank by ACTUAL NTRP (no gender offset) matching team builder display
-      // Tiebreak: TRR desc, then men above women of same NTRP
-      const actualR=p=>{
-        const pid=p.player_id||p.id;
-        const rm=ratingMap[pid]||{};
-        const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
-        return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
-      };
-      const trrR=p=>{
-        const pid=p.player_id||p.id;
-        const rm=ratingMap[pid]||{};
-        const t=rm['TRR']||rm['UTR'];
-        return t?parseFloat(t.value):0;
-      };
-      const male=p=>(p.players?.gender||p.gender)==='MALE';
-      const tdSort=(a,b)=>{
-        const ra=actualR(a),rb=actualR(b);
-        if(Math.abs(ra-rb)>0.01) return rb-ra;
-        const ta=trrR(a),tb=trrR(b);
-        if(Math.abs(ta-tb)>0.01) return tb-ta;
-        if(male(a)&&!male(b)) return -1; // men above women at same rating
-        if(!male(a)&&male(b)) return 1;
-        return 0;
-      };
-      const rankA=[...poolA].sort(tdSort);
-      const rankB=[...poolB].sort(tdSort);
-      console.log('TD - '+tA.name+':',rankA.map(p=>(p.players?.roster_name||p.roster_name)+'('+actualR(p).toFixed(1)+' '+(male(p)?'M':'F')+')'));
-      console.log('TD - '+tB.name+':',rankB.map(p=>(p.players?.roster_name||p.roster_name)+'('+actualR(p).toFixed(1)+' '+(male(p)?'M':'F')+')'));
-      const numC=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts);
+      // TD: rank each team by actual NTRP, pair 1+2 vs 1+2, 3+4 vs 3+4
+      const rankA=[...poolA].sort(ratingSort);
+      const rankB=[...poolB].sort(ratingSort);
+      const numC=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts-courtNum+1);
       for(let i=0;i<numC;i++){
         const p1a=rankA[i*2],p2a=rankA[i*2+1],p1b=rankB[i*2],p2b=rankB[i*2+1];
-        if(!p1a||!p2a||!p1b||!p2b) break;
-        matched.push({a:{p1:p1a,p2:p2a,str:actualR(p1a)+actualR(p2a),teamId:tA.id},b:{p1:p1b,p2:p2b,str:actualR(p1b)+actualR(p2b),teamId:tB.id},diff:Math.abs((actualR(p1a)+actualR(p2a))-(actualR(p1b)+actualR(p2b)))});
+        if(p1a&&p2a&&p1b&&p2b) matched.push({a:{p1:p1a,p2:p2a,str:actualR(p1a)+actualR(p2a),teamId:tA.id},b:{p1:p1b,p2:p2b,str:actualR(p1b)+actualR(p2b),teamId:tB.id},diff:0});
       }
     } else {
-      const pairsA=splitIntoPairs(poolA,fmt,strategy,ratingMap);
-      const pairsB=splitIntoPairs(poolB,fmt,strategy,ratingMap);
-      matched=matchPairs(pairsA,pairsB,strategy);
+      const pairsA=buildTeamPairs(poolA,fmt,strategy);
+      const pairsB=buildTeamPairs(poolB,fmt,strategy);
+      matched=matchAcrossTeams(pairsA,pairsB);
     }
-
-    console.log('Matchup',tA.name,'vs',tB.name,'matched:',matched.length);
-    // Log each matched court with ratings for balance analysis
-    matched.forEach((m,i)=>{
-      const effLog=p=>{
-        const pid=p.player_id||p.id;
-        const rm=ratingMap[pid]||{};
-        const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
-        const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;
-        return (p.players?.gender||p.gender)==='FEMALE'?base-0.5:base;
-      };
-      const name=p=>p.players?.roster_name||p.roster_name||'?';
-      const aStr=effLog(m.a.p1)+effLog(m.a.p2);
-      const bStr=effLog(m.b.p1)+effLog(m.b.p2);
-      console.log(`Court ${i+1}: ${name(m.a.p1)}(${effLog(m.a.p1).toFixed(1)}) + ${name(m.a.p2)}(${effLog(m.a.p2).toFixed(1)}) = ${aStr.toFixed(1)} vs ${name(m.b.p1)}(${effLog(m.b.p1).toFixed(1)}) + ${name(m.b.p2)}(${effLog(m.b.p2).toFixed(1)}) = ${bStr.toFixed(1)} | gap: ${Math.abs(aStr-bStr).toFixed(1)}`);
-    });
 
     for(const m of matched){
       if(courtNum>courts) break;
       const {a,b}=m;
       if(usedEPIds.has(a.p1.id)||usedEPIds.has(a.p2.id)||usedEPIds.has(b.p1.id)||usedEPIds.has(b.p2.id)) continue;
       [a.p1,a.p2,b.p1,b.p2].forEach(p=>usedEPIds.add(p.id));
+      const gap=Math.abs(a.str-b.str);
+      console.log('Court '+courtNum+': '+(a.p1.players?.roster_name||'?')+'+'+(a.p2.players?.roster_name||'?')+'('+a.str.toFixed(1)+') vs '+(b.p1.players?.roster_name||'?')+'+'+(b.p2.players?.roster_name||'?')+'('+b.str.toFixed(1)+') gap:'+gap.toFixed(1));
       pairings.push({
-        round_id:nr.id, court_number:courtNum++,
-        team_a_id:a.teamId||tA.id, team_b_id:b.teamId||tB.id,
-        team_a_player1_id:a.p1.player_id,
-        team_a_player2_id:a.p2.player_id,
-        team_b_player1_id:b.p1.player_id,
-        team_b_player2_id:b.p2.player_id
+        round_id:nr.id,court_number:courtNum++,
+        team_a_id:a.teamId||tA.id,team_b_id:b.teamId||tB.id,
+        team_a_player1_id:a.p1.player_id,team_a_player2_id:a.p2.player_id,
+        team_b_player1_id:b.p1.player_id,team_b_player2_id:b.p2.player_id
       });
     }
   }
 
-  // Dummy block to satisfy old variable references - never reached
-  console.log('Generated',pairings.length,'pairings');
-
-  console.log('Generated pairings:',pairings.length,pairings);
-
   if(pairings.length){
     const {error:pErr}=await sb.from('pairings').insert(pairings);
-    if(pErr) console.error('Pairing insert error:',pErr);
-    else console.log('Pairings inserted successfully');
-  } else {
-    toast('No pairings could be generated — check team assignments','error');
+    if(pErr){toast('Error saving pairings: '+pErr.message,'error');return;}
   }
+  console.log('Generated',pairings.length,'pairings');
 
   if(currentEvent.status==='TEAMS_SET') await setEventStatus('LIVE');
-  toast('Round '+roundNum+' deployed! '+pairings.length+' court'+(pairings.length!==1?'s':'')+' set.','success');
-  loadRounds();
-}
+  toast('Round '+roundNum+' deployed! '+pairings.length+' courts.','success');
 
-function showCourtChoice(playing,sitouts,courts,roundNum,teams,soCount){
-  const lessC=courts-1;
-  let html=`<div class="modal-overlay open" id="court-choice-modal" style="z-index:2000">
-    <div class="modal" style="max-width:440px">
-      <div class="modal-header"><div class="modal-title">Court ${courts} can't be fully filled</div></div>
-      <div class="modal-body">
-        <div class="alert alert-warn" style="margin-bottom:16px">Not enough players for ${courts} full courts this round.</div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <button class="btn btn-primary" onclick="document.getElementById('court-choice-modal').remove();deployRoundWithCourts(${lessC},${roundNum})">
-            Play ${lessC} courts — leave Court ${courts} empty
-          </button>`;
-  if(sitouts.length){
-    html+=`<div style="font-size:13px;font-weight:600;margin-top:4px;color:var(--muted)">— or pull a volunteer to fill Court ${courts} —</div>`;
-    sitouts.forEach(p=>{
-      const n=p.players?.roster_name||'Player';
-      const sc=soCount[p.id]||0;
-      html+=`<button class="btn btn-secondary" onclick="document.getElementById('court-choice-modal').remove();pullVolunteer('${p.id}',${roundNum})">Pull ${n} (${sc} sit-outs)</button>`;
-    });
-  }
-  html+=`</div></div>
-      <div class="modal-footer"><button class="btn btn-ghost" onclick="document.getElementById('court-choice-modal').remove()">Cancel</button></div>
-    </div></div>`;
-  document.body.insertAdjacentHTML('beforeend',html);
+  // Reload rounds display
+  const {data:roundsCheck}=await sb.from('rounds').select('id,round_number').eq('event_id',currentEvent.id).order('round_number');
+  currentRounds=roundsCheck||[];
+  loadRounds();
 }
 
 async function deployRoundWithCourts(courts,roundNum){
@@ -3012,6 +2709,7 @@ async function saveRoundConfig() {
       round_number: i,
       format: document.getElementById('rf-'+i)?.value||'BG',
       strategy: document.getElementById('rstr-'+i)?.value||'AE',
+      num_courts: parseInt(document.getElementById('rc-'+i)?.value)||currentEvent.num_courts||4,
       scoring_mode: document.getElementById('rs-'+i)?.value||'GAMES',
       timer_minutes: parseInt(document.getElementById('rt-'+i)?.value)||null,
       golden_game_enabled: document.getElementById('rg-'+i)?.checked||false,
