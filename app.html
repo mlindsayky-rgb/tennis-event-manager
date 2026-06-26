@@ -2687,10 +2687,17 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     console.log('Matchup',tA.name,'vs',tB.name,'matched:',matched.length);
     // Log each matched court with ratings for balance analysis
     matched.forEach((m,i)=>{
-      const g=p=>(p.players?.gender||p.gender);
-      const eff=p=>{const n=p.ratings?.['NTRP'],t=p.ratings?.['TRR']||p.ratings?.['UTR'];const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;return g(p)==='FEMALE'?base-0.5:base;};
+      const effLog=p=>{
+        const pid=p.player_id||p.id;
+        const rm=ratingMap[pid]||{};
+        const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
+        const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+        return (p.players?.gender||p.gender)==='FEMALE'?base-0.5:base;
+      };
       const name=p=>p.players?.roster_name||p.roster_name||'?';
-      console.log(`Court ${i+1}: ${name(m.a.p1)}(${eff(m.a.p1).toFixed(1)}) + ${name(m.a.p2)}(${eff(m.a.p2).toFixed(1)}) = ${m.a.str.toFixed(1)} vs ${name(m.b.p1)}(${eff(m.b.p1).toFixed(1)}) + ${name(m.b.p2)}(${eff(m.b.p2).toFixed(1)}) = ${m.b.str.toFixed(1)} | gap: ${m.diff.toFixed(1)}`);
+      const aStr=effLog(m.a.p1)+effLog(m.a.p2);
+      const bStr=effLog(m.b.p1)+effLog(m.b.p2);
+      console.log(`Court ${i+1}: ${name(m.a.p1)}(${effLog(m.a.p1).toFixed(1)}) + ${name(m.a.p2)}(${effLog(m.a.p2).toFixed(1)}) = ${aStr.toFixed(1)} vs ${name(m.b.p1)}(${effLog(m.b.p1).toFixed(1)}) + ${name(m.b.p2)}(${effLog(m.b.p2).toFixed(1)}) = ${bStr.toFixed(1)} | gap: ${Math.abs(aStr-bStr).toFixed(1)}`);
     });
 
     for(const m of matched){
