@@ -2171,10 +2171,16 @@ async function deployRound(roundNum){
   window._pendingSitOuts = sitOutPlayers;
 
   // Fetch round config for format check
+  // Fetch round config — look for any saved config for this round number
+  // (saved by saveRoundConfig before deployment)
   const {data:cfgRows}=await sb.from('rounds')
     .select('format,strategy,scoring_mode,golden_game_enabled,timer_minutes')
-    .eq('event_id',currentEvent.id).eq('round_number',roundNum).eq('is_complete',false);
+    .eq('event_id',currentEvent.id)
+    .eq('round_number',roundNum)
+    .order('created_at',{ascending:true}) // get the original config, not a redeployed one
+    .limit(1);
   const cfg=cfgRows?.[0]||{format:'BG',strategy:'AE'};
+  console.log('Round',roundNum,'config from DB:',cfg?.format, cfg?.strategy);
 
   // Pre-deploy format check
   const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
@@ -2315,14 +2321,23 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   const _override=cfg?._override||null; // 'BG_THEN_TD' etc
   console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy,'Override:',_override);
 
-  // Create the round record
+  // Delete any existing config stub for this round before creating the live record
+  await sb.from('rounds')
+    .delete()
+    .eq('event_id',currentEvent.id)
+    .eq('round_number',roundNum)
+    .eq('is_complete',false);
+
+  // Create the live round record
   const {data:nr,error:rErr}=await sb.from('rounds').insert({
     event_id:currentEvent.id,
     round_number:roundNum,
     format:fmt,
+    strategy:strategy,
     scoring_mode:scoring,
     golden_game_enabled:cfg?.golden_game_enabled||false,
-    timer_minutes:cfg?.timer_minutes||null
+    timer_minutes:cfg?.timer_minutes||null,
+    is_complete:false
   }).select().single();
   if(rErr){toast('Error creating round: '+rErr.message,'error');return;}
 
