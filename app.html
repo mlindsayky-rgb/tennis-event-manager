@@ -1146,6 +1146,47 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- OPEN FORMAT COURT BUILDER -->
+<div class="modal-overlay" id="open-court-modal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Round <span id="ocm-round-num">1</span> — OPEN Format</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">Drag players between courts. Tap a player then tap a slot to assign.</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-muted);cursor:pointer">
+          <input type="checkbox" id="ocm-override" onchange="toggleOpenOverride(this.checked)"
+            style="width:14px;height:14px;accent-color:var(--clay)">
+          🔓 Emergency override
+        </label>
+        <button class="modal-close" onclick="closeModal('open-court-modal')">×</button>
+      </div>
+    </div>
+    <div class="modal-body" style="padding:16px">
+      <!-- Courts grid -->
+      <div id="ocm-courts" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+      <!-- Sitting out pool -->
+      <div style="margin-top:4px">
+        <div style="font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">
+          Sitting Out <span id="ocm-sitout-count" style="font-weight:400">(drag here to bench)</span>
+        </div>
+        <div id="ocm-sitout-pool" class="ocm-pool ocm-sitout"
+          ondragover="ocmDragOver(event,this)" ondrop="ocmDropSitout(event)"
+          style="min-height:48px;background:var(--surface);border:2px dashed var(--border);border-radius:10px;padding:8px;display:flex;flex-wrap:wrap;gap:6px">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('open-court-modal')">Cancel</button>
+      <div id="ocm-status" style="font-size:13px;color:var(--ink-muted);flex:1;text-align:center"></div>
+      <button class="btn btn-primary" id="ocm-confirm-btn" onclick="confirmOpenPairings()" disabled>
+        Confirm & Deploy
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- FORMAT WARNING MODAL -->
 <div class="modal-overlay" id="format-warn-modal">
   <div class="modal" style="max-width:500px">
@@ -2265,7 +2306,13 @@ async function deployRound(roundNum){
   const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
   if(formatCheck) {
     showFormatWarning(formatCheck, null);
-    return; // Wait for director to pick an option
+    return;
+  }
+
+  // OPEN format — show court builder instead of auto-generating
+  if(cfg?.format==='OPEN') {
+    openCourtBuilder(roundNum, playing, sitOutPlayers, tps||[], teams||[], actualCourts, cfg);
+    return;
   }
 
   await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts,cfg);
@@ -3034,6 +3081,362 @@ async function saveEventNTRP(epId, playerName) {
   // Update cell immediately without full reload
   const cell = document.getElementById('ntrp-cell-'+epId);
   if(cell) cell.innerHTML = `${val.toFixed(1)} <span style="color:var(--ink-muted)">E</span>`;
+}
+
+
+// ══════════════════════════════════════════════
+// OPEN FORMAT COURT BUILDER
+// ══════════════════════════════════════════════
+
+let ocmState = {
+  roundNum: 0, teams: [], tps: [], cfg: null,
+  courts: [], // [{teamA:[p,p], teamB:[p,p]}, ...]
+  sitout: [],
+  overrideEnabled: false,
+  draggedPlayer: null, draggedFrom: null,
+  selectedPlayer: null, selectedFrom: null,
+  numCourts: 4
+};
+
+async function openCourtBuilder(roundNum, playing, sitOutPlayers, tps, teams, numCourts, cfg) {
+  // Pre-populate courts with auto-suggested pairings using TD-style ranking
+  const ratingMap = {};
+  const pids = playing.map(p=>p.player_id).filter(Boolean);
+  if(pids.length) {
+    const {data:rats} = await sb.from('player_ratings')
+      .select('player_id,source,value,fetched_at').in('player_id',pids);
+    (rats||[]).forEach(r=>{
+      if(!ratingMap[r.player_id]) ratingMap[r.player_id]={};
+      const ex=ratingMap[r.player_id][r.source];
+      if(!ex||new Date(r.fetched_at)>new Date(ex.fetched_at)) ratingMap[r.player_id][r.source]=r;
+    });
+  }
+
+  const actualR = p=>{
+    const pid=p.player_id||p.id;
+    const rm=ratingMap[pid]||{};
+    const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
+    return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+  };
+  const male = p=>(p.players?.gender||p.gender)==='MALE';
+  const tdSort=(a,b)=>{
+    const d=actualR(b)-actualR(a); if(Math.abs(d)>0.01) return d;
+    if(male(a)&&!male(b)) return -1;
+    if(!male(a)&&male(b)) return 1;
+    return 0;
+  };
+
+  const byTeam={};
+  tps.forEach(tp=>{if(!byTeam[tp.team_id])byTeam[tp.team_id]=[];byTeam[tp.team_id].push(tp.event_player_id);});
+
+  // Build pre-suggested courts
+  const courts=[];
+  for(let c=0;c<numCourts;c++) courts.push({teamA:[],teamB:[]});
+
+  teams.forEach((team,ti)=>{
+    const pool=[...playing.filter(p=>byTeam[team.id]?.includes(p.id))].sort(tdSort);
+    pool.forEach((p,i)=>{
+      const courtIdx=Math.floor(i/2);
+      if(courtIdx<numCourts) {
+        if(ti===0) courts[courtIdx].teamA.push(p);
+        else courts[courtIdx].teamB.push(p);
+      }
+    });
+  });
+
+  ocmState = {
+    roundNum, teams, tps, cfg,
+    courts, sitout:[...sitOutPlayers],
+    overrideEnabled:false,
+    draggedPlayer:null, draggedFrom:null,
+    selectedPlayer:null, selectedFrom:null,
+    numCourts, playing, ratingMap
+  };
+
+  document.getElementById('ocm-round-num').textContent = roundNum;
+  document.getElementById('ocm-override').checked = false;
+  renderOCM();
+  openModal('open-court-modal');
+}
+
+function renderOCM() {
+  const {courts, teams, sitout, overrideEnabled} = ocmState;
+  const courtsEl = document.getElementById('ocm-courts');
+  const tA = teams[0], tB = teams[1];
+  const tAColor = tA?.color||'var(--court)';
+  const tBColor = tB?.color||'var(--sky)';
+  const tAName = tA?.name||'Team A';
+  const tBName = tB?.name||'Team B';
+
+  courtsEl.innerHTML = courts.map((court,ci)=>{
+    const filledA = court.teamA.length>=2;
+    const filledB = court.teamB.length>=2;
+    return `<div class="ocm-court">
+      <div class="ocm-court-header">
+        <span>Court ${ci+1}</span>
+        <span style="color:${filledA&&filledB?'var(--court)':'var(--ink-ghost)'}">
+          ${filledA&&filledB?'✓ Ready':'Needs '+(filledA?0:2-court.teamA.length)+' more from '+(!filledA?tAName:'')+((!filledA&&!filledB)?' & ':'')+(!filledB?tBName:'')}
+        </span>
+      </div>
+      <div class="ocm-team-row">
+        <div class="ocm-team-label" style="color:${tAColor}">${tAName}</div>
+        <div class="ocm-slot ${filledA?'full':''}" id="slot-${ci}-A"
+          ondragover="ocmDragOver(event,this)" ondragleave="ocmDragLeave(event,this)"
+          ondrop="ocmDrop(event,${ci},'A')"
+          onclick="ocmSlotClick(${ci},'A')">
+          ${court.teamA.map(p=>ocmChip(p,ci,'A')).join('')}
+          ${!filledA?`<span style="font-size:12px;color:var(--ink-ghost)">+ ${2-court.teamA.length} player${court.teamA.length===1?'':'s'}</span>`:''}
+        </div>
+      </div>
+      <div class="ocm-team-row">
+        <div class="ocm-team-label" style="color:${tBColor}">${tBName}</div>
+        <div class="ocm-slot ${filledB?'full':''}" id="slot-${ci}-B"
+          ondragover="ocmDragOver(event,this)" ondragleave="ocmDragLeave(event,this)"
+          ondrop="ocmDrop(event,${ci},'B')"
+          onclick="ocmSlotClick(${ci},'B')">
+          ${court.teamB.map(p=>ocmChip(p,ci,'B')).join('')}
+          ${!filledB?`<span style="font-size:12px;color:var(--ink-ghost)">+ ${2-court.teamB.length} player${court.teamB.length===1?'':'s'}</span>`:''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Sitting out
+  const soEl = document.getElementById('ocm-sitout-pool');
+  soEl.innerHTML = sitout.map(p=>ocmChip(p,'so','SO')).join('');
+  document.getElementById('ocm-sitout-count').textContent = `(${sitout.length} sitting out — drag here to bench)`;
+
+  // Update confirm button
+  const allReady = courts.every(c=>c.teamA.length>=2&&c.teamB.length>=2);
+  const btn = document.getElementById('ocm-confirm-btn');
+  btn.disabled = !allReady;
+  btn.textContent = allReady?'✓ Confirm & Deploy':'Fill all courts first';
+  const status = document.getElementById('ocm-status');
+  const gaps = courts.map(c=>{
+    const strA=c.teamA.reduce((s,p)=>s+ocmRating(p),0);
+    const strB=c.teamB.reduce((s,p)=>s+ocmRating(p),0);
+    return Math.abs(strA-strB).toFixed(1);
+  });
+  status.textContent = allReady ? `Gaps: ${gaps.map((g,i)=>'C'+(i+1)+':'+g).join(' | ')}` : '';
+}
+
+function ocmChip(p, courtIdx, slot) {
+  const name = p.players?.roster_name||p.roster_name||'?';
+  const rating = ocmRating(p).toFixed(1);
+  const gender = (p.players?.gender||p.gender)==='MALE'?'♂':'♀';
+  const selected = ocmState.selectedPlayer?.id===p.id;
+  const crossTeam = ocmState.overrideEnabled && false; // TODO: detect cross-team
+  return `<div class="ocm-chip ${selected?'selected':''} ${crossTeam?'cross-team':''}"
+    draggable="true"
+    data-pid="${p.id}" data-court="${courtIdx}" data-slot="${slot}"
+    ondragstart="ocmDragStart(event,this,'${courtIdx}','${slot}')"
+    ondragend="ocmDragEnd(event,this)"
+    onclick="ocmChipClick(event,'${p.id}','${courtIdx}','${slot}')">
+    <span>${gender}</span>
+    <span>${name}</span>
+    <span style="color:var(--ink-muted);font-size:11px">${rating}</span>
+    <span class="ocm-remove" onclick="ocmRemovePlayer(event,'${p.id}','${courtIdx}','${slot}')">✕</span>
+  </div>`;
+}
+
+function ocmRating(p) {
+  const pid=p.player_id||p.id;
+  const rm=ocmState.ratingMap[pid]||{};
+  const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
+  return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
+}
+
+function ocmGetPlayer(pid) {
+  const {courts,sitout,playing} = ocmState;
+  return playing.find(p=>p.id===pid||p.player_id===pid);
+}
+
+function ocmRemovePlayer(e, pid, courtIdx, slot) {
+  e.stopPropagation();
+  const {courts,sitout} = ocmState;
+  if(courtIdx==='so') {
+    // Already in sitout — do nothing
+    return;
+  }
+  const ci=parseInt(courtIdx);
+  const arr = slot==='A'?courts[ci].teamA:courts[ci].teamB;
+  const idx = arr.findIndex(p=>p.id===pid||p.player_id===pid);
+  if(idx>-1) {
+    const [p]=arr.splice(idx,1);
+    sitout.push(p);
+  }
+  renderOCM();
+}
+
+// ── DRAG AND DROP ────────────────────────────
+let ocmDragging = null;
+
+function ocmDragStart(e, el, courtIdx, slot) {
+  ocmDragging = {pid:el.dataset.pid, courtIdx, slot};
+  el.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move';
+}
+function ocmDragEnd(e, el) { el.classList.remove('dragging'); ocmDragging=null; }
+function ocmDragOver(e, el) { e.preventDefault(); el.classList.add('drag-over'); }
+function ocmDragLeave(e, el) { el.classList.remove('drag-over'); }
+
+function ocmDrop(e, toCourt, toSlot) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  if(!ocmDragging) return;
+  ocmMovePlayer(ocmDragging.pid, ocmDragging.courtIdx, ocmDragging.slot, toCourt, toSlot);
+}
+
+function ocmDropSitout(e) {
+  e.preventDefault();
+  document.getElementById('ocm-sitout-pool').classList.remove('drag-over');
+  if(!ocmDragging) return;
+  ocmMovePlayer(ocmDragging.pid, ocmDragging.courtIdx, ocmDragging.slot, 'so', 'SO');
+}
+
+function ocmMovePlayer(pid, fromCourt, fromSlot, toCourt, toSlot) {
+  const {courts, sitout, teams, overrideEnabled} = ocmState;
+
+  // Find the player object
+  let player = null;
+  if(fromCourt==='so') {
+    const idx=sitout.findIndex(p=>p.id===pid||p.player_id===pid);
+    if(idx>-1) [player]=sitout.splice(idx,1);
+  } else {
+    const fc=parseInt(fromCourt);
+    const arr=fromSlot==='A'?courts[fc].teamA:courts[fc].teamB;
+    const idx=arr.findIndex(p=>p.id===pid||p.player_id===pid);
+    if(idx>-1) [player]=arr.splice(idx,1);
+  }
+  if(!player) return;
+
+  if(toCourt==='so') {
+    sitout.push(player);
+  } else {
+    const tc=parseInt(toCourt);
+    const toArr=toSlot==='A'?courts[tc].teamA:courts[tc].teamB;
+
+    // Check team restriction unless override enabled
+    if(!overrideEnabled) {
+      const tps=ocmState.tps;
+      const byTeam={};
+      tps.forEach(tp=>{if(!byTeam[tp.team_id])byTeam[tp.team_id]=[];byTeam[tp.team_id].push(tp.event_player_id);});
+      const targetTeamId=toSlot==='A'?teams[0]?.id:teams[1]?.id;
+      const playerEpId=player.id||player.event_player_id;
+      const isCorrectTeam=byTeam[targetTeamId]?.includes(playerEpId)||byTeam[targetTeamId]?.includes(player.player_id);
+      if(!isCorrectTeam) {
+        toast('Enable emergency override to move players across teams','error');
+        // Put player back
+        if(fromCourt==='so') sitout.push(player);
+        else {
+          const fc=parseInt(fromCourt);
+          const arr=fromSlot==='A'?courts[fc].teamA:courts[fc].teamB;
+          arr.push(player);
+        }
+        return;
+      }
+    }
+
+    // Max 2 per slot — if full, swap with first player there
+    if(toArr.length>=2) {
+      const displaced=toArr.splice(0,1)[0];
+      if(fromCourt==='so') sitout.push(displaced);
+      else {
+        const fc=parseInt(fromCourt);
+        const arr=fromSlot==='A'?courts[fc].teamA:courts[fc].teamB;
+        arr.push(displaced);
+      }
+    }
+    toArr.push(player);
+  }
+
+  ocmState.selectedPlayer=null;
+  renderOCM();
+}
+
+// ── TAP TO SELECT + TAP SLOT ─────────────────
+function ocmChipClick(e, pid, courtIdx, slot) {
+  e.stopPropagation();
+  if(ocmState.selectedPlayer?.id===pid) {
+    ocmState.selectedPlayer=null; ocmState.selectedFrom=null;
+    renderOCM(); return;
+  }
+  ocmState.selectedPlayer=ocmGetPlayer(pid)||(ocmState.sitout.find(p=>p.id===pid));
+  ocmState.selectedFrom={courtIdx,slot};
+  renderOCM();
+}
+
+function ocmSlotClick(courtIdx, slot) {
+  if(!ocmState.selectedPlayer) return;
+  ocmMovePlayer(
+    ocmState.selectedPlayer.id||ocmState.selectedPlayer.player_id,
+    ocmState.selectedFrom.courtIdx,
+    ocmState.selectedFrom.slot,
+    courtIdx, slot
+  );
+  ocmState.selectedPlayer=null; ocmState.selectedFrom=null;
+}
+
+function toggleOpenOverride(enabled) {
+  ocmState.overrideEnabled=enabled;
+  if(enabled) toast('⚠ Cross-team assignment enabled','default');
+  renderOCM();
+}
+
+// ── CONFIRM AND DEPLOY ───────────────────────
+async function confirmOpenPairings() {
+  const {courts, sitout, teams, roundNum, tps, cfg, numCourts} = ocmState;
+  const btn=document.getElementById('ocm-confirm-btn');
+  btn.disabled=true; btn.textContent='Deploying…';
+
+  // Build playing and sitout arrays from current state
+  const allPlayers=ocmState.playing;
+  const sitoutIds=new Set(sitout.map(p=>p.id||p.player_id));
+
+  // Delete existing round records
+  const {data:existing}=await sb.from('rounds').select('id').eq('event_id',currentEvent.id).eq('round_number',roundNum);
+  if(existing?.length){
+    await sb.from('pairings').delete().in('round_id',existing.map(r=>r.id));
+    await sb.from('rounds').delete().in('id',existing.map(r=>r.id));
+  }
+
+  // Log sit-outs
+  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
+  for(const p of sitout){
+    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId}).catch(()=>{});
+  }
+
+  // Create round
+  const {data:nr,error:rErr}=await sb.from('rounds').insert({
+    event_id:currentEvent.id,round_number:roundNum,
+    format:'OPEN',strategy:'MANUAL',scoring_mode:cfg?.scoring_mode||'GAMES',
+    golden_game_enabled:cfg?.golden_game_enabled||false,timer_minutes:cfg?.timer_minutes||null,is_complete:false
+  }).select().single();
+  if(rErr){toast('Error: '+rErr.message,'error');btn.disabled=false;btn.textContent='✓ Confirm & Deploy';return;}
+
+  // Save pairings
+  const pairings=[];
+  courts.forEach((court,ci)=>{
+    const [p1a,p2a]=court.teamA;
+    const [p1b,p2b]=court.teamB;
+    if(p1a&&p2a&&p1b&&p2b){
+      pairings.push({
+        round_id:nr.id,court_number:ci+1,
+        team_a_id:teams[0]?.id,team_b_id:teams[1]?.id,
+        team_a_player1_id:p1a.player_id||p1a.id,
+        team_a_player2_id:p2a.player_id||p2a.id,
+        team_b_player1_id:p1b.player_id||p1b.id,
+        team_b_player2_id:p2b.player_id||p2b.id,
+      });
+    }
+  });
+
+  if(pairings.length) await sb.from('pairings').insert(pairings);
+  if(currentEvent.status==='TEAMS_SET') await setEventStatus('LIVE');
+
+  toast(`Round ${roundNum} deployed! ${pairings.length} courts set.`,'success');
+  closeModal('open-court-modal');
+  loadRounds();
 }
 
 function resetConnection() {
