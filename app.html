@@ -2217,7 +2217,7 @@ async function deployRound(roundNum){
   const {data:rCfg}=await sb.from('rounds')
     .select('format').eq('event_id',currentEvent.id)
     .eq('round_number',roundNum).eq('is_complete',false).maybeSingle();
-  const roundFmt=cfg?.format||rCfg?.format||'BG';
+  const roundFmt=rCfg?.format||'BG';
 
   // Build team membership map
   const epTeamMap={};
