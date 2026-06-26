@@ -2133,6 +2133,8 @@ async function loadRoundPairings(round,teams,eps,soCount){
   const epIds=eps.map(e=>e.id);
   const {data:sitouts}=epIds.length?await sb.from('sitout_log').select('event_player_id')
     .eq('round_number',round.round_number).in('event_player_id',epIds):{data:[]};
+  const {data:allSitouts}=epIds.length?await sb.from('sitout_log').select('event_player_id')
+    .in('event_player_id',epIds):{data:[]};
 
   // Build player name map from all players in DB for this event
   const allPlayerIds=[...new Set([
@@ -2153,7 +2155,15 @@ async function loadRoundPairings(round,teams,eps,soCount){
   const pname=id=>nameCache[id]||'?';
   const tname=id=>teams.find(t=>t.id===id)?.name||'?';
   const tcolor=id=>teams.find(t=>t.id===id)?.color||'#666';
-  const soPlayers=(sitouts||[]).map(s=>{const ep=eps.find(e=>e.id===s.event_player_id);return ep?.players?.roster_name||'?';});
+  // Build sit-out display with count badge
+  const soCountMap={};
+  (allSitouts||[]).forEach(s=>{soCountMap[s.event_player_id]=(soCountMap[s.event_player_id]||0)+1;});
+  const soPlayers=(sitouts||[]).map(s=>{
+    const ep=eps.find(e=>e.id===s.event_player_id);
+    const name=ep?.players?.roster_name||'?';
+    const total=soCountMap[s.event_player_id]||1;
+    return {name,total};
+  });
 
   const pairingRows=(pairings||[]).map(p=>{
     const sc=scores?.find(s=>s.pairing_id===p.id);
@@ -2168,7 +2178,7 @@ async function loadRoundPairings(round,teams,eps,soCount){
       ' <span style="color:var(--ink-ghost);margin:0 6px">vs</span> <span style="color:'+tbColor+';font-weight:700">'+tbName+'</span> '+pname(p.team_b_player1_id)+' / '+pname(p.team_b_player2_id)+'</div>'+
       scoreCell+'</div>';
   }).join('');
-  const soRow=soPlayers.length?'<div style="font-size:12px;color:var(--ink-muted);padding:6px 4px">Sitting out: '+soPlayers.join(', ')+'</div>':'';
+  const soRow=soPlayers.length?'<div style="font-size:12px;color:var(--ink-muted);padding:6px 4px">Sitting out: '+soPlayers.map(p=>p.name+(p.total>1?' <span style="color:var(--clay);font-size:11px">('+p.total+'x)</span>':'')).join(', ')+'</div>':'';
   el.innerHTML='<div style="display:flex;flex-direction:column;gap:8px">'+pairingRows+soRow+'</div>';
 }
 
@@ -2194,81 +2204,81 @@ async function deployRound(roundNum){
   const sitOutCount=Math.max(0,activePlayers.length-playersNeeded);
 
   // ── SIT-OUT FAIRNESS ALGORITHM ──────────────────────────
-  // Rule: no player can have more than 1 sit-out more than any other player
-  // i.e. max sit-out count across all players must never exceed min + 1
+  // Approach: SELECT WHO PLAYS first (guarantees courts filled),
+  // then everyone else sits. Fairness is applied within the playing selection.
   //
-  // Process:
-  // 1. Find min sit-out count among active players
-  // 2. Pick sit-outs ONLY from players AT the minimum (they are most overdue)
-  // 3. If we need more than available at minimum, take from minimum+1
-  // 4. Within same sit-out count: players who sat longest ago go first,
-  //    with gender balance preservation for the round format
-  let sitOutPlayers=[];
-  if(sitOutCount>0){
-    // Fetch round format for gender balance
-    const {data:rCfg}=await sb.from('rounds')
-      .select('format').eq('event_id',currentEvent.id)
-      .eq('round_number',roundNum).eq('is_complete',false).maybeSingle();
-    const roundFmt=rCfg?.format||'BG';
+  // For each team, select the required players by format:
+  //   BB: top numCourts*2 men by fewest sits (rotate men fairly)
+  //   GG: top numCourts*2 women by fewest sits
+  //   BG: top numCourts men + top numCourts women by fewest sits
+  //   TD/OPEN: top numCourts*2 players by fewest sits regardless of gender
 
-    // Build team membership and gender maps
-    const epTeamMap={};
-    (tps||[]).forEach(tp=>epTeamMap[tp.event_player_id]=tp.team_id);
-    const teamGenderCount={};
-    activePlayers.forEach(p=>{
-      const tid=epTeamMap[p.id]; if(!tid) return;
-      if(!teamGenderCount[tid]) teamGenderCount[tid]={m:0,f:0};
-      if((p.players?.gender||p.gender)==='MALE') teamGenderCount[tid].m++;
-      else teamGenderCount[tid].f++;
-    });
+  // Fetch round format
+  const {data:rCfg}=await sb.from('rounds')
+    .select('format').eq('event_id',currentEvent.id)
+    .eq('round_number',roundNum).eq('is_complete',false).maybeSingle();
+  const roundFmt=cfg?.format||rCfg?.format||'BG';
 
-    // Find the minimum sit-out count
-    const minSits=Math.min(...activePlayers.map(p=>soCount[p.id]||0));
+  // Build team membership map
+  const epTeamMap={};
+  (tps||[]).forEach(tp=>epTeamMap[tp.event_player_id]=tp.team_id);
 
-    // Sort: minimum sit-outs first, then by how long ago they last sat (longest ago = first)
-    // Within same count, shuffle slightly for fairness variety
-    const sorted=[...activePlayers].sort((a,b)=>{
-      const ac=soCount[a.id]||0, bc=soCount[b.id]||0;
-      if(ac!==bc) return ac-bc; // fewer sit-outs = sit first
-      const al=lastSitRound[a.id]||0, bl=lastSitRound[b.id]||0;
-      if(al!==bl) return al-bl; // sat longer ago = sit first
-      return Math.random()-.5; // tie-break randomly for variety
-    });
+  // Fairness sort: fewest sits first, then longest since last sat, then random
+  const fairSort=(a,b)=>{
+    const ac=soCount[a.id]||0, bc=soCount[b.id]||0;
+    if(ac!==bc) return ac-bc;
+    const al=lastSitRound[a.id]||0, bl=lastSitRound[b.id]||0;
+    if(al!==bl) return al-bl;
+    return Math.random()-.5;
+  };
 
-    const needPerTeam=numCourts; // each team needs numCourts players of each required gender
-    const tentativeSitOut=new Set();
-    const tempGender=JSON.parse(JSON.stringify(teamGenderCount));
+  const gender=p=>(p.players?.gender||p.gender);
+  const playingSet=new Set();
 
-    for(const p of sorted){
-      if(tentativeSitOut.size>=sitOutCount) break;
+  // Get unique team IDs from tps
+  const teamIds=[...new Set((tps||[]).map(tp=>tp.team_id))];
 
-      // FAIRNESS GATE: never sit someone at min+2 or more ahead
-      const pSits=soCount[p.id]||0;
-      if(pSits>minSits+1) break; // everyone else has too many already — stop
+  for(const teamId of teamIds){
+    const teamPlayers=activePlayers.filter(p=>epTeamMap[p.id]===teamId);
+    const men=[...teamPlayers.filter(p=>gender(p)==='MALE')].sort(fairSort);
+    const women=[...teamPlayers.filter(p=>gender(p)==='FEMALE')].sort(fairSort);
+    const all=[...teamPlayers].sort(fairSort);
 
-      const tid=epTeamMap[p.id];
-      const g=(p.players?.gender||p.gender);
-      const cur=tempGender[tid]||{m:0,f:0};
-      const afterM=cur.m-(g==='MALE'?1:0);
-      const afterF=cur.f-(g==='FEMALE'?1:0);
-
-      // GENDER BALANCE GATE: don't sit if it breaks format requirements
-      let wouldBreak=false;
-      if(roundFmt==='BG' && (afterM<needPerTeam||afterF<needPerTeam)) wouldBreak=true;
-      if(roundFmt==='BB' && afterM<needPerTeam*2) wouldBreak=true;
-      if(roundFmt==='GG' && afterF<needPerTeam*2) wouldBreak=true;
-
-      if(wouldBreak) continue; // skip this player, try next
-
-      // Safe to sit out
-      tentativeSitOut.add(p.id);
-      if(tid){ tempGender[tid].m=afterM; tempGender[tid].f=afterF; }
+    let selected=[];
+    if(roundFmt==='BB'){
+      // Need numCourts*2 men — if not enough men, fill remainder with anyone
+      selected=[...men.slice(0,numCourts*2)];
+      if(selected.length<numCourts*2){
+        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
+        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
+      }
+    } else if(roundFmt==='GG'){
+      selected=[...women.slice(0,numCourts*2)];
+      if(selected.length<numCourts*2){
+        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
+        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
+      }
+    } else if(roundFmt==='BG'){
+      const selMen=men.slice(0,numCourts);
+      const selWomen=women.slice(0,numCourts);
+      selected=[...selMen,...selWomen];
+      // Fill any gaps if gender imbalance
+      if(selected.length<numCourts*2){
+        const others=all.filter(p=>!selected.find(s=>s.id===p.id));
+        selected=[...selected,...others.slice(0,numCourts*2-selected.length)];
+      }
+    } else {
+      // TD/OPEN: top numCourts*2 players regardless of gender
+      selected=all.slice(0,numCourts*2);
     }
-    sitOutPlayers=activePlayers.filter(p=>tentativeSitOut.has(p.id));
-    console.log('Sit-outs:',sitOutPlayers.map(p=>p.players?.roster_name+' ('+( soCount[p.id]||0)+' prev sits)'));
+    selected.forEach(p=>playingSet.add(p.id));
   }
 
-  const playing=activePlayers.filter(p=>!sitOutPlayers.find(s=>s.id===p.id));
+  const sitOutPlayers=activePlayers.filter(p=>!playingSet.has(p.id));
+  console.log('Playing:',playingSet.size,'Sitting:',sitOutPlayers.length);
+  console.log('Sit-outs:',sitOutPlayers.map(p=>(p.players?.roster_name||'?')+' ('+( soCount[p.id]||0)+' prev sits)'));
+
+  const playing=activePlayers.filter(p=>playingSet.has(p.id));
   const actualCourts=Math.min(numCourts,Math.floor(playing.length/4));
 
   if(playing.length<actualCourts*4){
