@@ -2264,7 +2264,7 @@ async function deployRound(roundNum){
     return; // Wait for director to pick an option
   }
 
-  await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts);
+  await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts,cfg);
 }
 
 
@@ -2385,16 +2385,13 @@ async function applyFormatSuggestion(idx) {
 }
 
 async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride){
-  // Use the saved round config format if available, else default to BG
-  const {data:savedRounds}=await sb.from('rounds')
-    .select('format,scoring_mode,golden_game_enabled,timer_minutes')
-    .eq('event_id',currentEvent.id).eq('round_number',roundNum).eq('is_complete',false);
-  const cfg=cfgOverride||savedRounds?.[0];
-  const fmt=cfg?.format||currentEvent.default_round_format||'BG';
+  // Config is passed directly from deployRound — no need to re-fetch from DB
+  const cfg=cfgOverride||{format:'BG',strategy:'AE'};
+  const fmt=cfg?.format||'BG';
   const strategy=cfg?.strategy||'AE';
   const scoring=cfg?.scoring_mode||'GAMES';
-  const _override=cfg?._override||null; // 'BG_THEN_TD' etc
-  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy,'Override:',_override);
+  const _override=cfg?._override||null;
+  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy);
 
   // Delete only THIS round's existing records (config stub + any previous deploy)
   // DO NOT delete other rounds' configs
@@ -2567,18 +2564,52 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   // or just in order (YY/TD)
   const matchPairs=(pairsA, pairsB, strategy)=>{
     if(!pairsA.length||!pairsB.length) return [];
-    // Sort BOTH teams' pairs by strength desc
+
+    // Sort both by strength desc
     const sA=[...pairsA].sort((a,b)=>b.str-a.str);
     const sB=[...pairsB].sort((a,b)=>b.str-a.str);
-    // Match position-by-position: strongest A vs strongest B, 2nd vs 2nd, etc.
-    // This is the most balanced approach — avoids pairing strong vs weak
+
+    // Try to find optimal assignment that keeps all courts within 0.5 gap
+    // Use Hungarian-style greedy: for each Team A pair find the closest Team B pair
+    // Prefer gap ≤ 0.5, fall back to closest available
+    const usedB=new Set();
     const matched=[];
-    const len=Math.min(sA.length,sB.length);
-    for(let i=0;i<len;i++){
-      matched.push({a:sA[i],b:sB[i],diff:Math.abs(sA[i].str-sB[i].str)});
+
+    // First pass: match pairs within 0.5 gap
+    const unmatched=[];
+    for(const pa of sA){
+      const candidates=sB
+        .map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
+        .filter(x=>!usedB.has(x.i)&&x.diff<=0.5)
+        .sort((a,b)=>a.diff-b.diff);
+      if(candidates.length){
+        const best=candidates[0];
+        usedB.add(best.i);
+        matched.push({a:pa,b:best.pb,diff:best.diff});
+      } else {
+        unmatched.push(pa);
+      }
     }
-    // Sort by court strength desc so Court 1 = strongest match
-    matched.sort((a,b)=>(b.a.str+b.b.str)-(a.a.str+a.b.str));
+
+    // Second pass: match remaining pairs to closest available (fallback)
+    for(const pa of unmatched){
+      const candidates=sB
+        .map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
+        .filter(x=>!usedB.has(x.i))
+        .sort((a,b)=>a.diff-b.diff);
+      if(candidates.length){
+        const best=candidates[0];
+        usedB.add(best.i);
+        matched.push({a:pa,b:best.pb,diff:best.diff});
+      }
+    }
+
+    // Sort final courts: best matched (smallest gap) first, then by combined strength
+    matched.sort((a,b)=>{
+      if(Math.abs(a.diff-b.diff)>0.3) return a.diff-b.diff; // closest gap first
+      return (b.a.str+b.b.str)-(a.a.str+a.b.str); // then strongest court first
+    });
+
     return matched;
   };
 
@@ -2598,6 +2629,13 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     const matched=matchPairs(pairsA,pairsB,strategy);
 
     console.log('Matchup',tA.name,'vs',tB.name,'pairsA:',pairsA.length,'pairsB:',pairsB.length,'matched:',matched.length);
+    // Log each matched court with ratings for balance analysis
+    matched.forEach((m,i)=>{
+      const g=p=>(p.players?.gender||p.gender);
+      const eff=p=>{const n=p.ratings?.['NTRP'],t=p.ratings?.['TRR']||p.ratings?.['UTR'];const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;return g(p)==='FEMALE'?base-0.5:base;};
+      const name=p=>p.players?.roster_name||p.roster_name||'?';
+      console.log(`Court ${i+1}: ${name(m.a.p1)}(${eff(m.a.p1).toFixed(1)}) + ${name(m.a.p2)}(${eff(m.a.p2).toFixed(1)}) = ${m.a.str.toFixed(1)} vs ${name(m.b.p1)}(${eff(m.b.p1).toFixed(1)}) + ${name(m.b.p2)}(${eff(m.b.p2).toFixed(1)}) = ${m.b.str.toFixed(1)} | gap: ${m.diff.toFixed(1)}`);
+    });
 
     for(const {a,b} of matched){
       if(courtNum>courts) break;
