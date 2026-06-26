@@ -1343,6 +1343,27 @@ const NAME_SETS = [
   ['Deuce Demons','Love Club','Match Points','Second Serve','Wild Cards'],
 ];
 
+
+// ── ARCHIVE EVENTS ───────────────────────────────────────
+let showArchived = false;
+
+function toggleArchived(show) {
+  showArchived = show;
+  renderEvents();
+}
+
+async function toggleArchiveEvent(eventId, currentlyArchived) {
+  const {error} = await sb.from('events')
+    .update({is_archived: !currentlyArchived})
+    .eq('id', eventId);
+  if(error){toast('Error: '+error.message,'error');return;}
+  toast(currentlyArchived?'Event unarchived':'Event archived 📦','success');
+  // Update local cache
+  const ev = allEvents.find(e=>e.id===eventId);
+  if(ev) ev.is_archived = !currentlyArchived;
+  renderEvents();
+}
+
 function openEventById(eid) {
   const event = allEvents.find(e=>e.id===eid) || adminAllEvents.find(e=>e.id===eid);
   if(event) openEvent(event);
@@ -2179,41 +2200,26 @@ async function deployRound(roundNum){
   window._pendingSitOuts = sitOutPlayers;
 
   // Fetch round config for format check
-  // Load round configs — check memory cache, then app_settings, then rounds table
+  // Load round configs — memory cache → event.round_configs → fallback BG
   let cfgByRound = window._savedRoundConfigs || {};
 
   if(!Object.keys(cfgByRound).length) {
-    // Try app_settings first — most reliable source
-    const configKey = 'round_config_'+currentEvent.id;
-    const {data:settingRow} = await sb.from('app_settings').select('value').eq('key',configKey).maybeSingle();
-    if(settingRow?.value) {
-      try {
-        const parsed = JSON.parse(settingRow.value);
-        cfgByRound = parsed;
-        window._savedRoundConfigs = cfgByRound;
-        console.log('Loaded round configs from app_settings:', cfgByRound);
-      } catch(e) { console.warn('Failed to parse round config:', e); }
+    // Load from event record (most reliable — saved directly on event)
+    if(currentEvent.round_configs && Object.keys(currentEvent.round_configs).length) {
+      cfgByRound = currentEvent.round_configs;
+    } else {
+      // Fetch fresh from events table
+      const {data:ev} = await sb.from('events').select('round_configs').eq('id',currentEvent.id).single();
+      if(ev?.round_configs && Object.keys(ev.round_configs).length) {
+        cfgByRound = ev.round_configs;
+        currentEvent.round_configs = cfgByRound;
+      }
     }
-  }
-
-  if(!Object.keys(cfgByRound).length) {
-    // Fallback: fetch from rounds table, only use is_complete=false stubs
-    const {data:stubRows}=await sb.from('rounds')
-      .select('round_number,format,strategy,scoring_mode,golden_game_enabled,timer_minutes')
-      .eq('event_id',currentEvent.id)
-      .eq('is_complete',false)
-      .order('created_at',{ascending:false});
-    // Only use if they look like config stubs (no pairings yet)
-    const configStubs={};
-    (stubRows||[]).forEach(r=>{
-      if(!configStubs[r.round_number]) configStubs[r.round_number]=r;
-    });
-    cfgByRound=configStubs;
-    window._savedRoundConfigs=cfgByRound;
+    window._savedRoundConfigs = cfgByRound;
   }
 
   const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
-  console.log('Round',roundNum,'config:',cfg?.format, cfg?.strategy, cfgByRound);
+  console.log('Round',roundNum,'→ format:',cfg.format,'strategy:',cfg.strategy);
 
   // Pre-deploy format check
   const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
@@ -2731,11 +2737,12 @@ async function saveRoundConfig() {
     // Cache in memory
     window._savedRoundConfigs = {};
     rows.forEach(r=>{ window._savedRoundConfigs[r.round_number]=r; });
-    // Also persist config to app_settings so it survives page refresh
-    const configKey = 'round_config_'+currentEvent.id;
+    // Persist config directly on the event record as JSON
     const configVal = {};
-    rows.forEach(r=>{ configVal[r.round_number]={format:r.format,strategy:r.strategy,scoring_mode:r.scoring_mode,golden_game_enabled:r.golden_game_enabled,timer_minutes:r.timer_minutes}; });
-    await sb.from('app_settings').upsert({key:configKey, value:JSON.stringify(configVal)},{onConflict:'key'});
+    rows.forEach(r=>{ configVal[r.round_number]={format:r.format,strategy:r.strategy,scoring_mode:r.scoring_mode,golden_game_enabled:r.golden_game_enabled||false,timer_minutes:r.timer_minutes||null}; });
+    await sb.from('events').update({round_configs:configVal}).eq('id',currentEvent.id);
+    currentEvent.round_configs = configVal;
+    window._savedRoundConfigs = configVal;
     toast('Round setup saved!','success');
   }
   if(btn){btn.disabled=false;btn.textContent='Save Setup';}
@@ -3370,27 +3377,34 @@ function filterEvents(s,btn) {
 function renderEvents() {
   const el=document.getElementById('dir-events-list');
   if(!el) return;
-  const f=evFilter==='all'?allEvents:allEvents.filter(e=>e.status===evFilter);
+  // Filter archived unless showArchived is checked
+  let filtered = showArchived ? allEvents : allEvents.filter(e=>!e.is_archived);
+  const f=evFilter==='all'?filtered:filtered.filter(e=>e.status===evFilter);
   if(!f.length){
     el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events yet</div><div class="empty-sub">Create your first event to get started</div><button class="btn btn-primary" onclick="openModal(\'new-event-modal\')">+ New Event</button></div>';
     return;
   }
   el.innerHTML=f.map(e=>{
     const accentClass = e.status==='LIVE'?'live':e.status==='COMPLETE'?'complete':'draft';
-    return `<div class="event-card" onclick="openEventById('${e.id}')">
+    return `<div class="event-card" onclick="openEventById('${e.id}')" style="${e.is_archived?'opacity:.55':''}">
       <div class="event-card-accent ${accentClass}"></div>
       <div class="event-card-body">
         <div>
-          <div class="event-card-name">${e.name}</div>
+          <div class="event-card-name">${e.name}${e.is_archived?' <span style="font-size:11px;color:var(--ink-ghost);font-family:var(--font-body)">(archived)</span>':''}</div>
           <div class="event-card-meta">
             <span>${fmtDate(e.event_date)}</span>
             <span>${e.event_type}</span>
             ${e.num_teams?`<span>${e.num_teams} teams</span>`:''}
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px" onclick="event.stopPropagation()">
           ${statusBadge(e.status)}
-          <span class="event-card-arrow">›</span>
+          <button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px"
+            onclick="toggleArchiveEvent('${e.id}',${!!e.is_archived})"
+            title="${e.is_archived?'Unarchive':'Archive'}">
+            ${e.is_archived?'↩':'📦'}
+          </button>
+          <span class="event-card-arrow" onclick="openEventById('${e.id}')">›</span>
         </div>
       </div>
     </div>`;
