@@ -2179,32 +2179,41 @@ async function deployRound(roundNum){
   window._pendingSitOuts = sitOutPlayers;
 
   // Fetch round config for format check
-  // Use in-memory config cache if available (set by saveRoundConfig this session)
-  // Otherwise fetch from DB — look for non-complete records which are config stubs
+  // Load round configs — check memory cache, then app_settings, then rounds table
   let cfgByRound = window._savedRoundConfigs || {};
 
   if(!Object.keys(cfgByRound).length) {
-    // No memory cache — fetch from DB, prefer most recently saved configs
-    const {data:allCfgRows}=await sb.from('rounds')
-      .select('round_number,format,strategy,scoring_mode,golden_game_enabled,timer_minutes,is_complete,created_at')
-      .eq('event_id',currentEvent.id)
-      .order('created_at',{ascending:false}); // most recent first
+    // Try app_settings first — most reliable source
+    const configKey = 'round_config_'+currentEvent.id;
+    const {data:settingRow} = await sb.from('app_settings').select('value').eq('key',configKey).maybeSingle();
+    if(settingRow?.value) {
+      try {
+        const parsed = JSON.parse(settingRow.value);
+        cfgByRound = parsed;
+        window._savedRoundConfigs = cfgByRound;
+        console.log('Loaded round configs from app_settings:', cfgByRound);
+      } catch(e) { console.warn('Failed to parse round config:', e); }
+    }
+  }
 
-    // For each round number, prefer is_complete=false records (config stubs)
-    // over completed/deployed records
-    const byRoundAll={};
-    (allCfgRows||[]).forEach(r=>{
-      if(!byRoundAll[r.round_number]) byRoundAll[r.round_number]=r;
-      else if(!r.is_complete && byRoundAll[r.round_number].is_complete) {
-        byRoundAll[r.round_number]=r; // prefer config stub
-      }
+  if(!Object.keys(cfgByRound).length) {
+    // Fallback: fetch from rounds table, only use is_complete=false stubs
+    const {data:stubRows}=await sb.from('rounds')
+      .select('round_number,format,strategy,scoring_mode,golden_game_enabled,timer_minutes')
+      .eq('event_id',currentEvent.id)
+      .eq('is_complete',false)
+      .order('created_at',{ascending:false});
+    // Only use if they look like config stubs (no pairings yet)
+    const configStubs={};
+    (stubRows||[]).forEach(r=>{
+      if(!configStubs[r.round_number]) configStubs[r.round_number]=r;
     });
-    cfgByRound=byRoundAll;
+    cfgByRound=configStubs;
     window._savedRoundConfigs=cfgByRound;
   }
 
   const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
-  console.log('Round',roundNum,'config:',cfg?.format, cfg?.strategy);
+  console.log('Round',roundNum,'config:',cfg?.format, cfg?.strategy, cfgByRound);
 
   // Pre-deploy format check
   const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
@@ -2719,9 +2728,14 @@ async function saveRoundConfig() {
   const {error} = await sb.from('rounds').insert(rows);
   if(error){toast('Error saving: '+error.message,'error');}
   else{
-    // Also cache in memory for immediate use this session
+    // Cache in memory
     window._savedRoundConfigs = {};
     rows.forEach(r=>{ window._savedRoundConfigs[r.round_number]=r; });
+    // Also persist config to app_settings so it survives page refresh
+    const configKey = 'round_config_'+currentEvent.id;
+    const configVal = {};
+    rows.forEach(r=>{ configVal[r.round_number]={format:r.format,strategy:r.strategy,scoring_mode:r.scoring_mode,golden_game_enabled:r.golden_game_enabled,timer_minutes:r.timer_minutes}; });
+    await sb.from('app_settings').upsert({key:configKey, value:JSON.stringify(configVal)},{onConflict:'key'});
     toast('Round setup saved!','success');
   }
   if(btn){btn.disabled=false;btn.textContent='Save Setup';}
