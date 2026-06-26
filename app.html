@@ -1836,18 +1836,25 @@ async function lockTeams(){
   const btn=document.getElementById('lock-teams-btn');
   btn.disabled=true;btn.textContent='Saving…';
   try{
-    // Delete old team_players first, then teams, then recreate
+    // Nuclear clean — correct FK order:
+    // pairings -> rounds -> team_players -> teams
     const {data:oldTeams}=await sb.from('teams').select('id').eq('event_id',currentEvent.id);
-    if(oldTeams?.length){
-      await sb.from('team_players').delete().in('team_id',oldTeams.map(t=>t.id));
-      await sb.from('teams').delete().eq('event_id',currentEvent.id);
-    }
-    // Also clear old pairings/rounds since team IDs are changing
+    const oldTeamIds=(oldTeams||[]).map(t=>t.id);
     const {data:oldRounds}=await sb.from('rounds').select('id').eq('event_id',currentEvent.id);
-    if(oldRounds?.length){
-      await sb.from('pairings').delete().in('round_id',oldRounds.map(r=>r.id));
-      await sb.from('rounds').delete().eq('event_id',currentEvent.id);
-    }
+    const oldRoundIds=(oldRounds||[]).map(r=>r.id);
+    // Step 1: delete pairings (references both rounds and teams)
+    if(oldRoundIds.length) await sb.from('pairings').delete().in('round_id',oldRoundIds);
+    if(oldTeamIds.length) await sb.from('pairings').delete().in('team_a_id',oldTeamIds);
+    if(oldTeamIds.length) await sb.from('pairings').delete().in('team_b_id',oldTeamIds);
+    // Step 2: delete sitout_log for this event's players
+    const {data:epIds}=await sb.from('event_players').select('id').eq('event_id',currentEvent.id);
+    if(epIds?.length) await sb.from('sitout_log').delete().in('event_player_id',epIds.map(e=>e.id));
+    // Step 3: delete rounds
+    if(oldRoundIds.length) await sb.from('rounds').delete().in('id',oldRoundIds);
+    // Step 4: delete team_players
+    if(oldTeamIds.length) await sb.from('team_players').delete().in('team_id',oldTeamIds);
+    // Step 5: delete teams
+    if(oldTeamIds.length) await sb.from('teams').delete().in('id',oldTeamIds);
     currentRounds=[];
     for(const t of teamData){
       const {data:nt,error}=await sb.from('teams').insert({event_id:currentEvent.id,name:t.name,color:t.color}).select().single();
@@ -1860,7 +1867,8 @@ async function lockTeams(){
     currentEvent.num_teams=teamData.length;
     await setEventStatus('TEAMS_SET');
     toast('Teams locked! Ready to go live 🎾','success');
-    btn.textContent='✓ Teams Locked';
+    btn.disabled=false;
+    btn.textContent='↺ Re-lock Teams';
     updateActionBtn('TEAMS_SET');
   }catch(e){toast('Error: '+e.message,'error');btn.disabled=false;btn.textContent='Lock Teams';}
 }
@@ -2119,8 +2127,8 @@ async function checkFormatBeforeDeploy(roundNum, teams, tps, eps, cfg) {
   const g = p => p.players?.gender || p.gender;
   const teamStats = teams.map(t => {
     const players = eps.filter(ep => byTeam[t.id]?.includes(ep.id) && ep.status === 'ACTIVE');
-    const men = players.filter(p => g(p) === 'MALE').length;
-    const women = players.filter(p => g(p) === 'FEMALE').length;
+    const men = players.filter(p => (p.players?.gender||p.gender) === 'MALE').length;
+    const women = players.filter(p => (p.players?.gender||p.gender) === 'FEMALE').length;
     return { team: t, men, women, total: players.length };
   });
 
@@ -2283,8 +2291,25 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   }
 
   // Build team matchups: team[0] vs team[n-1], team[1] vs team[n-2], etc.
+  // Deduplicate teams first to avoid ghost records from DB
+  const uniqueTeams=[...new Map(teams.map(t=>[t.id,t])).values()];
+  const nu=uniqueTeams.length;
+  console.log('Unique teams:',nu,uniqueTeams.map(t=>t.name));
+
+  // Re-rotate with deduplicated teams
+  const rotated2=[...uniqueTeams];
+  if(nu>1){
+    const rotating2=rotated2.slice(1);
+    const shift2=((roundNum-1)+redeploySalt)%(nu-1);
+    for(let i=0;i<shift2;i++) rotating2.push(rotating2.shift());
+    rotated2.splice(1,rotating2.length,...rotating2);
+  }
+
   const matchups=[];
-  for(let i=0;i<Math.floor(n/2);i++) matchups.push([rotated[i],rotated[n-1-i]]);
+  for(let i=0;i<Math.floor(nu/2);i++){
+    const tA=rotated2[i], tB=rotated2[nu-1-i];
+    if(tA&&tB&&tA.id!==tB.id) matchups.push([tA,tB]); // never pair team vs itself
+  }
   // Odd team out gets a bye (rare)
 
   console.log('Round',roundNum,'fmt:',fmt,'strategy:',strategy,'matchups:',matchups.map(m=>m[0].name+' vs '+m[1].name));
@@ -2307,15 +2332,21 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
       const usedInBG=new Set();
 
       if(strategy==='AE'){
-        // AE: brute force find M+F pairs with most similar combined rating
-        const combos=[];
-        for(const m of men) for(const f of women) combos.push({p1:m,p2:f,str:eff(m)+eff(f)});
-        combos.sort((a,b)=>b.str-a.str);
-        for(const c of combos){
-          if(!usedInBG.has(c.p1.id)&&!usedInBG.has(c.p2.id)){
-            pairs.push({p1:c.p1,p2:c.p2,str:c.str});
-            usedInBG.add(c.p1.id);usedInBG.add(c.p2.id);
-          }
+        // AE: pair each man with the woman whose effective rating is closest to his
+        // This guarantees we use min(men,women) pairs with no player reused
+        const availWomen=[...women];
+        for(const m of men){
+          if(!availWomen.length) break;
+          // Find closest woman by effective rating
+          const mEff=eff(m);
+          let bestIdx=0, bestDiff=Infinity;
+          availWomen.forEach((f,i)=>{
+            const diff=Math.abs(mEff-eff(f));
+            if(diff<bestDiff){bestDiff=diff;bestIdx=i;}
+          });
+          const f=availWomen.splice(bestIdx,1)[0];
+          pairs.push({p1:m,p2:f,str:eff(m)+eff(f)});
+          usedInBG.add(m.id);usedInBG.add(f.id);
         }
       } else {
         // YY: strongest M with weakest F
@@ -2385,11 +2416,16 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     return matched;
   };
 
+  // Update byTeam to use only unique team IDs
+  const byTeamUnique={};
+  uniqueTeams.forEach(t=>{byTeamUnique[t.id]=byTeam[t.id]||[];});
+
   let courtNum=1;
   for(const [tA,tB] of matchups){
     if(courtNum>courts) break;
-    const poolA=playing.filter(p=>byTeam[tA.id]?.includes(p.id));
-    const poolB=playing.filter(p=>byTeam[tB.id]?.includes(p.id));
+    const poolA=playing.filter(p=>byTeamUnique[tA.id]?.includes(p.id));
+    const poolB=playing.filter(p=>byTeamUnique[tB.id]?.includes(p.id));
+    console.log('Pool sizes - '+tA.name+':',poolA.length,'(M:'+poolA.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolA.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')',tB.name+':',poolB.length,'(M:'+poolB.filter(p=>(p.players?.gender||p.gender)==='MALE').length+' F:'+poolB.filter(p=>(p.players?.gender||p.gender)==='FEMALE').length+')')
 
     const pairsA=splitIntoPairs(poolA,fmt,strategy);
     const pairsB=splitIntoPairs(poolB,fmt,strategy);
