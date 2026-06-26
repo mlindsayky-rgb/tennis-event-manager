@@ -850,7 +850,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('new-event-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="createEvent()">Create Event Draft</button>
+      <button class="btn btn-primary" onclick="createNewEvent()">Create Event Draft</button>
     </div>
   </div>
 </div>
@@ -1336,7 +1336,7 @@ let bgOffsetEnabled = false;
 let draggedChip = null;
 let currentRounds = [];
 
-const TEAM_COLORS = ['#1B5E20','#1565C0','#B71C1C','#F57F17','#4A148C','#006064','#BF360C','#33691E'];
+const TEAM_COLORS = ['#C62828','#1565C0','#2E7D32','#F57F17','#4A148C','#006064','#BF360C','#33691E'];
 const NAME_SETS = [
   ['Aces','Baseline Bashers','Court Crushers','Drop Shot Dragons','Lob Stars'],
   ['Net Ninjas','Rally Kings','Slice Squad','Topspin Tigers','Volley Vipers'],
@@ -3161,7 +3161,7 @@ async function savePlayer() {
 // ══════════════════════════════════════════════
 // CREATE EVENT
 // ══════════════════════════════════════════════
-async function createEvent() {
+async function createNewEvent() {
   const name=document.getElementById('event-name').value.trim();
   const date=document.getElementById('event-date').value;
   const type=document.getElementById('event-type').value;
