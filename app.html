@@ -2070,16 +2070,79 @@ async function deployRound(roundNum){
   const playersNeeded=numCourts*4;
   const sitOutCount=Math.max(0,activePlayers.length-playersNeeded);
 
-  // Pick sit-outs — fewest sit-outs first, then longest since last sat
+  // ── SIT-OUT FAIRNESS ALGORITHM ──────────────────────────
+  // Rule: no player can have more than 1 sit-out more than any other player
+  // i.e. max sit-out count across all players must never exceed min + 1
+  //
+  // Process:
+  // 1. Find min sit-out count among active players
+  // 2. Pick sit-outs ONLY from players AT the minimum (they are most overdue)
+  // 3. If we need more than available at minimum, take from minimum+1
+  // 4. Within same sit-out count: players who sat longest ago go first,
+  //    with gender balance preservation for the round format
   let sitOutPlayers=[];
   if(sitOutCount>0){
-    const sorted=[...activePlayers].sort((a,b)=>{
-      const ac=soCount[a.id]||0,bc=soCount[b.id]||0;
-      if(ac!==bc) return ac-bc;
-      const al=lastSitRound[a.id]||0,bl=lastSitRound[b.id]||0;
-      return al-bl; // sat longest ago goes first
+    // Fetch round format for gender balance
+    const {data:rCfg}=await sb.from('rounds')
+      .select('format').eq('event_id',currentEvent.id)
+      .eq('round_number',roundNum).eq('is_complete',false).maybeSingle();
+    const roundFmt=rCfg?.format||'BG';
+
+    // Build team membership and gender maps
+    const epTeamMap={};
+    (tps||[]).forEach(tp=>epTeamMap[tp.event_player_id]=tp.team_id);
+    const teamGenderCount={};
+    activePlayers.forEach(p=>{
+      const tid=epTeamMap[p.id]; if(!tid) return;
+      if(!teamGenderCount[tid]) teamGenderCount[tid]={m:0,f:0};
+      if((p.players?.gender||p.gender)==='MALE') teamGenderCount[tid].m++;
+      else teamGenderCount[tid].f++;
     });
-    sitOutPlayers=sorted.slice(0,sitOutCount);
+
+    // Find the minimum sit-out count
+    const minSits=Math.min(...activePlayers.map(p=>soCount[p.id]||0));
+
+    // Sort: minimum sit-outs first, then by how long ago they last sat (longest ago = first)
+    // Within same count, shuffle slightly for fairness variety
+    const sorted=[...activePlayers].sort((a,b)=>{
+      const ac=soCount[a.id]||0, bc=soCount[b.id]||0;
+      if(ac!==bc) return ac-bc; // fewer sit-outs = sit first
+      const al=lastSitRound[a.id]||0, bl=lastSitRound[b.id]||0;
+      if(al!==bl) return al-bl; // sat longer ago = sit first
+      return Math.random()-.5; // tie-break randomly for variety
+    });
+
+    const needPerTeam=numCourts; // each team needs numCourts players of each required gender
+    const tentativeSitOut=new Set();
+    const tempGender=JSON.parse(JSON.stringify(teamGenderCount));
+
+    for(const p of sorted){
+      if(tentativeSitOut.size>=sitOutCount) break;
+
+      // FAIRNESS GATE: never sit someone at min+2 or more ahead
+      const pSits=soCount[p.id]||0;
+      if(pSits>minSits+1) break; // everyone else has too many already — stop
+
+      const tid=epTeamMap[p.id];
+      const g=(p.players?.gender||p.gender);
+      const cur=tempGender[tid]||{m:0,f:0};
+      const afterM=cur.m-(g==='MALE'?1:0);
+      const afterF=cur.f-(g==='FEMALE'?1:0);
+
+      // GENDER BALANCE GATE: don't sit if it breaks format requirements
+      let wouldBreak=false;
+      if(roundFmt==='BG' && (afterM<needPerTeam||afterF<needPerTeam)) wouldBreak=true;
+      if(roundFmt==='BB' && afterM<needPerTeam*2) wouldBreak=true;
+      if(roundFmt==='GG' && afterF<needPerTeam*2) wouldBreak=true;
+
+      if(wouldBreak) continue; // skip this player, try next
+
+      // Safe to sit out
+      tentativeSitOut.add(p.id);
+      if(tid){ tempGender[tid].m=afterM; tempGender[tid].f=afterF; }
+    }
+    sitOutPlayers=activePlayers.filter(p=>tentativeSitOut.has(p.id));
+    console.log('Sit-outs:',sitOutPlayers.map(p=>p.players?.roster_name+' ('+( soCount[p.id]||0)+' prev sits)'));
   }
 
   const playing=activePlayers.filter(p=>!sitOutPlayers.find(s=>s.id===p.id));
