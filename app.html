@@ -1922,7 +1922,7 @@ function updateStrategyVisibility(roundNum){
   const fmt=document.getElementById('rf-'+roundNum)?.value;
   const cell=document.getElementById('strategy-cell-'+roundNum);
   if(cell){
-    const noStrategy=fmt==='TD'||fmt==='OPEN';
+    const noStrategy=fmt==='TD'||fmt==='OPEN'||fmt==='MIX';
     cell.style.opacity=noStrategy?'0.3':'1';
     cell.style.pointerEvents=noStrategy?'none':'auto';
   }
@@ -2046,13 +2046,14 @@ async function loadRounds(){
               <td>
                 <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rf-${r.num}" onchange="updateStrategyVisibility(${r.num})">
                   <option value="BG" ${r.format==='BG'?'selected':''}>BG — Mixed doubles</option>
+                  <option value="MIX" ${r.format==='MIX'?'selected':''}>MIX — Mixed best effort</option>
                   <option value="BB" ${r.format==='BB'?'selected':''}>BB — Boys doubles</option>
                   <option value="GG" ${r.format==='GG'?'selected':''}>GG — Girls doubles</option>
                   <option value="TD" ${r.format==='TD'?'selected':''}>TD — Top Down</option>
                   <option value="OPEN" ${r.format==='OPEN'?'selected':''}>OPEN — Captain picks</option>
                 </select>
               </td>
-              <td id="strategy-cell-${r.num}" style="${(r.format==='TD'||r.format==='OPEN')?'opacity:.3;pointer-events:none':''}">
+              <td id="strategy-cell-${r.num}" style="${(r.format==='TD'||r.format==='OPEN'||r.format==='MIX')?'opacity:.3;pointer-events:none':''}">
                 <select class="form-select" style="font-size:12px;padding:6px 10px;width:auto" id="rstr-${r.num}">
                   <option value="AE" ${(r.strategy||'AE')==='AE'?'selected':''}>AE — All Even</option>
                   <option value="YY" ${r.strategy==='YY'?'selected':''}>YY — Yin Yang</option>
@@ -2118,7 +2119,7 @@ async function loadRounds(){
     (!rounds?.length?'<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No rounds yet</div></div>'
     :rounds.map(r=>'<div class="card" style="margin-bottom:16px">'+
       '<div class="card-header">'+
-        '<div class="card-title">Round '+r.round_number+' — '+r.format+'</div>'+
+        '<div class="card-title">Round '+r.round_number+' — '+(r.format==='MIX'?'MIX (Best Effort)':r.format)+'</div>'+
         '<div style="display:flex;gap:8px">'+
           (!r.is_complete?'<button class="btn btn-sm btn-secondary" onclick="redeployRound('+r.round_number+')">↺ Redeploy</button>':'')+
           '<span class="badge '+(r.is_complete?'badge-green':'badge-gold')+'">'+(r.is_complete?'Complete':'In Progress')+'</span>'+
@@ -2361,8 +2362,14 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
 
   // ── STEP A: Log sit-outs ──────────────────────────────
   const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
-  for(const p of sitOutPlayers){
-    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId}).catch(()=>{});
+  if(sitOutPlayers.length){
+    // Insert all sit-outs in one batch
+    const sitRows=sitOutPlayers.map(p=>({
+      event_player_id:p.id,round_number:roundNum,
+      sitout_type:'FORCED',triggered_by_director_id:dirId
+    }));
+    const {error:soErr}=await sb.from('sitout_log').insert(sitRows);
+    if(soErr) console.warn('Sitout log error:',soErr.message);
   }
 
   // ── STEP B: Build team pools ──────────────────────────
@@ -2390,35 +2397,47 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     else if(fmt==='GG') sorted=[...pool.filter(p=>g(p)==='FEMALE')].sort(ratingSort);
     else sorted=[...pool].sort(effSort); // BG: sort by effective rating
 
-    if(fmt==='BG'){
-      // BG: match each man with closest-rated available woman
+    if(fmt==='BG'||fmt==='MIX'){
+      // BG/MIX: match each man with closest-rated available woman
+      // MIX: when men or women run out, fall back to same-gender pairs
       const men=[...pool.filter(p=>g(p)==='MALE')].sort(ratingSort);
       const women=[...pool.filter(p=>g(p)==='FEMALE')].sort(ratingSort);
       const pairs=[];
-      const usedW=new Set();
+      const usedIds=new Set();
+
+      // First pass: create BG pairs (one man + one woman)
+      const availW=[...women];
       for(const m of men){
-        const avW=women.filter(w=>!usedW.has(w.id));
-        if(!avW.length) break;
-        // For AE: find closest effective rating; for YY: take weakest woman
+        if(!availW.length) break;
         let f;
         if(strategy==='YY'){
-          f=avW[avW.length-1]; // weakest available woman
+          f=availW[availW.length-1];
         } else {
-          f=avW.reduce((best,w)=>Math.abs(effR(m)-effR(w))<Math.abs(effR(m)-effR(best))?w:best,avW[0]);
+          f=availW.reduce((best,w)=>Math.abs(effR(m)-effR(w))<Math.abs(effR(m)-effR(best))?w:best,availW[0]);
         }
-        usedW.add(f.id);
         // Avoid repeat partners if possible
-        const pid_m=m.player_id,pid_f=f.player_id;
-        if(prevPartners[pid_m]?.has(pid_f)&&avW.length>1){
-          const alt=avW.filter(w=>w.id!==f.id&&!prevPartners[pid_m]?.has(w.player_id));
-          if(alt.length){usedW.delete(f.id);f=alt[0];usedW.add(f.id);}
+        if(prevPartners[m.player_id]?.has(f.player_id)&&availW.length>1){
+          const alt=availW.filter(w=>!prevPartners[m.player_id]?.has(w.player_id));
+          if(alt.length) f=alt[0];
         }
-        pairs.push({p1:m,p2:f,str:effR(m)+effR(f)});
+        availW.splice(availW.indexOf(f),1);
+        usedIds.add(m.id);usedIds.add(f.id);
+        pairs.push({p1:m,p2:f,str:effR(m)+effR(f),isMixed:true});
       }
-      // Fallback TD pairs for any remaining players
-      const usedIds=new Set(pairs.flatMap(p=>[p.p1.id,p.p2.id]));
-      const remaining=[...pool.filter(p=>!usedIds.has(p.id))].sort(effSort);
-      for(let i=0;i<remaining.length-1;i+=2) pairs.push({p1:remaining[i],p2:remaining[i+1],str:effR(remaining[i])+effR(remaining[i+1])});
+
+      // Second pass (MIX only): pair remaining same-gender players
+      if(fmt==='MIX'){
+        const remaining=[...pool.filter(p=>!usedIds.has(p.id))].sort(effSort);
+        for(let i=0;i<remaining.length-1;i+=2){
+          pairs.push({p1:remaining[i],p2:remaining[i+1],str:effR(remaining[i])+effR(remaining[i+1]),isMixed:false});
+        }
+      } else {
+        // BG strict: remaining singles go in as fallback only
+        const remaining=[...pool.filter(p=>!usedIds.has(p.id))].sort(effSort);
+        for(let i=0;i<remaining.length-1;i+=2){
+          pairs.push({p1:remaining[i],p2:remaining[i+1],str:effR(remaining[i])+effR(remaining[i+1])});
+        }
+      }
       return pairs;
     }
 
@@ -3123,7 +3142,7 @@ async function confirmOpenPairings() {
   // Log sit-outs
   const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
   for(const p of sitout){
-    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId}).catch(()=>{});
+    await sb.from('sitout_log').insert({event_player_id:p.id,round_number:roundNum,sitout_type:'FORCED',triggered_by_director_id:dirId});
   }
 
   // Create round
