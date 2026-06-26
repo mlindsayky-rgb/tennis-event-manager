@@ -1474,7 +1474,13 @@ async function loadRoster() {
     return `<tr>
       <td style="font-size:16px;width:30px">${p.gender==='MALE'?'♂':'♀'}</td>
       <td><strong>${p.roster_name}</strong></td>
-      <td style="font-size:13px">${ntrp?parseFloat(ntrp.value).toFixed(1)+(ntrp.designation?' <span style="color:var(--ink-muted)">'+ntrp.designation+'</span>':''):'<span style="color:var(--ink-ghost)">—</span>'}</td>
+      <td style="font-size:13px" id="ntrp-cell-${ep.id}">
+        ${ntrp
+          ? parseFloat(ntrp.value).toFixed(1)+(ntrp.designation?` <span style="color:var(--ink-muted)">${ntrp.designation}</span>`:'')
+          : `<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px;color:var(--court);border-color:var(--court)"
+               onclick="showNTRPInput('${ep.id}','${escQ(p.roster_name)}')">+ NTRP</button>`
+        }
+      </td>
       <td style="font-size:13px">${trr?parseFloat(trr.value).toFixed(3):'<span style="color:var(--ink-ghost)">—</span>'}</td>
       <td>
         <select class="form-select" style="font-size:12px;padding:4px 8px;width:auto" onchange="updateEPStatus('${ep.id}',this.value)">
@@ -2668,6 +2674,64 @@ async function saveRoundConfig() {
   if(error){toast('Error saving: '+error.message,'error');}
   else{toast('Round setup saved!','success');}
   if(btn){btn.disabled=false;btn.textContent='Save Setup';}
+}
+
+
+// ── EVENT NTRP ESTIMATE ──────────────────────────────────
+function showNTRPInput(epId, playerName) {
+  const cell = document.getElementById('ntrp-cell-'+epId);
+  if(!cell) return;
+  cell.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px">
+      <input type="number" id="ntrp-input-${epId}" 
+        placeholder="e.g. 3.5" min="1.5" max="7.0" step="0.5"
+        style="width:72px;font-size:12px;padding:4px 8px;border:1.5px solid var(--court);border-radius:6px;outline:none"
+        onkeydown="if(event.key==='Enter') saveEventNTRP('${epId}','${escQ(playerName)}')"
+        autofocus>
+      <button class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:11px"
+        onclick="saveEventNTRP('${epId}','${escQ(playerName)}')">✓</button>
+      <button class="btn btn-sm btn-ghost" style="padding:4px 8px;font-size:11px"
+        onclick="loadRoster()">✕</button>
+    </div>`;
+  setTimeout(()=>document.getElementById('ntrp-input-'+epId)?.focus(), 50);
+}
+
+async function saveEventNTRP(epId, playerName) {
+  const input = document.getElementById('ntrp-input-'+epId);
+  if(!input) return;
+  const val = parseFloat(input.value);
+  if(!val || val < 1.5 || val > 7.0) {
+    input.style.borderColor = 'var(--clay)';
+    input.placeholder = '1.5–7.0';
+    return;
+  }
+  // Find player_id from event_players
+  const ep = eventRoster.find(e=>e.id===epId);
+  if(!ep) return;
+
+  const dirId = currentUser?.director_id || null;
+  const clubId = currentUser?.club_id || null;
+
+  const {error} = await sb.from('player_ratings').insert({
+    player_id: ep.player_id,
+    source: 'NTRP',
+    value: val,
+    designation: 'E', // Event estimate
+    is_manual: true,
+    fetched_at: new Date().toISOString(),
+    ...(dirId ? {manual_by_director_id: dirId} : {}),
+    ...(clubId ? {manual_by_club_id: clubId} : {})
+  });
+
+  if(error) {
+    toast('Error saving: '+error.message, 'error');
+    return;
+  }
+
+  toast(`${playerName} rated ${val} E (event estimate)`, 'success');
+  // Update cell immediately without full reload
+  const cell = document.getElementById('ntrp-cell-'+epId);
+  if(cell) cell.innerHTML = `${val.toFixed(1)} <span style="color:var(--ink-muted)">E</span>`;
 }
 
 function resetConnection() {
