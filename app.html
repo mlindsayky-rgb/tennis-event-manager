@@ -2643,40 +2643,41 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
 
     let matched=[];
 
+
     if(fmt==='TD'){
-      // TD: rank each team's players by effective rating independently
-      // Ratings are loaded into ratingMap from the top of saveRound
-      const effRating=p=>{
+      // TD: rank by ACTUAL NTRP (no gender offset) matching team builder display
+      // Tiebreak: TRR desc, then men above women of same NTRP
+      const actualR=p=>{
         const pid=p.player_id||p.id;
         const rm=ratingMap[pid]||{};
         const n=rm['NTRP'],t=rm['TRR']||rm['UTR'];
-        const base=n?parseFloat(n.value):t?parseFloat(t.value):2.5;
-        const gender=(p.players?.gender||p.gender);
-        return gender==='FEMALE'?base-0.5:base;
+        return n?parseFloat(n.value):t?parseFloat(t.value):2.5;
       };
-      const rankA=[...poolA].sort((a,b)=>effRating(b)-effRating(a));
-      const rankB=[...poolB].sort((a,b)=>effRating(b)-effRating(a));
-      console.log('TD - '+tA.name+':',rankA.map(p=>{
+      const trrR=p=>{
         const pid=p.player_id||p.id;
         const rm=ratingMap[pid]||{};
-        const n=rm['NTRP'];
-        return (p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+' raw:'+(n?parseFloat(n.value).toFixed(1):'NR')+' gender:'+(p.players?.gender||p.gender)+')';
-      }));
-      console.log('TD - '+tB.name+':',rankB.map(p=>{
-        const pid=p.player_id||p.id;
-        const rm=ratingMap[pid]||{};
-        const n=rm['NTRP'];
-        return (p.players?.roster_name||p.roster_name)+'('+effRating(p).toFixed(1)+' raw:'+(n?parseFloat(n.value).toFixed(1):'NR')+' gender:'+(p.players?.gender||p.gender)+')';
-      }));
-      // Pair position by position: A[0]+A[1] vs B[0]+B[1], A[2]+A[3] vs B[2]+B[3]
-      const numCourts=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts);
-      for(let i=0;i<numCourts;i++){
-        const p1a=rankA[i*2], p2a=rankA[i*2+1];
-        const p1b=rankB[i*2], p2b=rankB[i*2+1];
+        const t=rm['TRR']||rm['UTR'];
+        return t?parseFloat(t.value):0;
+      };
+      const male=p=>(p.players?.gender||p.gender)==='MALE';
+      const tdSort=(a,b)=>{
+        const ra=actualR(a),rb=actualR(b);
+        if(Math.abs(ra-rb)>0.01) return rb-ra;
+        const ta=trrR(a),tb=trrR(b);
+        if(Math.abs(ta-tb)>0.01) return tb-ta;
+        if(male(a)&&!male(b)) return -1; // men above women at same rating
+        if(!male(a)&&male(b)) return 1;
+        return 0;
+      };
+      const rankA=[...poolA].sort(tdSort);
+      const rankB=[...poolB].sort(tdSort);
+      console.log('TD - '+tA.name+':',rankA.map(p=>(p.players?.roster_name||p.roster_name)+'('+actualR(p).toFixed(1)+' '+(male(p)?'M':'F')+')'));
+      console.log('TD - '+tB.name+':',rankB.map(p=>(p.players?.roster_name||p.roster_name)+'('+actualR(p).toFixed(1)+' '+(male(p)?'M':'F')+')'));
+      const numC=Math.min(Math.floor(rankA.length/2),Math.floor(rankB.length/2),courts);
+      for(let i=0;i<numC;i++){
+        const p1a=rankA[i*2],p2a=rankA[i*2+1],p1b=rankB[i*2],p2b=rankB[i*2+1];
         if(!p1a||!p2a||!p1b||!p2b) break;
-        const strA=effRating(p1a)+effRating(p2a);
-        const strB=effRating(p1b)+effRating(p2b);
-        matched.push({a:{p1:p1a,p2:p2a,str:strA,teamId:tA.id},b:{p1:p1b,p2:p2b,str:strB,teamId:tB.id},diff:Math.abs(strA-strB)});
+        matched.push({a:{p1:p1a,p2:p2a,str:actualR(p1a)+actualR(p2a),teamId:tA.id},b:{p1:p1b,p2:p2b,str:actualR(p1b)+actualR(p2b),teamId:tB.id},diff:Math.abs((actualR(p1a)+actualR(p2a))-(actualR(p1b)+actualR(p2b)))});
       }
     } else {
       const pairsA=splitIntoPairs(poolA,fmt,strategy,ratingMap);
