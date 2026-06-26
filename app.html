@@ -1111,6 +1111,24 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- FORMAT WARNING MODAL -->
+<div class="modal-overlay" id="format-warn-modal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <div class="modal-title">⚠️ Format Issue Detected</div>
+      <button class="modal-close" onclick="closeModal('format-warn-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="format-warn-message" class="alert alert-warn" style="margin-bottom:20px"></div>
+      <div style="font-size:13px;font-weight:700;color:var(--ink-mid);margin-bottom:12px;text-transform:uppercase;letter-spacing:.4px">Suggested options:</div>
+      <div id="format-warn-options" style="display:flex;flex-direction:column;gap:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('format-warn-modal')">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- NAME TEAMS MODAL -->
 <div class="modal-overlay" id="name-teams-modal">
   <div class="modal" style="max-width:500px">
@@ -2064,19 +2082,154 @@ async function deployRound(roundNum){
     return;
   }
 
+  // Store for potential format warning use
+  window._pendingPlaying = playing;
+  window._pendingSitOuts = sitOutPlayers;
+
+  // Fetch round config for format check
+  const {data:cfgRows}=await sb.from('rounds')
+    .select('format,strategy,scoring_mode,golden_game_enabled,timer_minutes')
+    .eq('event_id',currentEvent.id).eq('round_number',roundNum).eq('is_complete',false);
+  const cfg=cfgRows?.[0]||{format:'BG',strategy:'AE'};
+
+  // Pre-deploy format check
+  const formatCheck = await checkFormatBeforeDeploy(roundNum, teams||[], tps||[], eps||[], cfg);
+  if(formatCheck) {
+    showFormatWarning(formatCheck, null);
+    return; // Wait for director to pick an option
+  }
+
   await saveRound(roundNum,playing,sitOutPlayers,tps||[],teams||[],actualCourts);
 }
 
-async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
+
+// ── PRE-DEPLOY FORMAT CHECK ──────────────────────────────
+async function checkFormatBeforeDeploy(roundNum, teams, tps, eps, cfg) {
+  const fmt = cfg?.format || 'BG';
+  const strategy = cfg?.strategy || 'AE';
+  const numCourts = currentEvent.num_courts || 4;
+
+  // Count active players per team by gender
+  const byTeam = {};
+  tps.forEach(tp => {
+    if(!byTeam[tp.team_id]) byTeam[tp.team_id] = [];
+    byTeam[tp.team_id].push(tp.event_player_id);
+  });
+
+  const g = p => p.players?.gender || p.gender;
+  const teamStats = teams.map(t => {
+    const players = eps.filter(ep => byTeam[t.id]?.includes(ep.id) && ep.status === 'ACTIVE');
+    const men = players.filter(p => g(p) === 'MALE').length;
+    const women = players.filter(p => g(p) === 'FEMALE').length;
+    return { team: t, men, women, total: players.length };
+  });
+
+  // Check if format can fill all courts
+  const problems = [];
+  const suggestions = [];
+
+  for(const ts of teamStats) {
+    if(fmt === 'BG') {
+      const bgCourts = Math.min(ts.men, ts.women);
+      if(bgCourts < numCourts) {
+        problems.push(`${ts.team.name} has ${ts.men}M / ${ts.women}F — can only fill ${bgCourts} BG court${bgCourts !== 1 ? 's' : ''} of ${numCourts}`);
+      }
+    } else if(fmt === 'BB') {
+      const bbCourts = Math.floor(ts.men / 2);
+      if(bbCourts < numCourts) {
+        problems.push(`${ts.team.name} has ${ts.men} men — can only fill ${bbCourts} BB court${bbCourts !== 1 ? 's' : ''} of ${numCourts}`);
+      }
+    } else if(fmt === 'GG') {
+      const ggCourts = Math.floor(ts.women / 2);
+      if(ggCourts < numCourts) {
+        problems.push(`${ts.team.name} has ${ts.women} women — can only fill ${ggCourts} GG court${ggCourts !== 1 ? 's' : ''} of ${numCourts}`);
+      }
+    }
+  }
+
+  if(!problems.length) return null; // All good — proceed normally
+
+  // Build suggestions based on what would work
+  const minMen = Math.min(...teamStats.map(t => t.men));
+  const minWomen = Math.min(...teamStats.map(t => t.women));
+  const minTotal = Math.min(...teamStats.map(t => t.total));
+  const maxBGCourts = Math.min(minMen, minWomen);
+  const maxBBCourts = Math.floor(minMen / 2);
+  const maxGGCourts = Math.floor(minWomen / 2);
+  const maxTDCourts = Math.floor(minTotal / 2);
+
+  if(fmt === 'BG' && maxBGCourts > 0) {
+    suggestions.push({
+      label: `✓ Keep BG for ${maxBGCourts} court${maxBGCourts !== 1 ? 's' : ''}, use TD for remaining ${numCourts - maxBGCourts}`,
+      fmt: 'BG', strategy, override: 'BG_THEN_TD', courts: numCourts
+    });
+  }
+  if(maxTDCourts >= numCourts) {
+    suggestions.push({
+      label: `Switch to TD — fills all ${numCourts} courts (any 2 players by rating, gender ignored)`,
+      fmt: 'TD', strategy: 'AE', override: null, courts: numCourts
+    });
+  }
+  if(fmt !== 'BB' && maxBBCourts >= numCourts) {
+    suggestions.push({
+      label: `Switch to BB — ${numCourts} courts, men only`,
+      fmt: 'BB', strategy, override: null, courts: numCourts
+    });
+  }
+  if(fmt !== 'GG' && maxGGCourts >= numCourts) {
+    suggestions.push({
+      label: `Switch to GG — ${numCourts} courts, women only`,
+      fmt: 'GG', strategy, override: null, courts: numCourts
+    });
+  }
+  if(maxBGCourts > 0 && maxBGCourts < numCourts) {
+    suggestions.push({
+      label: `Reduce to ${maxBGCourts} BG court${maxBGCourts !== 1 ? 's' : ''} — only use players who fit the format`,
+      fmt: 'BG', strategy, override: null, courts: maxBGCourts
+    });
+  }
+
+  return { problems, suggestions, roundNum, teams, tps, eps, cfg };
+}
+
+function showFormatWarning(check, deployFn) {
+  document.getElementById('format-warn-message').innerHTML =
+    check.problems.map(p => `<div style="margin-bottom:4px">• ${p}</div>`).join('');
+
+  const optsEl = document.getElementById('format-warn-options');
+  optsEl.innerHTML = check.suggestions.map((s, i) => `
+    <button class="btn btn-secondary" style="text-align:left;justify-content:flex-start;padding:12px 16px;height:auto;line-height:1.4"
+      onclick="applyFormatSuggestion(${i})">
+      ${s.label}
+    </button>`).join('');
+
+  // Store for use when option is picked
+  window._formatWarnCheck = check;
+  window._formatWarnDeployFn = deployFn;
+  openModal('format-warn-modal');
+}
+
+async function applyFormatSuggestion(idx) {
+  const check = window._formatWarnCheck;
+  const s = check.suggestions[idx];
+  closeModal('format-warn-modal');
+  toast(`Deploying with: ${s.fmt}${s.override ? ' (hybrid)' : ''}`, 'default');
+  // Override the config and deploy
+  const overrideCfg = {...check.cfg, format: s.fmt, strategy: s.strategy, _courts: s.courts, _override: s.override};
+  await saveRound(check.roundNum, window._pendingPlaying, window._pendingSitOuts, check.tps, check.teams, s.courts, overrideCfg);
+}
+
+async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride){
   // Use the saved round config format if available, else default to BG
   const {data:savedRounds}=await sb.from('rounds')
     .select('format,scoring_mode,golden_game_enabled,timer_minutes')
     .eq('event_id',currentEvent.id).eq('round_number',roundNum).eq('is_complete',false);
-  const cfg=savedRounds?.[0];
+  const cfg=cfgOverride||savedRounds?.[0];
   const fmt=cfg?.format||currentEvent.default_round_format||'BG';
   const strategy=cfg?.strategy||'AE';
   const scoring=cfg?.scoring_mode||'GAMES';
-  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy);
+  const _override=cfg?._override||null; // 'BG_THEN_TD' etc
+  console.log('Deploying Round',roundNum,'Format:',fmt,'Strategy:',strategy,'Override:',_override);
 
   // Create the round record
   const {data:nr,error:rErr}=await sb.from('rounds').insert({
@@ -2151,26 +2304,36 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts){
       const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
       const women=[...pool.filter(p=>g(p)==='FEMALE')].sort((a,b)=>eff(b)-eff(a));
       const pairs=[];
+      const usedInBG=new Set();
+
       if(strategy==='AE'){
         // AE: brute force find M+F pairs with most similar combined rating
-        const used=new Set();
-        // Build all possible M+F combos, sort by combined rating
         const combos=[];
         for(const m of men) for(const f of women) combos.push({p1:m,p2:f,str:eff(m)+eff(f)});
         combos.sort((a,b)=>b.str-a.str);
-        // Greedily pick non-overlapping pairs
         for(const c of combos){
-          if(!used.has(c.p1.id)&&!used.has(c.p2.id)){
+          if(!usedInBG.has(c.p1.id)&&!usedInBG.has(c.p2.id)){
             pairs.push({p1:c.p1,p2:c.p2,str:c.str});
-            used.add(c.p1.id);used.add(c.p2.id);
+            usedInBG.add(c.p1.id);usedInBG.add(c.p2.id);
           }
         }
       } else {
-        // YY: strongest M with weakest F, 2nd strongest M with 2nd weakest F, etc.
+        // YY: strongest M with weakest F
         const wRev=[...women].reverse();
-        for(let i=0;i<Math.min(men.length,wRev.length);i++)
+        for(let i=0;i<Math.min(men.length,wRev.length);i++){
           pairs.push({p1:men[i],p2:wRev[i],str:eff(men[i])+eff(wRev[i])});
+          usedInBG.add(men[i].id);usedInBG.add(wRev[i].id);
+        }
       }
+
+      // FALLBACK: if gender imbalance means we can't fill all courts with BG pairs,
+      // fill remaining slots with TD pairing (any 2 players by effective rating)
+      const remaining=pool.filter(p=>!usedInBG.has(p.id));
+      const byEffR=[...remaining].sort((a,b)=>eff(b)-eff(a));
+      for(let i=0;i<byEffR.length-1;i+=2){
+        pairs.push({p1:byEffR[i],p2:byEffR[i+1],str:eff(byEffR[i])+eff(byEffR[i+1]),fallback:true});
+      }
+
       return pairs;
     } else if(fmt==='BB'){
       const men=[...pool.filter(p=>g(p)==='MALE')].sort((a,b)=>eff(b)-eff(a));
