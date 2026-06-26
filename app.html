@@ -592,12 +592,19 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <div class="section-sub">Across all clubs</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm btn-primary" onclick="adminFilterEvents('all',this)">All</button>
         <button class="btn btn-sm btn-ghost" onclick="adminFilterEvents('DRAFT',this)">Draft</button>
         <button class="btn btn-sm btn-ghost" onclick="adminFilterEvents('LIVE',this)">Live</button>
         <button class="btn btn-sm btn-ghost" onclick="adminFilterEvents('TEAMS_SET',this)">Teams Set</button>
         <button class="btn btn-sm btn-ghost" onclick="adminFilterEvents('COMPLETE',this)">Complete</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-muted);cursor:pointer">
+            <input type="checkbox" id="admin-show-archived" onchange="adminToggleArchived(this.checked)"
+              style="width:14px;height:14px;accent-color:var(--court)">
+            Show archived
+          </label>
+        </div>
       </div>
       <div class="events-list" id="admin-events-list">
         <div class="loading"><div class="spinner"></div> Loading…</div>
@@ -1010,6 +1017,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="event-nav-tab active" onclick="eventTab('roster',this)">Roster</button>
     <button class="event-nav-tab" onclick="eventTab('teams',this)">Team Builder</button>
     <button class="event-nav-tab" onclick="eventTab('rounds',this)">Rounds</button>
+    <button class="event-nav-tab" onclick="eventTab('tv',this)">📺 TV Preview</button>
     <button class="event-nav-tab" onclick="eventTab('notes',this)">Notes</button>
   </nav>
 
@@ -1071,6 +1079,33 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="empty-icon">🎾</div>
       <div class="empty-title">Round Setup</div>
       <div class="empty-sub">Coming in Phase 4 — lock your teams first</div>
+    </div>
+  </div>
+
+  <!-- TV PREVIEW TAB -->
+  <div id="etab-tv" style="display:none;flex:1;background:#0a1628;min-height:80vh;padding:0">
+    <div style="background:#0a1628;color:white;min-height:80vh;font-family:var(--font-body)">
+      <!-- TV Header -->
+      <div style="background:linear-gradient(135deg,#0F1F3D,#1A5C2A);padding:20px 32px;display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-family:var(--font-display);font-size:28px;font-weight:400;letter-spacing:-.5px" id="tv-event-name">Event</div>
+          <div style="font-size:14px;opacity:.7;margin-top:2px" id="tv-round-label">Round — of —</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:13px;opacity:.6;margin-bottom:4px">TEAM SCORE</div>
+          <div style="font-size:22px;font-weight:700" id="tv-score-summary">— vs —</div>
+        </div>
+      </div>
+      <!-- Courts -->
+      <div style="padding:24px 32px" id="tv-courts">
+        <div style="text-align:center;opacity:.4;padding:40px">No active round — deploy a round to see TV preview</div>
+      </div>
+      <!-- Sitting out -->
+      <div style="padding:0 32px 24px;font-size:13px;opacity:.5" id="tv-sitout"></div>
+      <div style="padding:16px 32px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;opacity:.4;display:flex;justify-content:space-between">
+        <span id="tv-club-name">Hunting Creek Country Club</span>
+        <span id="tv-refresh-time">Auto-refreshes every 30s</span>
+      </div>
     </div>
   </div>
 
@@ -1406,6 +1441,7 @@ function eventTab(name, btn) {
   });
   if(name==='teams') initTeamBuilder();
   if(name==='rounds') loadRounds();
+  if(name==='tv') loadTVPreview();
   if(name==='notes') loadNotes();
 }
 
@@ -2531,18 +2567,18 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   // or just in order (YY/TD)
   const matchPairs=(pairsA, pairsB, strategy)=>{
     if(!pairsA.length||!pairsB.length) return [];
-    const matched=[];
-    const usedB=new Set();
-    // Sort both by strength desc
+    // Sort BOTH teams' pairs by strength desc
     const sA=[...pairsA].sort((a,b)=>b.str-a.str);
     const sB=[...pairsB].sort((a,b)=>b.str-a.str);
-    for(const pa of sA){
-      // Find closest Team B pair by combined rating
-      const best=sB.map((pb,i)=>({pb,i,diff:Math.abs(pa.str-pb.str)}))
-        .filter(x=>!usedB.has(x.i))
-        .sort((a,b)=>a.diff-b.diff)[0];
-      if(best){usedB.add(best.i);matched.push({a:pa,b:best.pb,diff:best.diff});}
+    // Match position-by-position: strongest A vs strongest B, 2nd vs 2nd, etc.
+    // This is the most balanced approach — avoids pairing strong vs weak
+    const matched=[];
+    const len=Math.min(sA.length,sB.length);
+    for(let i=0;i<len;i++){
+      matched.push({a:sA[i],b:sB[i],diff:Math.abs(sA[i].str-sB[i].str)});
     }
+    // Sort by court strength desc so Court 1 = strongest match
+    matched.sort((a,b)=>(b.a.str+b.b.str)-(a.a.str+a.b.str));
     return matched;
   };
 
@@ -2680,6 +2716,84 @@ async function enterScore(pairingId, teamAName, teamBName){
   if(error){toast('Error: '+error.message,'error');return;}
   toast(`${teamAName} ${parseInt(a)||0} – ${parseInt(b)||0} ${teamBName}  ✓`,'success');
   loadRounds();
+}
+
+
+// ── TV PREVIEW ───────────────────────────────────────────
+async function loadTVPreview() {
+  document.getElementById('tv-event-name').textContent = currentEvent.name;
+
+  const {data:rounds} = await sb.from('rounds')
+    .select('*').eq('event_id',currentEvent.id).order('round_number');
+  const {data:teams} = await sb.from('teams')
+    .select('id,name,color').eq('event_id',currentEvent.id);
+  const {data:eps} = await sb.from('event_players')
+    .select('id,player_id,players(roster_name,gender)').eq('event_id',currentEvent.id);
+
+  // Find most recent in-progress round, or last round
+  const activeRound = rounds?.find(r=>!r.is_complete) || rounds?.[rounds.length-1];
+  if(!activeRound){
+    document.getElementById('tv-round-label').textContent = 'No rounds deployed yet';
+    document.getElementById('tv-courts').innerHTML = '<div style="text-align:center;opacity:.4;padding:40px">Deploy a round to see TV preview</div>';
+    return;
+  }
+
+  document.getElementById('tv-round-label').textContent = `Round ${activeRound.round_number} — ${activeRound.format}`;
+
+  const {data:pairings} = await sb.from('pairings').select('*').eq('round_id',activeRound.id);
+  const {data:scores} = pairings?.length ? await sb.from('scores').select('*').in('pairing_id',pairings.map(p=>p.id)) : {data:[]};
+  const {data:sitouts} = await sb.from('sitout_log').select('event_player_id').eq('round_number',activeRound.round_number).in('event_player_id',(eps||[]).map(e=>e.id));
+
+  // Build name cache
+  const nc={};
+  (eps||[]).forEach(ep=>{ if(ep.players) nc[ep.player_id]=ep.players.roster_name; });
+  const allPids=[...new Set((pairings||[]).flatMap(p=>[p.team_a_player1_id,p.team_a_player2_id,p.team_b_player1_id,p.team_b_player2_id]))].filter(Boolean);
+  const missing=allPids.filter(id=>!nc[id]);
+  if(missing.length){
+    const {data:pls}=await sb.from('players').select('id,roster_name').in('id',missing);
+    (pls||[]).forEach(p=>nc[p.id]=p.roster_name);
+  }
+
+  const tname=id=>teams?.find(t=>t.id===id)?.name||'?';
+  const tcolor=id=>teams?.find(t=>t.id===id)?.color||'#fff';
+  const pname=id=>nc[id]||'?';
+
+  // Calculate team scores
+  const teamScores={};
+  (teams||[]).forEach(t=>{teamScores[t.id]=0;});
+  (scores||[]).forEach(s=>{
+    const p=pairings?.find(x=>x.id===s.pairing_id);
+    if(!p) return;
+    if(s.team_a_games>s.team_b_games) teamScores[p.team_a_id]=(teamScores[p.team_a_id]||0)+1;
+    else if(s.team_b_games>s.team_a_games) teamScores[p.team_b_id]=(teamScores[p.team_b_id]||0)+1;
+  });
+
+  const scoreSummary=(teams||[]).map(t=>`<span style="color:${tcolor(t.id)}">${t.name}</span> ${teamScores[t.id]||0}`).join(' &nbsp;·&nbsp; ');
+  document.getElementById('tv-score-summary').innerHTML = scoreSummary;
+
+  // Render courts
+  const courtsEl = document.getElementById('tv-courts');
+  courtsEl.innerHTML = (pairings||[]).sort((a,b)=>a.court_number-b.court_number).map(p=>{
+    const sc = scores?.find(s=>s.pairing_id===p.id);
+    return `<div style="display:flex;align-items:center;gap:16px;padding:14px 20px;background:rgba(255,255,255,.06);border-radius:12px;margin-bottom:10px">
+      <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.4);min-width:70px;text-transform:uppercase;letter-spacing:.5px">Court ${p.court_number}</div>
+      <div style="flex:1;font-size:15px">
+        <span style="color:${tcolor(p.team_a_id)};font-weight:700">${tname(p.team_a_id)}</span>
+        <span style="opacity:.7"> ${pname(p.team_a_player1_id)} / ${pname(p.team_a_player2_id)}</span>
+        <span style="opacity:.4;margin:0 12px">vs</span>
+        <span style="color:${tcolor(p.team_b_id)};font-weight:700">${tname(p.team_b_id)}</span>
+        <span style="opacity:.7"> ${pname(p.team_b_player1_id)} / ${pname(p.team_b_player2_id)}</span>
+      </div>
+      ${sc ? `<div style="font-size:20px;font-weight:800;font-family:var(--font-display);min-width:80px;text-align:right">${sc.team_a_games} – ${sc.team_b_games}</div>`
+           : `<div style="font-size:12px;opacity:.3;min-width:80px;text-align:right">Playing</div>`}
+    </div>`;
+  }).join('');
+
+  // Sitting out
+  const soNames=(sitouts||[]).map(s=>{const ep=eps?.find(e=>e.id===s.event_player_id);return ep?.players?.roster_name||'?';});
+  const soEl=document.getElementById('tv-sitout');
+  soEl.textContent = soNames.length ? 'Sitting out: '+soNames.join(', ') : '';
+  document.getElementById('tv-club-name').textContent = currentUser?.club_name || 'Tennis Event Manager';
 }
 
 // ── NOTES ────────────────────────────────────
@@ -2831,6 +2945,32 @@ function adminTab(name,btn) {
   }
 }
 
+
+let adminShowArchived = false;
+
+function adminToggleArchived(show) {
+  adminShowArchived = show;
+  renderAdminEvents();
+}
+
+async function deleteEvent(eventId, eventName) {
+  if(!confirm(`Permanently delete "${eventName}"? This cannot be undone.`)) return;
+  if(!confirm(`Are you sure? All rounds, pairings and scores will also be deleted.`)) return;
+  // Delete in FK order
+  const {data:teams} = await sb.from('teams').select('id').eq('event_id', eventId);
+  const teamIds = (teams||[]).map(t=>t.id);
+  const {data:rounds} = await sb.from('rounds').select('id').eq('event_id', eventId);
+  const roundIds = (rounds||[]).map(r=>r.id);
+  if(roundIds.length) await sb.from('pairings').delete().in('round_id', roundIds);
+  if(teamIds.length) await sb.from('pairings').delete().in('team_a_id', teamIds);
+  if(roundIds.length) await sb.from('rounds').delete().in('id', roundIds);
+  if(teamIds.length) { await sb.from('team_players').delete().in('team_id', teamIds); await sb.from('teams').delete().in('id', teamIds); }
+  await sb.from('event_players').delete().eq('event_id', eventId);
+  await sb.from('events').delete().eq('id', eventId);
+  toast(`"${eventName}" deleted`,'success');
+  loadAdminEvents();
+}
+
 async function loadAdminEvents() {
   const el = document.getElementById('admin-events-list');
   if(!el) return;
@@ -2852,18 +2992,19 @@ function adminFilterEvents(filter, btn) {
 function renderAdminEvents() {
   const el = document.getElementById('admin-events-list');
   if(!el) return;
-  const filtered = adminEventFilter==='all' ? adminAllEvents : adminAllEvents.filter(e=>e.status===adminEventFilter);
+  let adminFiltered = adminShowArchived ? adminAllEvents : adminAllEvents.filter(e=>!e.is_archived);
+  const filtered = adminEventFilter==='all' ? adminFiltered : adminFiltered.filter(e=>e.status===adminEventFilter);
   if(!filtered.length){
     el.innerHTML='<div class="empty-state"><div class="empty-icon">📅</div><div class="empty-title">No events found</div></div>';
     return;
   }
   el.innerHTML = filtered.map(e=>{
     const accentClass = e.status==='LIVE'?'live':e.status==='COMPLETE'?'complete':'draft';
-    return `<div class="event-card" onclick="openEventById('${e.id}')">
+    return `<div class="event-card" onclick="openEventById('${e.id}')" style="${e.is_archived?'opacity:.55':''}">
       <div class="event-card-accent ${accentClass}"></div>
       <div class="event-card-body">
         <div>
-          <div class="event-card-name">${e.name}</div>
+          <div class="event-card-name">${e.name}${e.is_archived?' <span style="font-size:11px;color:var(--ink-ghost);font-family:var(--font-body)">(archived)</span>':''}</div>
           <div class="event-card-meta">
             <span>${e.clubs?.name||'—'}</span>
             <span>${fmtDate(e.event_date)}</span>
@@ -2871,9 +3012,15 @@ function renderAdminEvents() {
             ${e.num_teams?`<span>${e.num_teams} teams</span>`:''}
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px">
+        <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
           ${statusBadge(e.status)}
-          <span class="event-card-arrow">›</span>
+          <button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px"
+            onclick="toggleArchiveEvent('${e.id}',${!!e.is_archived})" title="${e.is_archived?'Unarchive':'Archive'}">
+            ${e.is_archived?'↩':'📦'}
+          </button>
+          ${e.is_archived?`<button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--clay)"
+            onclick="deleteEvent('${e.id}','${escQ(e.name)}')" title="Delete permanently">🗑</button>`:''}
+          <span class="event-card-arrow" onclick="openEventById('${e.id}')">›</span>
         </div>
       </div>
     </div>`;
