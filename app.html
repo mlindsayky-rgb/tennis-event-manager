@@ -1196,6 +1196,53 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- SCORE ENTRY MODAL -->
+<div class="modal-overlay" id="score-modal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="score-modal-title">Enter Score</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px" id="score-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('score-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:24px">
+      <!-- Team A score -->
+      <div style="margin-bottom:20px">
+        <div id="score-team-a-label" style="font-size:13px;font-weight:700;margin-bottom:10px;text-align:center"></div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:16px">
+          <button onclick="adjustScore('a',-1)"
+            style="width:48px;height:48px;border-radius:50%;border:2px solid var(--border);background:var(--surface);font-size:24px;cursor:pointer;font-weight:300;color:var(--ink-mid);display:flex;align-items:center;justify-content:center">−</button>
+          <div id="score-a-display"
+            style="font-size:56px;font-weight:900;font-family:var(--font-display);min-width:80px;text-align:center;line-height:1;color:var(--ink)">0</div>
+          <button onclick="adjustScore('a',1)"
+            style="width:48px;height:48px;border-radius:50%;border:2px solid var(--border);background:var(--surface);font-size:24px;cursor:pointer;font-weight:300;color:var(--ink-mid);display:flex;align-items:center;justify-content:center">+</button>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div style="text-align:center;font-size:18px;font-weight:700;color:var(--ink-muted);margin-bottom:20px">vs</div>
+
+      <!-- Team B score -->
+      <div style="margin-bottom:8px">
+        <div id="score-team-b-label" style="font-size:13px;font-weight:700;margin-bottom:10px;text-align:center"></div>
+        <div style="display:flex;align-items:center;justify-content:center;gap:16px">
+          <button onclick="adjustScore('b',-1)"
+            style="width:48px;height:48px;border-radius:50%;border:2px solid var(--border);background:var(--surface);font-size:24px;cursor:pointer;font-weight:300;color:var(--ink-mid);display:flex;align-items:center;justify-content:center">−</button>
+          <div id="score-b-display"
+            style="font-size:56px;font-weight:900;font-family:var(--font-display);min-width:80px;text-align:center;line-height:1;color:var(--ink)">0</div>
+          <button onclick="adjustScore('b',1)"
+            style="width:48px;height:48px;border-radius:50%;border:2px solid var(--border);background:var(--surface);font-size:24px;cursor:pointer;font-weight:300;color:var(--ink-mid);display:flex;align-items:center;justify-content:center">+</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('score-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitScore()">Save Score</button>
+    </div>
+  </div>
+</div>
+
 <!-- FORMAT WARNING MODAL -->
 <div class="modal-overlay" id="format-warn-modal">
   <div class="modal" style="max-width:500px">
@@ -1450,6 +1497,8 @@ async function toggleArchiveEvent(eventId, currentlyArchived) {
 }
 
 function openEventById(eid) {
+  // Clear round config cache when switching events
+  window._savedRoundConfigs = {};
   const event = allEvents.find(e=>e.id===eid) || adminAllEvents.find(e=>e.id===eid);
   if(event) openEvent(event);
   else {
@@ -2020,14 +2069,17 @@ async function loadRounds(){
 
     const rounds = Array.from({length:numRounds},(_,i)=>{
       const saved = existingRounds?.find(r=>r.round_number===i+1);
+      // Also check event.round_configs for saved config
+      const evCfg=currentEvent.round_configs?.[i+1];
+      const cfg=saved||evCfg;
       return {
         num: i+1,
-        format: saved?.format || (i===numRounds-1?'OPEN':'BG'),
-        strategy: saved?.strategy||'AE',
-        num_courts: saved?.num_courts||currentEvent.num_courts||4,
-        golden: saved?.golden_game_enabled||false,
-        timer: saved?.timer_minutes||0,
-        scoring: saved?.scoring_mode||(i===numRounds-1?'DIRECTOR_POINTS':'GAMES')
+        format: cfg?.format || (i===numRounds-1?'OPEN':'BG'),
+        strategy: cfg?.strategy||'AE',
+        num_courts: cfg?.num_courts||currentEvent.num_courts||4,
+        golden: cfg?.golden_game_enabled||false,
+        timer: cfg?.timer_minutes||0,
+        scoring: cfg?.scoring_mode||(i===numRounds-1?'DIRECTOR_POINTS':'GAMES')
       };
     });
 
@@ -2643,24 +2695,67 @@ async function redeployRound(roundNum){
   await deployRound(roundNum);
 }
 
-async function enterScore(pairingId, teamAName, teamBName){
-  // Fetch existing score to pre-fill
-  const {data:existing}=await sb.from('scores').select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
-  const prefillA=existing?.team_a_games!=null?existing.team_a_games:'';
-  const prefillB=existing?.team_b_games!=null?existing.team_b_games:'';
-  const a=prompt(`Games won by ${teamAName}:`,prefillA);
-  if(a===null) return;
-  const b=prompt(`Games won by ${teamBName}:`,prefillB);
-  if(b===null) return;
-  const dirId=currentUser.director_id||'00000000-0000-0000-0000-000000000000';
+// ── SCORE ENTRY MODAL ──────────────────────────────────
+let _scoreState={pairingId:null,a:0,b:0,teamAName:'',teamBName:'',teamAColor:'',teamBColor:''};
+
+async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor){
+  // Fetch existing score
+  const {data:existing}=await sb.from('scores')
+    .select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
+
+  _scoreState={
+    pairingId,
+    a: existing?.team_a_games??0,
+    b: existing?.team_b_games??0,
+    teamAName, teamBName,
+    teamAColor: teamAColor||'var(--court)',
+    teamBColor: teamBColor||'var(--sky)'
+  };
+
+  // Set modal content
+  document.getElementById('score-modal-title').textContent=existing?'Edit Score':'Enter Score';
+  document.getElementById('score-modal-sub').textContent='Court score — games won';
+
+  const aLabel=document.getElementById('score-team-a-label');
+  aLabel.textContent=teamAName;
+  aLabel.style.color=_scoreState.teamAColor;
+
+  const bLabel=document.getElementById('score-team-b-label');
+  bLabel.textContent=teamBName;
+  bLabel.style.color=_scoreState.teamBColor;
+
+  updateScoreDisplay();
+  openModal('score-modal');
+}
+
+function adjustScore(side, delta){
+  if(side==='a') _scoreState.a=Math.max(0,_scoreState.a+delta);
+  else _scoreState.b=Math.max(0,_scoreState.b+delta);
+  updateScoreDisplay();
+}
+
+function updateScoreDisplay(){
+  const aEl=document.getElementById('score-a-display');
+  const bEl=document.getElementById('score-b-display');
+  if(aEl) aEl.textContent=_scoreState.a;
+  if(bEl) bEl.textContent=_scoreState.b;
+  // Highlight winner
+  if(aEl) aEl.style.color=_scoreState.a>_scoreState.b?_scoreState.teamAColor:'var(--ink)';
+  if(bEl) bEl.style.color=_scoreState.b>_scoreState.a?_scoreState.teamBColor:'var(--ink)';
+}
+
+async function submitScore(){
+  const {pairingId,a,b,teamAName,teamBName}=_scoreState;
+  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
   const {error}=await sb.from('scores').upsert({
     pairing_id:pairingId,
-    team_a_games:parseInt(a)||0,
-    team_b_games:parseInt(b)||0,
+    team_a_games:a,
+    team_b_games:b,
     entered_by_director_id:dirId
   },{onConflict:'pairing_id'});
   if(error){toast('Error: '+error.message,'error');return;}
-  toast(`Score updated: ${teamAName} ${parseInt(a)||0} – ${parseInt(b)||0} ${teamBName} ✓`,'success');
+  toast(`${teamAName} ${a} – ${b} ${teamBName} ✓`,'success');
+  closeModal('score-modal');
   loadRounds();
 }
 
@@ -2873,10 +2968,18 @@ async function saveRoundConfig() {
     rows.forEach(r=>{ window._savedRoundConfigs[r.round_number]=r; });
     // Persist config directly on the event record as JSON
     const configVal = {};
-    rows.forEach(r=>{ configVal[r.round_number]={format:r.format,strategy:r.strategy,scoring_mode:r.scoring_mode,golden_game_enabled:r.golden_game_enabled||false,timer_minutes:r.timer_minutes||null}; });
+    rows.forEach(r=>{ configVal[r.round_number]={
+      format:r.format,
+      strategy:r.strategy,
+      num_courts:r.num_courts||currentEvent.num_courts||4,
+      scoring_mode:r.scoring_mode,
+      golden_game_enabled:r.golden_game_enabled||false,
+      timer_minutes:r.timer_minutes||null
+    }; });
     await sb.from('events').update({round_configs:configVal}).eq('id',currentEvent.id);
     currentEvent.round_configs = configVal;
     window._savedRoundConfigs = configVal;
+    console.log('Round configs saved:',configVal);
     toast('Round setup saved!','success');
   }
   if(btn){btn.disabled=false;btn.textContent='Save Setup';}
