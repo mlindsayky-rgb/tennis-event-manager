@@ -2189,8 +2189,11 @@ async function loadRoundPairings(round,teams,eps,soCount){
     const taName=tname(p.team_a_id),tbName=tname(p.team_b_id);
     const taColor=tcolor(p.team_a_id),tbColor=tcolor(p.team_b_id);
     let scoreCell='';
-    if(sc) scoreCell='<span style="font-weight:700">'+sc.team_a_games+' - '+sc.team_b_games+'</span>';
-    else if(!round.is_complete) scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\')" >Score</button>';
+    if(sc){
+      scoreCell='<div style="display:flex;align-items:center;gap:8px"><span style="font-weight:700">'+sc.team_a_games+' – '+sc.team_b_games+'</span><button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\')" >Edit</button></div>';
+    } else if(!round.is_complete){
+      scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\')" >Score</button>';
+    }
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:13px;border:1px solid var(--border)">'+
       '<span style="font-weight:700;color:var(--ink-muted);min-width:64px;font-size:12px">Court '+p.court_number+'</span>'+
       '<div style="flex:1"><span style="color:'+taColor+';font-weight:700">'+taName+'</span> '+pname(p.team_a_player1_id)+' / '+pname(p.team_a_player2_id)+
@@ -3191,7 +3194,7 @@ async function confirmOpenPairings(){
   // Create round
   const {data:nr,error:rErr}=await sb.from('rounds').insert({
     event_id:currentEvent.id,round_number:roundNum,
-    format:'OPEN',strategy:'MANUAL',
+    format:'OPEN',strategy:'AE',
     scoring_mode:cfg?.scoring_mode||'GAMES',
     golden_game_enabled:cfg?.golden_game_enabled||false,
     timer_minutes:cfg?.timer_minutes||null,is_complete:false
