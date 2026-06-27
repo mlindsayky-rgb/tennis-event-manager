@@ -3444,6 +3444,16 @@ async function confirmOpenPairings(){
 }
 
 
+function adjustCourts(delta) {
+  const current = currentEvent.num_courts||4;
+  const next = Math.max(1, current + delta);
+  currentEvent.num_courts = next;
+  const el = document.getElementById('live-court-count');
+  if(el) el.textContent = next;
+  sb.from('events').update({num_courts:next}).eq('id',currentEvent.id)
+    .then(()=>toast('Courts set to '+next,'success'));
+}
+
 function resetConnection() {
   if(confirm('This will clear saved connection. You will need to update the source file. Continue?')) {
     toast('Update SUPABASE_KEY in the app source file to reconnect.','default');
