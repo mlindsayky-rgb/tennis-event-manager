@@ -1088,7 +1088,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 
   <!-- TV PREVIEW TAB -->
-  <div id="etab-tv" style="display:none;flex:1;background:#0a1628;min-height:80vh;padding:0">
+  <div id="etab-tv" style="display:none;background:#0a1628;min-height:80vh;padding:0">
     <div style="background:#0a1628;color:white;min-height:80vh;font-family:var(--font-body)">
       <!-- TV Header -->
       <div style="background:linear-gradient(135deg,#0F1F3D,#1A5C2A);padding:20px 32px;display:flex;align-items:center;justify-content:space-between">
@@ -1491,7 +1491,11 @@ function eventTab(name, btn) {
   });
   if(name==='teams') initTeamBuilder();
   if(name==='rounds') loadRounds();
-  if(name==='tv') loadTVPreview();
+  if(name==='tv'){
+    const tvEl=document.getElementById('etab-tv');
+    if(tvEl) tvEl.style.display='block';
+    loadTVPreview();
+  }
   if(name==='notes') loadNotes();
 }
 
@@ -2624,7 +2628,9 @@ async function enterScore(pairingId, teamAName, teamBName){
 
 // ── TV PREVIEW ───────────────────────────────────────────
 async function loadTVPreview() {
-  document.getElementById('tv-event-name').textContent = currentEvent.name;
+  document.getElementById('tv-event-name').textContent = currentEvent.name||'Event';
+  document.getElementById('tv-courts').innerHTML = '<div style="text-align:center;color:rgba(255,255,255,.4);padding:40px">Loading…</div>';
+  document.getElementById('tv-score-summary').textContent = '';
 
   const {data:rounds} = await sb.from('rounds')
     .select('*').eq('event_id',currentEvent.id).order('round_number');
@@ -2637,7 +2643,9 @@ async function loadTVPreview() {
   const activeRound = rounds?.find(r=>!r.is_complete) || rounds?.[rounds.length-1];
   if(!activeRound){
     document.getElementById('tv-round-label').textContent = 'No rounds deployed yet';
-    document.getElementById('tv-courts').innerHTML = '<div style="text-align:center;opacity:.4;padding:40px">Deploy a round to see TV preview</div>';
+    document.getElementById('tv-courts').innerHTML = '<div style="text-align:center;color:rgba(255,255,255,.4);padding:60px 20px;font-size:16px">⚡ Deploy a round to see the TV preview</div>';
+    document.getElementById('tv-score-summary').textContent = '';
+    document.getElementById('tv-sitout').textContent = '';
     return;
   }
 
@@ -3287,7 +3295,9 @@ async function deleteEvent(eventId, eventName) {
   await sb.from('event_players').delete().eq('event_id', eventId);
   await sb.from('events').delete().eq('id', eventId);
   toast(`"${eventName}" deleted`,'success');
-  loadAdminEvents();
+  // Reload whichever events list is active
+  if(typeof loadAdminEvents === 'function') loadAdminEvents();
+  if(typeof loadDirectorEvents === 'function') loadDirectorEvents();
 }
 
 async function loadAdminEvents() {
@@ -3863,13 +3873,15 @@ function renderEvents() {
             ${e.num_teams?`<span>${e.num_teams} teams</span>`:''}
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:10px" onclick="event.stopPropagation()">
+        <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
           ${statusBadge(e.status)}
           <button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px"
             onclick="toggleArchiveEvent('${e.id}',${!!e.is_archived})"
             title="${e.is_archived?'Unarchive':'Archive'}">
             ${e.is_archived?'↩':'📦'}
           </button>
+          ${e.is_archived?`<button class="btn btn-sm btn-ghost" style="padding:3px 8px;font-size:11px;color:var(--clay)"
+            onclick="deleteEvent('${e.id}','${e.name.replace(/'/g,'\\'+'\'')}')">🗑</button>`:''}
           <span class="event-card-arrow" onclick="openEventById('${e.id}')">›</span>
         </div>
       </div>
