@@ -684,11 +684,16 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div><div class="section-title">Your Events</div></div>
         <button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
         <button class="btn btn-sm btn-primary" onclick="filterEvents('all',this)">All</button>
         <button class="btn btn-sm btn-ghost" onclick="filterEvents('DRAFT',this)">Draft</button>
         <button class="btn btn-sm btn-ghost" onclick="filterEvents('LIVE',this)">Live</button>
         <button class="btn btn-sm btn-ghost" onclick="filterEvents('COMPLETE',this)">Complete</button>
+        <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-muted);cursor:pointer">
+          <input type="checkbox" id="show-archived-toggle" onchange="toggleArchived(this.checked)"
+            style="width:14px;height:14px;accent-color:var(--court)">
+          Show archived
+        </label>
       </div>
       <div class="events-list" id="dir-events-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
@@ -2596,9 +2601,13 @@ async function redeployRound(roundNum){
 }
 
 async function enterScore(pairingId, teamAName, teamBName){
-  const a=prompt(`Games won by ${teamAName}:`);
+  // Fetch existing score to pre-fill
+  const {data:existing}=await sb.from('scores').select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
+  const prefillA=existing?.team_a_games!=null?existing.team_a_games:'';
+  const prefillB=existing?.team_b_games!=null?existing.team_b_games:'';
+  const a=prompt(`Games won by ${teamAName}:`,prefillA);
   if(a===null) return;
-  const b=prompt(`Games won by ${teamBName}:`);
+  const b=prompt(`Games won by ${teamBName}:`,prefillB);
   if(b===null) return;
   const dirId=currentUser.director_id||'00000000-0000-0000-0000-000000000000';
   const {error}=await sb.from('scores').upsert({
@@ -2608,7 +2617,7 @@ async function enterScore(pairingId, teamAName, teamBName){
     entered_by_director_id:dirId
   },{onConflict:'pairing_id'});
   if(error){toast('Error: '+error.message,'error');return;}
-  toast(`${teamAName} ${parseInt(a)||0} – ${parseInt(b)||0} ${teamBName}  ✓`,'success');
+  toast(`Score updated: ${teamAName} ${parseInt(a)||0} – ${parseInt(b)||0} ${teamBName} ✓`,'success');
   loadRounds();
 }
 
