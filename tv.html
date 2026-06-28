@@ -576,7 +576,7 @@
       : { data: [] };
 
     // ── RENDER ───────────────────────────────────────────
-    renderScoreboard(teams, pairings||[], scores||[], nc, sitouts||[], eps||[]);
+    renderScoreboard(teams, pairings||[], scores||[], nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
   }
 
   function shortName(id, nc) {
@@ -586,7 +586,7 @@
     return parts[0] + ' ' + parts[parts.length-1][0] + '.';
   }
 
-  function renderScoreboard(teams, pairings, scores, nc, sitouts, eps) {
+  function renderScoreboard(teams, pairings, scores, nc, sitouts, eps, allPairings, allScores) {
     const sorted = [...pairings].sort((a,b) => a.court_number - b.court_number);
 
     // Determine team A and B from first pairing
