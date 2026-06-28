@@ -532,14 +532,15 @@
     }[activeRound.format] || activeRound.format;
 
     const totalRounds = rounds?.length || 1;
-    const courtCount = pairings?.length || 0;
-    document.getElementById('round-label').textContent =
-      `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${courtCount} Courts`;
 
     // Fetch pairings + scores
     const { data: pairings } = await sb.from('pairings')
       .select('*').eq('round_id', activeRound.id)
       .order('court_number');
+
+    // Now we have pairings.length — update round label
+    document.getElementById('round-label').textContent =
+      `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${pairings?.length||0} Courts`;
 
     let scores = [];
     if(pairings?.length) {
