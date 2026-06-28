@@ -435,14 +435,17 @@
   // ── EVENT PICKER ─────────────────────────────────────
   async function showEventPicker() {
     const { data: events } = await sb.from('events')
-      .select('id,name,status,event_date')
+      .select('id,name,status,event_date,updated_at')
       .in('status',['LIVE','TEAMS_SET'])
       .eq('is_archived', false)
-      .order('event_date', { ascending: false })
+      .order('updated_at', { ascending: false })
       .limit(10);
+
+    console.log('Live events found:', events?.map(e=>e.name+' ('+e.id+')'));
 
     if(events?.length === 1) {
       // Only one live event — auto-select
+      console.log('Auto-selecting:', events[0].name, events[0].id);
       activeEventId = events[0].id;
       startRefresh();
       return;
@@ -466,6 +469,7 @@
     picker.classList.add('show');
     window.selectEvent = (id) => {
       activeEventId = id;
+      console.log('Director selected event:', id);
       picker.classList.remove('show');
       startRefresh();
     };
@@ -504,12 +508,19 @@
       return;
     }
 
-    // Fetch most recent active round
+    // Fetch all rounds with pairing counts to find the real active one
     const { data: rounds } = await sb.from('rounds')
-      .select('*').eq('event_id', activeEventId)
+      .select('*, pairings(id)')
+      .eq('event_id', activeEventId)
       .order('round_number', { ascending: false });
 
-    const activeRound = rounds?.find(r => !r.is_complete) || rounds?.[0];
+    // Pick the round that is not complete AND has the most pairings
+    // This avoids picking stale/empty round records from previous deployments
+    const incompleteRounds = (rounds||[]).filter(r => !r.is_complete && r.pairings?.length > 0);
+    const activeRound = incompleteRounds.sort((a,b) => b.pairings.length - a.pairings.length)[0]
+      || (rounds||[]).filter(r => r.pairings?.length > 0).sort((a,b) => b.round_number - a.round_number)[0]
+      || rounds?.[0];
+    console.log('Active round:', activeRound?.round_number, 'id:', activeRound?.id, 'pairings:', activeRound?.pairings?.length);
     if(!activeRound) {
       showEmpty('No rounds deployed yet');
       return;
