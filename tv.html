@@ -575,6 +575,18 @@
           .in('event_player_id', epIds)
       : { data: [] };
 
+    // ── ALL ROUNDS SCORES (cumulative totals) ────────────
+    const { data: allRoundRows } = await sb.from('rounds')
+      .select('id').eq('event_id', activeEventId);
+    const allRoundIds = (allRoundRows||[]).map(r=>r.id);
+    const { data: allPairings } = allRoundIds.length
+      ? await sb.from('pairings').select('id,team_a_id,team_b_id').in('round_id', allRoundIds)
+      : { data: [] };
+    const { data: allScores } = allPairings?.length
+      ? await sb.from('scores').select('pairing_id,team_a_games,team_b_games')
+          .in('pairing_id', allPairings.map(p=>p.id))
+      : { data: [] };
+
     // ── RENDER ───────────────────────────────────────────
     renderScoreboard(teams, pairings||[], scores||[], nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
   }
