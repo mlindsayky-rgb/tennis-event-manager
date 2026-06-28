@@ -2349,8 +2349,10 @@ async function deployRound(roundNum){
   const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
   const fmt=cfg.format||'BG';
   const strategy=cfg.strategy||'AE';
-  const numCourts=cfg.num_courts||currentEvent.num_courts||4;
-  console.log('Round',roundNum,'→ format:',fmt,'strategy:',strategy,'courts:',numCourts);
+  // Always use the live stepper value (currentEvent.num_courts) first —
+  // it reflects what the director just set. Fall back to saved config, then default.
+  const numCourts = currentEvent.num_courts || cfg.num_courts || 4;
+  console.log('Round',roundNum,'→ format:',fmt,'strategy:',strategy,'courts:',numCourts,'(event.num_courts=',currentEvent.num_courts,'cfg.num_courts=',cfg.num_courts,')');
 
   // ── STEP 1: Build team membership ─────────────────────
   const epTeamMap={};
