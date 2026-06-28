@@ -2719,7 +2719,7 @@ async function redeployRound(roundNum){
 async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor, roundFormat, courtPts){
   // Fetch existing score and pairing court_points
   const {data:existing}=await sb.from('scores')
-    .select('team_a_games,team_b_games,director_points').eq('pairing_id',pairingId).maybeSingle();
+    .select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
   
   // If court_points not passed, fetch from pairing
   let _courtPts = courtPts||1;
@@ -2779,15 +2779,13 @@ async function submitScore(){
   const {pairingId,a,b,teamAName,teamBName,roundFormat,courtPts}=_scoreState;
   const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
   const isOpen=roundFormat==='OPEN';
-  // For OPEN: director_points go to the winner (team_a or team_b)
+  // For OPEN: bonus points go to the winner via team_a_bonus/team_b_bonus
   const aWon=a>b, bWon=b>a;
   const scoreData={
     pairing_id:pairingId,
     team_a_games:a,
     team_b_games:b,
     entered_by_director_id:dirId,
-    director_points: isOpen?(aWon||bWon?courtPts:0):null,
-    // Store which team won the director points
     team_a_bonus: isOpen&&aWon?courtPts:0,
     team_b_bonus: isOpen&&bWon?courtPts:0,
   };
