@@ -2404,8 +2404,17 @@ async function deployRound(roundNum){
       const selM=men.slice(0,numCourts), selW=women.slice(0,numCourts);
       selected=[...selM,...selW];
       if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+    } else if(fmt==='TD'){
+      // TD: select top numCourts*2 players by ACTUAL rating (ignore sit fairness)
+      // TD is always the best available players — rating determines who plays
+      const ratingSort=(a,b)=>actualR(b)-actualR(a);
+      selected=[...pool].sort(ratingSort).slice(0,numCourts*2);
+    } else if(fmt==='OPEN'){
+      // OPEN: captain picks — no fairness rotation, just take first numCourts*2
+      // The OPEN modal handles selection manually
+      selected=all.slice(0,numCourts*2);
     } else {
-      // TD/OPEN: top numCourts*2 by fairness
+      // MIX/fallback: top numCourts*2 by fairness
       selected=all.slice(0,numCourts*2);
     }
     selected.forEach(p=>playingSet.add(p.id));
