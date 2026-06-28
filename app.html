@@ -2714,10 +2714,18 @@ async function redeployRound(roundNum){
   await deployRound(roundNum);
 }
 
-async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor){
-  // Fetch existing score
+async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor, roundFormat, courtPts){
+  // Fetch existing score and pairing court_points
   const {data:existing}=await sb.from('scores')
-    .select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
+    .select('team_a_games,team_b_games,director_points').eq('pairing_id',pairingId).maybeSingle();
+  
+  // If court_points not passed, fetch from pairing
+  let _courtPts = courtPts||1;
+  if(!courtPts){
+    const {data:pairing}=await sb.from('pairings').select('court_points,round_id,rounds(format)').eq('id',pairingId).maybeSingle();
+    _courtPts = pairing?.court_points||1;
+    if(!roundFormat) roundFormat = pairing?.rounds?.format;
+  }
 
   _scoreState={
     pairingId,
@@ -2725,12 +2733,17 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
     b: existing?.team_b_games??0,
     teamAName, teamBName,
     teamAColor: teamAColor||'var(--court)',
-    teamBColor: teamBColor||'var(--sky)'
+    teamBColor: teamBColor||'var(--sky)',
+    roundFormat: roundFormat||'BG',
+    courtPts: _courtPts
   };
 
   // Set modal content
   document.getElementById('score-modal-title').textContent=existing?'Edit Score':'Enter Score';
-  document.getElementById('score-modal-sub').textContent='Court score — games won';
+  const isOpen=roundFormat==='OPEN';
+  document.getElementById('score-modal-sub').textContent=isOpen
+    ?`Winner earns ${_courtPts} director point${_courtPts!==1?'s':''}`
+    :'Court score — games won';
 
   const aLabel=document.getElementById('score-team-a-label');
   aLabel.textContent=teamAName;
@@ -2761,16 +2774,27 @@ function updateScoreDisplay(){
 }
 
 async function submitScore(){
-  const {pairingId,a,b,teamAName,teamBName}=_scoreState;
+  const {pairingId,a,b,teamAName,teamBName,roundFormat,courtPts}=_scoreState;
   const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
-  const {error}=await sb.from('scores').upsert({
+  const isOpen=roundFormat==='OPEN';
+  // For OPEN: director_points go to the winner (team_a or team_b)
+  const aWon=a>b, bWon=b>a;
+  const scoreData={
     pairing_id:pairingId,
     team_a_games:a,
     team_b_games:b,
-    entered_by_director_id:dirId
-  },{onConflict:'pairing_id'});
+    entered_by_director_id:dirId,
+    director_points: isOpen?(aWon||bWon?courtPts:0):null,
+    // Store which team won the director points
+    team_a_bonus: isOpen&&aWon?courtPts:0,
+    team_b_bonus: isOpen&&bWon?courtPts:0,
+  };
+  const {error}=await sb.from('scores').upsert(scoreData,{onConflict:'pairing_id'});
   if(error){toast('Error: '+error.message,'error');return;}
-  toast(`${teamAName} ${a} – ${b} ${teamBName} ✓`,'success');
+  const msg=isOpen
+    ?`${aWon?teamAName:bWon?teamBName:'Tie'} wins ${courtPts} pt${courtPts!==1?'s':''}! (${a}–${b})`
+    :`${teamAName} ${a} – ${b} ${teamBName} ✓`;
+  toast(msg,'success');
   closeModal('score-modal');
   loadRounds();
 }
@@ -3444,6 +3468,7 @@ async function confirmOpenPairings(){
         team_a_player2_id:p2a.player_id||p2a.id,
         team_b_player1_id:p1b.player_id||p1b.id,
         team_b_player2_id:p2b.player_id||p2b.id,
+        court_points:courtPoints[ci]||1,
       });
     }
   });
@@ -3512,12 +3537,24 @@ async function showEventSummary() {
   const teamTotals = {}; // teamId → {wins,losses,games_won,games_lost}
   (teams||[]).forEach(t=>{teamTotals[t.id]={wins:0,losses:0,ties:0,gw:0,gl:0};});
 
+  // Build round format map
+  const roundFmtMap=Object.fromEntries((rounds||[]).map(r=>[r.id,r.format]));
+  const pairingRoundMap=Object.fromEntries((pairings||[]).map(p=>[p.id,p.round_id]));
+
   (scores||[]).forEach(sc=>{
     const p=pairMap[sc.pairing_id]; if(!p) return;
     const tA=teamTotals[p.team_a_id], tB=teamTotals[p.team_b_id];
     if(!tA||!tB) return;
-    tA.gw+=sc.team_a_games||0; tA.gl+=sc.team_b_games||0;
-    tB.gw+=sc.team_b_games||0; tB.gl+=sc.team_a_games||0;
+    const fmt=roundFmtMap[pairingRoundMap[sc.pairing_id]];
+    const isOpen=fmt==='OPEN';
+    if(isOpen){
+      // OPEN: use bonus points for team totals
+      tA.gw+=sc.team_a_bonus||0;
+      tB.gw+=sc.team_b_bonus||0;
+    } else {
+      tA.gw+=sc.team_a_games||0; tA.gl+=sc.team_b_games||0;
+      tB.gw+=sc.team_b_games||0; tB.gl+=sc.team_a_games||0;
+    }
     if(sc.team_a_games>sc.team_b_games){ tA.wins++; tB.losses++; }
     else if(sc.team_b_games>sc.team_a_games){ tB.wins++; tA.losses++; }
     else { tA.ties++; tB.ties++; }
@@ -3613,10 +3650,15 @@ async function showEventSummary() {
     const rPairings=(pairings||[]).filter(p=>p.round_id===r.id);
     let rA=0,rB=0;
     let teamAId=null,teamBId=null;
+    const isOpenRound=r.format==='OPEN';
     rPairings.forEach(p=>{
       if(!teamAId){teamAId=p.team_a_id;teamBId=p.team_b_id;}
       const sc=scoreMap[p.id]; if(!sc) return;
-      rA+=sc.team_a_games||0; rB+=sc.team_b_games||0;
+      if(isOpenRound){
+        rA+=sc.team_a_bonus||0; rB+=sc.team_b_bonus||0;
+      } else {
+        rA+=sc.team_a_games||0; rB+=sc.team_b_games||0;
+      }
     });
     const tA=teamMap[teamAId], tB=teamMap[teamBId];
     const rScored=rPairings.filter(p=>scoreMap[p.id]).length;
@@ -3631,6 +3673,7 @@ async function showEventSummary() {
         <span style="color:var(--ink-muted)">–</span>
         <span style="font-size:16px;font-weight:900">${rB}</span>
         <span style="font-size:13px;font-weight:700;color:${tB?.color||'var(--ink)'}">${tB?.name||'?'}</span>
+        ${isOpenRound?'<span style="font-size:11px;color:var(--ink-ghost)">(director pts)</span>':''}
       </div>
       <div style="font-size:11px;color:var(--ink-ghost)">${rScored}/${rPairings.length} scored</div>
     </div>`;
@@ -3653,10 +3696,11 @@ async function showEventSummary() {
           ${teamTotals[team.id]?.wins||0}W – ${teamTotals[team.id]?.losses||0}L
           · ${teamTotals[team.id]?.gw||0} games</div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:4px 16px;
-        font-size:12px;color:var(--ink-muted);font-weight:700;text-transform:uppercase;
-        letter-spacing:.3px;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:6px">
-        <span>Player</span><span style="text-align:center">W</span>
+      <div style="display:grid;grid-template-columns:1fr 40px 40px 80px 48px;gap:4px 8px;
+        font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase;
+        letter-spacing:.5px;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:4px">
+        <span>Player</span>
+        <span style="text-align:center">W</span>
         <span style="text-align:center">L</span>
         <span style="text-align:center">Games</span>
         <span style="text-align:center">Sits</span>
@@ -3667,18 +3711,18 @@ async function showEventSummary() {
     } else {
       players.forEach(p=>{
         const isMVP=p.wins===Math.max(...players.map(x=>x.wins))&&p.wins>0;
-        html+=`<div style="display:grid;grid-template-columns:1fr auto auto auto auto;
-          gap:4px 16px;padding:6px 0;border-bottom:1px solid var(--border);align-items:center">
-          <div style="font-size:13px;font-weight:600">
-            ${isMVP?'⭐ ':''}${p.name}
-            <span style="font-size:11px;color:var(--ink-ghost);margin-left:4px">
-              ${p.gender==='MALE'?'♂':'♀'}</span>
+        html+=`<div style="display:grid;grid-template-columns:1fr 40px 40px 80px 48px;
+          gap:4px 8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:center">
+          <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
+            ${isMVP?'<span style="font-size:12px">⭐</span>':''}
+            <span>${p.name}</span>
+            <span style="font-size:11px;color:var(--ink-ghost)">${p.gender==='MALE'?'♂':'♀'}</span>
           </div>
-          <div style="text-align:center;font-size:14px;font-weight:700;
+          <div style="text-align:center;font-size:15px;font-weight:800;
             color:${p.wins>0?'var(--court)':'var(--ink-muted)'}">${p.wins}</div>
-          <div style="text-align:center;font-size:14px;color:var(--ink-muted)">${p.losses}</div>
-          <div style="text-align:center;font-size:13px;color:var(--ink-muted)">${p.gw}–${p.gl}</div>
-          <div style="text-align:center;font-size:13px;color:${p.sits>1?'var(--clay)':'var(--ink-ghost)'}">
+          <div style="text-align:center;font-size:15px;font-weight:600;color:var(--ink-muted)">${p.losses}</div>
+          <div style="text-align:center;font-size:12px;color:var(--ink-muted);font-weight:500">${p.gw}–${p.gl}</div>
+          <div style="text-align:center;font-size:13px;font-weight:600;color:${p.sits>1?'var(--clay)':'var(--ink-ghost)'}">
             ${p.sits||0}</div>
         </div>`;
       });
