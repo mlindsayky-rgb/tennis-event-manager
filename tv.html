@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tennis Event — Scoreboard</title>
+  <style>
+    /* ── RESET ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── FONTS ── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap');
+
+    /* ── BASE ── */
+    :root {
+      --bg: #0B1220;
+      --surface: #131D2E;
+      --surface2: #1A2640;
+      --border: rgba(255,255,255,.08);
+      --text: #FFFFFF;
+      --text-dim: rgba(255,255,255,.6);
+      --text-ghost: rgba(255,255,255,.25);
+      --accent: #22C55E;
+      --font-display: 'Bebas Neue', sans-serif;
+      --font-body: 'Inter', sans-serif;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      overflow: hidden;
+    }
+
+    /* ── LAYOUT ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 0;
+    }
+
+    /* ── HEADER ── */
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px 16px;
+      background: linear-gradient(135deg, #0F1F3D 0%, #0B1220 100%);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #event-name {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 3.5vw, 52px);
+      letter-spacing: .5px;
+      color: white;
+    }
+
+    #round-label {
+      font-size: clamp(12px, 1.2vw, 18px);
+      color: var(--text-dim);
+      margin-top: 2px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    #clock {
+      font-family: var(--font-display);
+      font-size: clamp(24px, 2.5vw, 40px);
+      color: var(--text-dim);
+      letter-spacing: 1px;
+    }
+
+    /* ── TEAM SCORE BAR ── */
+    #score-bar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      flex-shrink: 0;
+    }
+
+    .team-score-block {
+      padding: 20px 40px;
+      text-align: center;
+      position: relative;
+    }
+
+    .team-score-block.team-a { text-align: right; }
+    .team-score-block.team-b { text-align: left; }
+
+    .team-name {
+      font-family: var(--font-display);
+      font-size: clamp(20px, 2.8vw, 44px);
+      letter-spacing: .5px;
+      line-height: 1;
+    }
+
+    .team-total-score {
+      font-family: var(--font-display);
+      font-size: clamp(48px, 7vw, 110px);
+      line-height: 1;
+      margin-top: 4px;
+    }
+
+    .team-score-label {
+      font-size: clamp(10px, 1vw, 14px);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-ghost);
+      margin-top: 2px;
+    }
+
+    .score-divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 30px;
+      font-family: var(--font-display);
+      font-size: clamp(40px, 6vw, 90px);
+      color: var(--text-ghost);
+    }
+
+    /* ── COURTS ── */
+    #courts-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .court-grid {
+      display: grid;
+      grid-template-columns: 1fr 60px 1fr;
+      border-bottom: 1px solid var(--border);
+      flex: 1;
+      min-height: 0;
+      transition: background .4s;
+    }
+
+    .court-grid:last-child { border-bottom: none; }
+    .court-grid:nth-child(even) { background: var(--surface); }
+    .court-grid:nth-child(odd) { background: var(--bg); }
+
+    .court-team {
+      display: flex;
+      align-items: center;
+      padding: 0 32px;
+      gap: 16px;
+    }
+
+    .court-team.team-a {
+      justify-content: flex-end;
+      text-align: right;
+    }
+
+    .court-team.team-b {
+      justify-content: flex-start;
+      text-align: left;
+    }
+
+    .court-players {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .player-name {
+      font-size: clamp(14px, 1.8vw, 26px);
+      font-weight: 700;
+      color: white;
+      line-height: 1.2;
+      white-space: nowrap;
+    }
+
+    .player-name.dim { color: var(--text-dim); font-weight: 500; }
+
+    .court-score {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4.5vw, 70px);
+      line-height: 1;
+      min-width: 50px;
+      flex-shrink: 0;
+    }
+
+    .court-score.winner { color: white; }
+    .court-score.loser { color: var(--text-dim); }
+    .court-score.playing { color: var(--text-ghost); font-size: clamp(12px, 1.2vw, 18px); font-family: var(--font-body); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; align-self: center; }
+
+    .court-center {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+
+    .court-label {
+      font-family: var(--font-display);
+      font-size: clamp(12px, 1.5vw, 20px);
+      color: var(--text-ghost);
+      letter-spacing: 1px;
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      transform: rotate(180deg);
+    }
+
+    /* ── SITTING OUT ── */
+    #sitout-bar {
+      padding: 10px 40px;
+      background: var(--surface2);
+      border-top: 1px solid var(--border);
+      font-size: clamp(11px, 1vw, 15px);
+      color: var(--text-ghost);
+      flex-shrink: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #sitout-bar span { color: var(--text-dim); font-weight: 600; }
+
+    /* ── FOOTER ── */
+    #footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 40px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #club-name {
+      font-size: clamp(11px, 1vw, 14px);
+      color: var(--text-ghost);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    #refresh-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: clamp(10px, .9vw, 13px);
+      color: var(--text-ghost);
+    }
+
+    #refresh-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .3; }
+    }
+
+    /* ── LOADING / EMPTY ── */
+    #loading {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .spinner {
+      width: 48px; height: 48px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-msg {
+      font-family: var(--font-display);
+      font-size: clamp(24px, 3vw, 48px);
+      color: var(--text-ghost);
+      letter-spacing: 1px;
+    }
+
+    /* ── EVENT PICKER (shown when no active event) ── */
+    #event-picker {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,.85);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #event-picker.show { display: flex; }
+
+    .picker-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      max-width: 480px;
+      width: 90%;
+    }
+
+    .picker-title {
+      font-family: var(--font-display);
+      font-size: 32px;
+      margin-bottom: 20px;
+      color: white;
+    }
+
+    .picker-event {
+      padding: 14px 18px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 10px;
+      cursor: pointer;
+      transition: all .15s;
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .picker-event:hover { background: var(--surface2); border-color: rgba(255,255,255,.2); }
+    .picker-event .ev-status { font-size: 11px; color: var(--text-ghost); font-weight: 400; margin-top: 3px; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Header -->
+  <div id="header">
+    <div>
+      <div id="event-name">Tennis Event Manager</div>
+      <div id="round-label">Loading…</div>
+    </div>
+    <div id="clock">--:--</div>
+  </div>
+
+  <!-- Score bar -->
+  <div id="score-bar">
+    <div class="team-score-block team-a" id="team-a-block">
+      <div class="team-name" id="team-a-name">Team A</div>
+      <div class="team-total-score" id="team-a-score">0</div>
+      <div class="team-score-label">games won</div>
+    </div>
+    <div class="score-divider">·</div>
+    <div class="team-score-block team-b" id="team-b-block">
+      <div class="team-name" id="team-b-name">Team B</div>
+      <div class="team-total-score" id="team-b-score">0</div>
+      <div class="team-score-label">games won</div>
+    </div>
+  </div>
+
+  <!-- Courts -->
+  <div id="courts-container">
+    <div id="loading">
+      <div class="spinner"></div>
+      <div class="empty-msg">Connecting…</div>
+    </div>
+  </div>
+
+  <!-- Sitting out -->
+  <div id="sitout-bar" style="display:none">
+    <span>Sitting out:</span> <span id="sitout-names"></span>
+  </div>
+
+  <!-- Footer -->
+  <div id="footer">
+    <div id="club-name">Tennis Event Manager</div>
+    <div id="refresh-indicator">
+      <div id="refresh-dot"></div>
+      <span id="refresh-text">Live</span>
+    </div>
+  </div>
+</div>
+
+<!-- Event picker overlay -->
+<div id="event-picker">
+  <div class="picker-box">
+    <div class="picker-title">Select Event</div>
+    <div id="picker-events"></div>
+  </div>
+</div>
+
+<script type="module">
+  // ── SUPABASE ─────────────────────────────────────────
+  const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+
+  const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+  const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  // ── STATE ─────────────────────────────────────────────
+  let activeEventId = null;
+  let refreshTimer = null;
+  const REFRESH_INTERVAL = 30000; // 30 seconds
+
+  // ── CLOCK ─────────────────────────────────────────────
+  function updateClock() {
+    const now = new Date();
+    const h = now.getHours().toString().padStart(2,'0');
+    const m = now.getMinutes().toString().padStart(2,'0');
+    document.getElementById('clock').textContent = `${h}:${m}`;
+  }
+  updateClock();
+  setInterval(updateClock, 10000);
+
+  // ── INIT ─────────────────────────────────────────────
+  async function init() {
+    // Check URL param for event ID
+    const params = new URLSearchParams(window.location.search);
+    const eid = params.get('event');
+
+    if(eid) {
+      activeEventId = eid;
+      startRefresh();
+    } else {
+      await showEventPicker();
+    }
+  }
+
+  // ── EVENT PICKER ─────────────────────────────────────
+  async function showEventPicker() {
+    const { data: events } = await sb.from('events')
+      .select('id,name,status,event_date')
+      .in('status',['LIVE','TEAMS_SET'])
+      .eq('is_archived', false)
+      .order('event_date', { ascending: false })
+      .limit(10);
+
+    if(events?.length === 1) {
+      // Only one live event — auto-select
+      activeEventId = events[0].id;
+      startRefresh();
+      return;
+    }
+
+    if(!events?.length) {
+      document.getElementById('loading').innerHTML =
+        '<div class="empty-msg">No live events found</div>' +
+        '<div style="color:var(--text-ghost);font-size:14px;margin-top:8px">Start an event in the app first</div>';
+      return;
+    }
+
+    const picker = document.getElementById('event-picker');
+    const list = document.getElementById('picker-events');
+    list.innerHTML = events.map(e => `
+      <div class="picker-event" onclick="selectEvent('${e.id}')">
+        ${e.name}
+        <div class="ev-status">${e.status} · ${e.event_date||''}</div>
+      </div>
+    `).join('');
+    picker.classList.add('show');
+    window.selectEvent = (id) => {
+      activeEventId = id;
+      picker.classList.remove('show');
+      startRefresh();
+    };
+  }
+
+  // ── REFRESH LOOP ─────────────────────────────────────
+  function startRefresh() {
+    loadScoreboard();
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(loadScoreboard, REFRESH_INTERVAL);
+  }
+
+  // ── LOAD SCOREBOARD ───────────────────────────────────
+  async function loadScoreboard() {
+    if(!activeEventId) return;
+
+    // Flash refresh indicator
+    const dot = document.getElementById('refresh-dot');
+    dot.style.background = '#fff';
+    setTimeout(() => dot.style.background = '#22C55E', 500);
+
+    // Fetch event
+    const { data: event } = await sb.from('events')
+      .select('name,status,num_courts')
+      .eq('id', activeEventId).single();
+    if(!event) return;
+
+    document.getElementById('event-name').textContent = event.name;
+    document.getElementById('club-name').textContent = event.name;
+
+    // Fetch teams
+    const { data: teams } = await sb.from('teams')
+      .select('id,name,color').eq('event_id', activeEventId);
+    if(!teams?.length) {
+      showEmpty('Teams not yet set');
+      return;
+    }
+
+    // Fetch most recent active round
+    const { data: rounds } = await sb.from('rounds')
+      .select('*').eq('event_id', activeEventId)
+      .order('round_number', { ascending: false });
+
+    const activeRound = rounds?.find(r => !r.is_complete) || rounds?.[0];
+    if(!activeRound) {
+      showEmpty('No rounds deployed yet');
+      return;
+    }
+
+    const fmtLabel = {
+      BG:'Mixed Doubles',BB:'Boys Doubles',GG:'Girls Doubles',
+      TD:'Top Down',MIX:'Mixed Best Effort',SS:'Same Sex',OPEN:'Open Format'
+    }[activeRound.format] || activeRound.format;
+
+    document.getElementById('round-label').textContent =
+      `Round ${activeRound.round_number}  ·  ${fmtLabel}`;
+
+    // Fetch pairings + scores
+    const { data: pairings } = await sb.from('pairings')
+      .select('*').eq('round_id', activeRound.id)
+      .order('court_number');
+
+    const { data: scores } = pairings?.length
+      ? await sb.from('scores').select('*').in('pairing_id', pairings.map(p=>p.id))
+      : { data: [] };
+
+    // Fetch player names
+    const allPids = [...new Set(
+      (pairings||[]).flatMap(p=>[
+        p.team_a_player1_id, p.team_a_player2_id,
+        p.team_b_player1_id, p.team_b_player2_id
+      ]).filter(Boolean)
+    )];
+    const nc = {};
+    if(allPids.length) {
+      const { data: players } = await sb.from('players')
+        .select('id,roster_name').in('id', allPids);
+      (players||[]).forEach(p => nc[p.id] = p.roster_name);
+    }
+
+    // Fetch sitouts
+    const { data: eps } = await sb.from('event_players')
+      .select('id,players(roster_name)').eq('event_id', activeEventId);
+    const epIds = (eps||[]).map(e=>e.id);
+    const { data: sitouts } = epIds.length
+      ? await sb.from('sitout_log').select('event_player_id')
+          .eq('round_number', activeRound.round_number)
+          .in('event_player_id', epIds)
+      : { data: [] };
+
+    // ── RENDER ───────────────────────────────────────────
+    renderScoreboard(teams, pairings||[], scores||[], nc, sitouts||[], eps||[]);
+  }
+
+  function shortName(id, nc) {
+    const full = nc[id] || '?';
+    const parts = full.split(' ');
+    if(parts.length < 2) return full;
+    return parts[0] + ' ' + parts[parts.length-1][0] + '.';
+  }
+
+  function renderScoreboard(teams, pairings, scores, nc, sitouts, eps) {
+    const sorted = [...pairings].sort((a,b) => a.court_number - b.court_number);
+
+    // Determine team A and B from first pairing
+    const teamAId = sorted[0]?.team_a_id || teams[0]?.id;
+    const teamBId = sorted[0]?.team_b_id || teams[1]?.id;
+    const teamA = teams.find(t=>t.id===teamAId) || teams[0];
+    const teamB = teams.find(t=>t.id===teamBId) || teams[1];
+    const colorA = teamA?.color || '#E53E3E';
+    const colorB = teamB?.color || '#3182CE';
+
+    // Calculate total games won
+    let totalA = 0, totalB = 0;
+    scores.forEach(sc => {
+      const p = sorted.find(x=>x.id===sc.pairing_id);
+      if(!p) return;
+      if(p.team_a_id===teamAId) { totalA+=sc.team_a_games||0; totalB+=sc.team_b_games||0; }
+      else { totalA+=sc.team_b_games||0; totalB+=sc.team_a_games||0; }
+    });
+
+    // Update score bar
+    document.getElementById('team-a-name').textContent = teamA?.name || 'Team A';
+    document.getElementById('team-a-name').style.color = colorA;
+    document.getElementById('team-a-score').textContent = totalA;
+    document.getElementById('team-a-score').style.color = totalA >= totalB ? colorA : 'rgba(255,255,255,.4)';
+    document.getElementById('team-a-block').style.background = colorA + '12';
+
+    document.getElementById('team-b-name').textContent = teamB?.name || 'Team B';
+    document.getElementById('team-b-name').style.color = colorB;
+    document.getElementById('team-b-score').textContent = totalB;
+    document.getElementById('team-b-score').style.color = totalB >= totalA ? colorB : 'rgba(255,255,255,.4)';
+    document.getElementById('team-b-block').style.background = colorB + '12';
+
+    // Render courts
+    const container = document.getElementById('courts-container');
+    if(!sorted.length) {
+      showEmpty('No courts yet');
+      return;
+    }
+
+    container.innerHTML = sorted.map((p, i) => {
+      const sc = scores.find(s=>s.pairing_id===p.id);
+      const aIsTeamA = p.team_a_id === teamAId;
+
+      // Left side (Team A perspective)
+      const leftP1 = aIsTeamA ? p.team_a_player1_id : p.team_b_player1_id;
+      const leftP2 = aIsTeamA ? p.team_a_player2_id : p.team_b_player2_id;
+      const rightP1 = aIsTeamA ? p.team_b_player1_id : p.team_a_player1_id;
+      const rightP2 = aIsTeamA ? p.team_b_player2_id : p.team_a_player2_id;
+
+      let leftGames = null, rightGames = null;
+      if(sc) {
+        leftGames = aIsTeamA ? sc.team_a_games : sc.team_b_games;
+        rightGames = aIsTeamA ? sc.team_b_games : sc.team_a_games;
+      }
+
+      const leftWon = leftGames !== null && rightGames !== null && leftGames > rightGames;
+      const rightWon = leftGames !== null && rightGames !== null && rightGames > leftGames;
+      const isPlaying = leftGames === null;
+
+      const nameClass = (winner) => winner ? 'player-name' : 'player-name dim';
+
+      return `
+      <div class="court-grid" style="border-left:3px solid ${colorA}">
+        <!-- Team A side -->
+        <div class="court-team team-a">
+          <div class="court-players" style="text-align:right">
+            <div class="${nameClass(leftWon)}">${shortName(leftP1, nc)}</div>
+            <div class="${nameClass(leftWon)}">${shortName(leftP2, nc)}</div>
+          </div>
+          ${isPlaying
+            ? `<div class="court-score playing">●</div>`
+            : `<div class="court-score ${leftWon?'winner':'loser'}" style="color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</div>`
+          }
+        </div>
+
+        <!-- Court label -->
+        <div class="court-center">
+          <div class="court-label">C${p.court_number}</div>
+        </div>
+
+        <!-- Team B side -->
+        <div class="court-team team-b" style="border-right:3px solid ${colorB}">
+          ${isPlaying
+            ? `<div class="court-score playing">●</div>`
+            : `<div class="court-score ${rightWon?'winner':'loser'}" style="color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</div>`
+          }
+          <div class="court-players">
+            <div class="${nameClass(rightWon)}">${shortName(rightP1, nc)}</div>
+            <div class="${nameClass(rightWon)}">${shortName(rightP2, nc)}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Sitting out
+    const soNames = sitouts.map(s => {
+      const ep = eps.find(e=>e.id===s.event_player_id);
+      return ep?.players?.roster_name || '?';
+    }).filter(Boolean);
+
+    const soBar = document.getElementById('sitout-bar');
+    if(soNames.length) {
+      soBar.style.display = 'block';
+      document.getElementById('sitout-names').textContent = soNames.join(', ');
+    } else {
+      soBar.style.display = 'none';
+    }
+
+    // Update refresh time
+    const now = new Date();
+    document.getElementById('refresh-text').textContent =
+      `Updated ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+  }
+
+  function showEmpty(msg) {
+    document.getElementById('courts-container').innerHTML =
+      `<div id="loading"><div class="empty-msg">${msg}</div></div>`;
+  }
+
+  // ── START ────────────────────────────────────────────
+  init();
+</script>
+</body>
+</html>
