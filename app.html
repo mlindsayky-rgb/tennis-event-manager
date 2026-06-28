@@ -2666,37 +2666,25 @@ async function pullVolunteer(epId,roundNum){
 }
 
 async function redeployRound(roundNum){
-  if(!confirm('Redeploy Round '+roundNum+'? Current pairings will be recalculated.')) return;
+  if(!confirm('Redeploy Round '+roundNum+'? Current pairings and scores will be recalculated.')) return;
   toast('Redeploying round '+roundNum+'...','default');
 
-  // Find all rounds with this number for this event
   const {data:rounds}=await sb.from('rounds')
     .select('id').eq('event_id',currentEvent.id).eq('round_number',roundNum);
 
   for(const round of rounds||[]){
-    // Delete pairings first (child records)
+    // Delete scores first (no cascade set up)
+    const {data:pairings}=await sb.from('pairings').select('id').eq('round_id',round.id);
+    if(pairings?.length) await sb.from('scores').delete().in('pairing_id',pairings.map(p=>p.id));
     await sb.from('pairings').delete().eq('round_id',round.id);
-    // Delete scores for those pairings (already handled by cascade if set up)
-    // Delete the round
     await sb.from('rounds').delete().eq('id',round.id);
   }
 
-  // Delete sitout_log entries for this round scoped to THIS event's players
   const epIds=eventRoster.map(ep=>ep.id);
-  if(epIds.length){
-    await sb.from('sitout_log').delete()
-      .eq('round_number',roundNum)
-      .in('event_player_id',epIds);
-  }
-
-  // Update currentRounds cache
+  if(epIds.length) await sb.from('sitout_log').delete().eq('round_number',roundNum).in('event_player_id',epIds);
   currentRounds=currentRounds.filter(r=>r.round_number!==roundNum);
-
   await deployRound(roundNum);
 }
-
-// ── SCORE ENTRY MODAL ──────────────────────────────────
-let _scoreState={pairingId:null,a:0,b:0,teamAName:'',teamBName:'',teamAColor:'',teamBColor:''};
 
 async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor){
   // Fetch existing score
