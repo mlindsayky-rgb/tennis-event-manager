@@ -435,10 +435,10 @@
   // ── EVENT PICKER ─────────────────────────────────────
   async function showEventPicker() {
     const { data: events } = await sb.from('events')
-      .select('id,name,status,event_date,updated_at')
+      .select('id,name,status,event_date')
       .in('status',['LIVE','TEAMS_SET'])
       .eq('is_archived', false)
-      .order('updated_at', { ascending: false })
+      .order('event_date', { ascending: false })
       .limit(10);
 
     console.log('Live events found:', events?.map(e=>e.name+' ('+e.id+')'));
