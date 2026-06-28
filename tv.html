@@ -9,7 +9,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     /* ── FONTS ── */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=Bebas+Neue&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800;900&family=Inter:wght@400;600;700;800;900&display=swap');
 
     /* ── BASE ── */
     :root {
@@ -21,7 +21,7 @@
       --text-dim: rgba(255,255,255,.6);
       --text-ghost: rgba(255,255,255,.25);
       --accent: #22C55E;
-      --font-display: 'Bebas Neue', sans-serif;
+      --font-display: 'Playfair Display', Georgia, serif;
       --font-body: 'Inter', sans-serif;
     }
 
@@ -103,6 +103,7 @@
       font-size: clamp(48px, 7vw, 110px);
       line-height: 1;
       margin-top: 4px;
+      font-style: italic;
     }
 
     .team-score-label {
@@ -184,6 +185,7 @@
       line-height: 1;
       min-width: 50px;
       flex-shrink: 0;
+      font-style: italic;
     }
 
     .court-score.winner { color: white; }
@@ -407,9 +409,11 @@
   // ── CLOCK ─────────────────────────────────────────────
   function updateClock() {
     const now = new Date();
-    const h = now.getHours().toString().padStart(2,'0');
+    let h = now.getHours();
     const m = now.getMinutes().toString().padStart(2,'0');
-    document.getElementById('clock').textContent = `${h}:${m}`;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    document.getElementById('clock').textContent = `${h}:${m} ${ampm}`;
   }
   updateClock();
   setInterval(updateClock, 10000);
