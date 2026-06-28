@@ -551,10 +551,10 @@
     let scores = [];
     if(pairings?.length) {
       const pairingIds = pairings.map(p=>p.id);
-      console.log('Fetching scores for pairing IDs:', pairingIds);
       const { data: scData, error: scErr } = await sb.from('scores').select('*').in('pairing_id', pairingIds);
-      console.log('Scores result:', scData, 'Error:', scErr);
+      if(scErr) console.error('Score fetch error:', scErr);
       scores = scData || [];
+      console.log('Current round scores:', scores.length, 'for', pairingIds.length, 'pairings');
     }
 
     // Fetch player names
@@ -594,7 +594,14 @@
       : { data: [] };
 
     // ── RENDER ───────────────────────────────────────────
-    renderScoreboard(teams, pairings||[], scores||[], nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
+    // Merge current round scores with allScores — current round takes priority
+    const allScoreIds = new Set((allScores||[]).map(s=>s.pairing_id));
+    const mergedScores = [
+      ...(scores||[]),
+      ...(allScores||[]).filter(s=>!(scores||[]).find(cs=>cs.pairing_id===s.pairing_id))
+    ];
+    console.log('Merged scores:', mergedScores.length, '(current:', (scores||[]).length, '+ additional from allScores:', mergedScores.length-(scores||[]).length, ')');
+    renderScoreboard(teams, pairings||[], mergedScores, nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
   }
 
   function shortName(id, nc) {
@@ -678,7 +685,6 @@
     container.innerHTML = sorted.map((p, i) => {
       // Check current round scores first, then fall back to allScores
       const sc = scores.find(s=>s.pairing_id===p.id) || allScores.find(s=>s.pairing_id===p.id);
-      console.log(`Court ${p.court_number}: pairing=${p.id} sc=`,sc, 'scores len=',scores.length, 'allScores len=',allScores.length);
       const aIsTeamA = p.team_a_id === teamAId;
 
       const leftP1 = aIsTeamA ? p.team_a_player1_id : p.team_b_player1_id;
