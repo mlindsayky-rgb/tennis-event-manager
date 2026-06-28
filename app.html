@@ -1196,6 +1196,22 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- EVENT SUMMARY MODAL -->
+<div class="modal-overlay" id="summary-modal">
+  <div class="modal" style="max-width:680px;max-height:90vh;overflow-y:auto">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="summary-event-name">Event Summary</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px" id="summary-event-date"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('summary-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0" id="summary-body">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
 <!-- SCORE ENTRY MODAL -->
 <div class="modal-overlay" id="score-modal">
   <div class="modal" style="max-width:420px">
@@ -1585,6 +1601,8 @@ async function eventAction() {
     if(!confirm('End this event?')) return;
     await setEventStatus('COMPLETE');
     toast('Event complete!','success');
+  } else if(s==='COMPLETE'){
+    showEventSummary();
   }
 }
 
@@ -2175,6 +2193,7 @@ async function loadRounds(){
   el.innerHTML='<div style="padding:20px">'+
     (canDeploy?'<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
       '<button class="btn btn-primary" onclick="deployRound('+nextRound+')">⚡ Deploy Round '+nextRound+'</button>'+
+      '<button class="btn btn-ghost" onclick="showEventSummary()" style="font-size:13px">📊 Summary</button>'+
       '<span style="font-size:13px;color:var(--ink-muted)">'+activeCt+' active players</span>'+
       '<div style="display:flex;align-items:center;gap:6px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px">'+
         '<span style="font-size:12px;color:var(--ink-muted);font-weight:600">Courts:</span>'+
@@ -3441,6 +3460,231 @@ function adjustCourts(delta) {
   sb.from('events').update({num_courts:next}).eq('id',currentEvent.id)
     .then(()=>toast('Courts set to '+next,'success'));
 }
+
+
+// ══════════════════════════════════════════════
+// EVENT SUMMARY
+// ══════════════════════════════════════════════
+
+async function showEventSummary() {
+  document.getElementById('summary-event-name').textContent = currentEvent.name;
+  document.getElementById('summary-event-date').textContent =
+    fmtDate(currentEvent.event_date) + ' · ' + (currentEvent.event_type||'');
+  document.getElementById('summary-body').innerHTML =
+    '<div class="loading"><div class="spinner"></div></div>';
+  openModal('summary-modal');
+
+  // ── Fetch all data ─────────────────────────────
+  const {data:teams}  = await sb.from('teams').select('*').eq('event_id',currentEvent.id);
+  const {data:rounds} = await sb.from('rounds').select('*').eq('event_id',currentEvent.id).order('round_number');
+  const {data:eps}    = await sb.from('event_players')
+    .select('id,player_id,status,players(roster_name,gender)').eq('event_id',currentEvent.id);
+
+  if(!rounds?.length){
+    document.getElementById('summary-body').innerHTML =
+      '<div style="padding:32px;text-align:center;color:var(--ink-muted)">No rounds played yet.</div>';
+    return;
+  }
+
+  const roundIds = rounds.map(r=>r.id);
+  const {data:pairings} = await sb.from('pairings').select('*').in('round_id',roundIds);
+  const pairingIds = (pairings||[]).map(p=>p.id);
+  const {data:scores}   = pairingIds.length
+    ? await sb.from('scores').select('*').in('pairing_id',pairingIds)
+    : {data:[]};
+  const {data:sitouts}  = await sb.from('sitout_log').select('*')
+    .in('event_player_id',(eps||[]).map(e=>e.id));
+
+  const teamMap  = Object.fromEntries((teams||[]).map(t=>[t.id,t]));
+  const pairMap  = Object.fromEntries((pairings||[]).map(p=>[p.id,p]));
+  const scoreMap = Object.fromEntries((scores||[]).map(s=>[s.pairing_id,s]));
+
+  // ── Team totals ────────────────────────────────
+  const teamTotals = {}; // teamId → {wins,losses,games_won,games_lost}
+  (teams||[]).forEach(t=>{teamTotals[t.id]={wins:0,losses:0,ties:0,gw:0,gl:0};});
+
+  (scores||[]).forEach(sc=>{
+    const p=pairMap[sc.pairing_id]; if(!p) return;
+    const tA=teamTotals[p.team_a_id], tB=teamTotals[p.team_b_id];
+    if(!tA||!tB) return;
+    tA.gw+=sc.team_a_games||0; tA.gl+=sc.team_b_games||0;
+    tB.gw+=sc.team_b_games||0; tB.gl+=sc.team_a_games||0;
+    if(sc.team_a_games>sc.team_b_games){ tA.wins++; tB.losses++; }
+    else if(sc.team_b_games>sc.team_a_games){ tB.wins++; tA.losses++; }
+    else { tA.ties++; tB.ties++; }
+  });
+
+  // ── Player records ─────────────────────────────
+  const playerRec = {}; // player_id → {name,teamId,wins,losses,ties,gw,gl,courts,sits}
+  (eps||[]).forEach(ep=>{
+    playerRec[ep.id]={
+      name:ep.players?.roster_name||'?',
+      gender:ep.players?.gender||'?',
+      teamId:null, wins:0,losses:0,ties:0,gw:0,gl:0,courts:0,sits:0
+    };
+  });
+
+  // Assign teams from tps
+  const {data:tps}=await sb.from('team_players').select('event_player_id,team_id');
+  (tps||[]).forEach(tp=>{
+    if(playerRec[tp.event_player_id]) playerRec[tp.event_player_id].teamId=tp.team_id;
+  });
+
+  // Count sits
+  (sitouts||[]).forEach(s=>{
+    if(playerRec[s.event_player_id]) playerRec[s.event_player_id].sits++;
+  });
+
+  // Count wins/losses per player
+  (scores||[]).forEach(sc=>{
+    const p=pairMap[sc.pairing_id]; if(!p) return;
+    const aWon=sc.team_a_games>sc.team_b_games;
+    const bWon=sc.team_b_games>sc.team_a_games;
+    const tie=sc.team_a_games===sc.team_b_games;
+    const addPlayer=(pid,won,lost,gw,gl)=>{
+      if(!playerRec[pid]) return;
+      playerRec[pid].courts++;
+      playerRec[pid].gw+=gw; playerRec[pid].gl+=gl;
+      if(won) playerRec[pid].wins++;
+      else if(lost) playerRec[pid].losses++;
+      else playerRec[pid].ties++;
+    };
+    // Map player_ids to event_player_ids
+    const epByPid=Object.fromEntries((eps||[]).map(e=>[e.player_id,e.id]));
+    [p.team_a_player1_id,p.team_a_player2_id].forEach(pid=>{
+      addPlayer(epByPid[pid],aWon,bWon,sc.team_a_games,sc.team_b_games);
+    });
+    [p.team_b_player1_id,p.team_b_player2_id].forEach(pid=>{
+      addPlayer(epByPid[pid],bWon,aWon,sc.team_b_games,sc.team_a_games);
+    });
+  });
+
+  // ── Render ─────────────────────────────────────
+  const teamsSorted=(teams||[]).sort((a,b)=>{
+    const ta=teamTotals[a.id], tb=teamTotals[b.id];
+    return (tb.gw-tb.gl)-(ta.gw-ta.gl);
+  });
+
+  const winner = teamsSorted[0];
+  const loser  = teamsSorted[1];
+  const winTot = teamTotals[winner?.id]||{};
+  const losTot = teamTotals[loser?.id]||{};
+  const isTie  = winTot.gw===losTot.gw;
+
+  let html = '';
+
+  // ── Final score hero ───────────────────────────
+  html += `<div style="background:linear-gradient(135deg,${winner?.color||'var(--court)'}22,transparent);
+    padding:28px 28px 20px;border-bottom:1px solid var(--border)">
+    <div style="text-align:center;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;
+        color:var(--ink-muted);margin-bottom:8px">${isTie?'TIE GAME':'FINAL SCORE'}</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:24px">
+        <div style="text-align:center">
+          <div style="font-size:15px;font-weight:700;color:${teamsSorted[0]?.color}">${teamsSorted[0]?.name}</div>
+          <div style="font-size:56px;font-weight:900;line-height:1;color:${isTie?'var(--ink)':teamsSorted[0]?.color}">${winTot.gw}</div>
+        </div>
+        <div style="font-size:32px;color:var(--ink-muted)">–</div>
+        <div style="text-align:center">
+          <div style="font-size:15px;font-weight:700;color:${teamsSorted[1]?.color}">${teamsSorted[1]?.name}</div>
+          <div style="font-size:56px;font-weight:900;line-height:1;color:var(--ink-muted)">${losTot.gw}</div>
+        </div>
+      </div>
+      ${!isTie?`<div style="margin-top:10px;font-size:13px;font-weight:700;color:${winner?.color}">
+        🏆 ${winner?.name} wins!</div>`:'<div style="margin-top:10px;font-size:13px;color:var(--ink-muted)">All square!</div>'}
+    </div>
+  </div>`;
+
+  // ── Round by round ─────────────────────────────
+  html += `<div style="padding:20px 28px;border-bottom:1px solid var(--border)">
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;
+      color:var(--ink-muted);margin-bottom:12px">Round by Round</div>`;
+
+  (rounds||[]).forEach(r=>{
+    const rPairings=(pairings||[]).filter(p=>p.round_id===r.id);
+    let rA=0,rB=0;
+    let teamAId=null,teamBId=null;
+    rPairings.forEach(p=>{
+      if(!teamAId){teamAId=p.team_a_id;teamBId=p.team_b_id;}
+      const sc=scoreMap[p.id]; if(!sc) return;
+      rA+=sc.team_a_games||0; rB+=sc.team_b_games||0;
+    });
+    const tA=teamMap[teamAId], tB=teamMap[teamBId];
+    const rScored=rPairings.filter(p=>scoreMap[p.id]).length;
+    html+=`<div style="display:flex;align-items:center;gap:12px;padding:8px 0;
+      border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700;color:var(--ink-muted);min-width:64px">
+        Round ${r.round_number}</div>
+      <div style="font-size:11px;color:var(--ink-ghost);min-width:48px">${r.format}</div>
+      <div style="flex:1;display:flex;align-items:center;gap:8px">
+        <span style="font-size:13px;font-weight:700;color:${tA?.color||'var(--ink)'}">${tA?.name||'?'}</span>
+        <span style="font-size:16px;font-weight:900">${rA}</span>
+        <span style="color:var(--ink-muted)">–</span>
+        <span style="font-size:16px;font-weight:900">${rB}</span>
+        <span style="font-size:13px;font-weight:700;color:${tB?.color||'var(--ink)'}">${tB?.name||'?'}</span>
+      </div>
+      <div style="font-size:11px;color:var(--ink-ghost)">${rScored}/${rPairings.length} scored</div>
+    </div>`;
+  });
+
+  html+=`</div>`;
+
+  // ── Player records per team ────────────────────
+  (teamsSorted||[]).forEach(team=>{
+    const players=Object.values(playerRec)
+      .filter(p=>p.teamId===team.id)
+      .sort((a,b)=>b.wins-a.wins||(b.gw-b.gl)-(a.gw-a.gl));
+
+    html+=`<div style="padding:20px 28px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <div style="width:10px;height:10px;border-radius:50%;background:${team.color}"></div>
+        <div style="font-size:13px;font-weight:700;color:${team.color};text-transform:uppercase;
+          letter-spacing:.5px">${team.name}</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-left:auto">
+          ${teamTotals[team.id]?.wins||0}W – ${teamTotals[team.id]?.losses||0}L
+          · ${teamTotals[team.id]?.gw||0} games</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:4px 16px;
+        font-size:12px;color:var(--ink-muted);font-weight:700;text-transform:uppercase;
+        letter-spacing:.3px;padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:6px">
+        <span>Player</span><span style="text-align:center">W</span>
+        <span style="text-align:center">L</span>
+        <span style="text-align:center">Games</span>
+        <span style="text-align:center">Sits</span>
+      </div>`;
+
+    if(!players.length){
+      html+=`<div style="font-size:13px;color:var(--ink-ghost);padding:8px 0">No player data</div>`;
+    } else {
+      players.forEach(p=>{
+        const isMVP=p.wins===Math.max(...players.map(x=>x.wins))&&p.wins>0;
+        html+=`<div style="display:grid;grid-template-columns:1fr auto auto auto auto;
+          gap:4px 16px;padding:6px 0;border-bottom:1px solid var(--border);align-items:center">
+          <div style="font-size:13px;font-weight:600">
+            ${isMVP?'⭐ ':''}${p.name}
+            <span style="font-size:11px;color:var(--ink-ghost);margin-left:4px">
+              ${p.gender==='MALE'?'♂':'♀'}</span>
+          </div>
+          <div style="text-align:center;font-size:14px;font-weight:700;
+            color:${p.wins>0?'var(--court)':'var(--ink-muted)'}">${p.wins}</div>
+          <div style="text-align:center;font-size:14px;color:var(--ink-muted)">${p.losses}</div>
+          <div style="text-align:center;font-size:13px;color:var(--ink-muted)">${p.gw}–${p.gl}</div>
+          <div style="text-align:center;font-size:13px;color:${p.sits>1?'var(--clay)':'var(--ink-ghost)'}">
+            ${p.sits||0}</div>
+        </div>`;
+      });
+    }
+    html+=`</div>`;
+  });
+
+  // ── Footer ─────────────────────────────────────
+  html+=`<div style="padding:16px 28px;display:flex;justify-content:flex-end;gap:8px">
+    <button class="btn btn-ghost" onclick="closeModal('summary-modal')">Close</button>
+  </div>`;
+
+  document.getElementById('summary-body').innerHTML=html;
+}
+
 
 function resetConnection() {
   if(confirm('This will clear saved connection. You will need to update the source file. Continue?')) {
