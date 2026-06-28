@@ -660,7 +660,8 @@
     };
 
     container.innerHTML = sorted.map((p, i) => {
-      const sc = scores.find(s=>s.pairing_id===p.id);
+      // Check current round scores first, then fall back to allScores
+      const sc = scores.find(s=>s.pairing_id===p.id) || allScores.find(s=>s.pairing_id===p.id);
       const aIsTeamA = p.team_a_id === teamAId;
 
       const leftP1 = aIsTeamA ? p.team_a_player1_id : p.team_b_player1_id;
@@ -682,6 +683,21 @@
       // Dim the whole row slightly when done
       const rowOpacity = isDone ? '.85' : '1';
 
+      // Score display — big in center when done, subtle dot when playing
+      const scoreDisplay = isPlaying
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
+            <div style="font-size:10px;color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:600;text-transform:uppercase;letter-spacing:.5px">playing</div>
+           </div>`
+        : `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+            <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
+            <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-style:italic">
+              <span style="font-size:${sizing.scoreFont};font-weight:900;color:${leftWon?colorA:'rgba(255,255,255,.4)'}">${leftGames}</span>
+              <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2)">–</span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;color:${rightWon?colorB:'rgba(255,255,255,.4)'}">${rightGames}</span>
+            </div>
+           </div>`;
+
       return `
       <div class="court-grid" style="border-left:4px solid ${colorA};border-right:4px solid ${colorB};opacity:${rowOpacity}">
         <!-- Team A side -->
@@ -690,26 +706,13 @@
             <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP1, nc)}</div>
             <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP2, nc)}</div>
           </div>
-          <div class="court-score ${isPlaying?'playing':leftWon?'winner':'loser'}"
-            style="color:${isPlaying?'rgba(255,255,255,.2)':leftWon?colorA:'rgba(255,255,255,.3)'};font-size:${isPlaying?sizing.courtLabel:sizing.scoreFont}">
-            ${isPlaying ? '●' : leftGames}
-          </div>
         </div>
 
-        <!-- Court label center -->
-        <div class="court-center">
-          <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
-            <div class="court-label" style="font-size:${sizing.courtLabel}">C${p.court_number}</div>
-            ${isDone ? `<div style="font-size:8px;color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">DONE</div>` : ''}
-          </div>
-        </div>
+        <!-- Score center -->
+        <div class="court-center">${scoreDisplay}</div>
 
         <!-- Team B side -->
         <div class="court-team team-b" style="padding:${sizing.padding}">
-          <div class="court-score ${isPlaying?'playing':rightWon?'winner':'loser'}"
-            style="color:${isPlaying?'rgba(255,255,255,.2)':rightWon?colorB:'rgba(255,255,255,.3)'};font-size:${isPlaying?sizing.courtLabel:sizing.scoreFont}">
-            ${isPlaying ? '●' : rightGames}
-          </div>
           <div class="court-players">
             <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP1, nc)}</div>
             <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP2, nc)}</div>
