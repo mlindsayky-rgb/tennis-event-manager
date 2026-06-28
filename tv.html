@@ -135,7 +135,7 @@
 
     .court-grid {
       display: grid;
-      grid-template-columns: 1fr 60px 1fr;
+      grid-template-columns: 1fr 180px 1fr;
       border-bottom: 1px solid var(--border);
       flex: 1;
       min-height: 0;
@@ -200,6 +200,8 @@
       justify-content: center;
       border-left: 1px solid var(--border);
       border-right: 1px solid var(--border);
+      padding: 0 12px;
+      overflow: visible;
     }
 
     .court-label {
@@ -690,16 +692,16 @@
 
       // Score display — big in center when done, subtle dot when playing
       const scoreDisplay = isPlaying
-        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
             <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
             <div style="font-size:10px;color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:600;text-transform:uppercase;letter-spacing:.5px">playing</div>
            </div>`
-        : `<div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+        : `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
             <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
-            <div style="display:flex;align-items:center;gap:6px;font-family:var(--font-display);font-style:italic">
-              <span style="font-size:${sizing.scoreFont};font-weight:900;color:${leftWon?colorA:'rgba(255,255,255,.4)'}">${leftGames}</span>
-              <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2)">–</span>
-              <span style="font-size:${sizing.scoreFont};font-weight:900;color:${rightWon?colorB:'rgba(255,255,255,.4)'}">${rightGames}</span>
+            <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-display);font-style:italic;width:100%">
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</span>
+              <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);flex-shrink:0">–</span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</span>
             </div>
            </div>`;
 
