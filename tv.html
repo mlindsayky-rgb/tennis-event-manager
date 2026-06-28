@@ -508,19 +508,17 @@
       return;
     }
 
-    // Fetch all rounds with pairing counts to find the real active one
+    // Fetch rounds ordered by round_number desc
     const { data: rounds } = await sb.from('rounds')
-      .select('*, pairings(id)')
+      .select('*')
       .eq('event_id', activeEventId)
       .order('round_number', { ascending: false });
 
-    // Pick the round that is not complete AND has the most pairings
-    // This avoids picking stale/empty round records from previous deployments
-    const incompleteRounds = (rounds||[]).filter(r => !r.is_complete && r.pairings?.length > 0);
-    const activeRound = incompleteRounds.sort((a,b) => b.pairings.length - a.pairings.length)[0]
-      || (rounds||[]).filter(r => r.pairings?.length > 0).sort((a,b) => b.round_number - a.round_number)[0]
-      || rounds?.[0];
-    console.log('Active round:', activeRound?.round_number, 'id:', activeRound?.id, 'pairings:', activeRound?.pairings?.length);
+    console.log('All rounds:', rounds?.map(r=>'R'+r.round_number+' id:'+r.id+' complete:'+r.is_complete));
+
+    // Pick highest round number that is not complete
+    const activeRound = (rounds||[]).find(r => !r.is_complete) || rounds?.[0];
+    console.log('Active round:', activeRound?.round_number, 'id:', activeRound?.id);
     if(!activeRound) {
       showEmpty('No rounds deployed yet');
       return;
