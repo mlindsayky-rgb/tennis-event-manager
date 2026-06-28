@@ -170,22 +170,24 @@
     }
 
     .player-name {
-      font-size: clamp(14px, 1.8vw, 26px);
+      font-size: clamp(14px, 1.8vw, 26px); /* overridden by JS per court count */
       font-weight: 700;
       color: white;
       line-height: 1.2;
       white-space: nowrap;
+      transition: font-size .3s;
     }
 
     .player-name.dim { color: var(--text-dim); font-weight: 500; }
 
     .court-score {
       font-family: var(--font-display);
-      font-size: clamp(28px, 4.5vw, 70px);
+      font-size: clamp(28px, 4.5vw, 70px); /* overridden by JS per court count */
       line-height: 1;
-      min-width: 50px;
+      min-width: 40px;
       flex-shrink: 0;
       font-style: italic;
+      transition: font-size .3s;
     }
 
     .court-score.winner { color: white; }
@@ -352,13 +354,13 @@
     <div class="team-score-block team-a" id="team-a-block">
       <div class="team-name" id="team-a-name">Team A</div>
       <div class="team-total-score" id="team-a-score">0</div>
-      <div class="team-score-label">games won</div>
+      <div class="team-score-label">total games won</div>
     </div>
     <div class="score-divider">·</div>
     <div class="team-score-block team-b" id="team-b-block">
       <div class="team-name" id="team-b-name">Team B</div>
       <div class="team-total-score" id="team-b-score">0</div>
-      <div class="team-score-label">games won</div>
+      <div class="team-score-label">total games won</div>
     </div>
   </div>
 
@@ -529,8 +531,9 @@
       TD:'Top Down',MIX:'Mixed Best Effort',SS:'Same Sex',OPEN:'Open Format'
     }[activeRound.format] || activeRound.format;
 
+    const totalRounds = rounds?.length || 1;
     document.getElementById('round-label').textContent =
-      `Round ${activeRound.round_number}  ·  ${fmtLabel}`;
+      `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${sorted.length} Courts`;
 
     // Fetch pairings + scores
     const { data: pairings } = await sb.from('pairings')
@@ -592,17 +595,15 @@
     const colorA = teamA?.color || '#E53E3E';
     const colorB = teamB?.color || '#3182CE';
 
-    // Calculate total games won
+    // Calculate CUMULATIVE totals across ALL rounds
     let totalA = 0, totalB = 0;
-    console.log('Calculating totals from', scores.length, 'scores, teamAId:', teamAId);
-    scores.forEach(sc => {
-      const p = sorted.find(x=>x.id===sc.pairing_id);
-      console.log('Score:', sc, '→ pairing found:', !!p);
+    (allScores||[]).forEach(sc => {
+      const p = (allPairings||[]).find(x=>x.id===sc.pairing_id);
       if(!p) return;
       if(p.team_a_id===teamAId) { totalA+=sc.team_a_games||0; totalB+=sc.team_b_games||0; }
       else { totalA+=sc.team_b_games||0; totalB+=sc.team_a_games||0; }
     });
-    console.log('Totals: A=', totalA, 'B=', totalB);
+    console.log('Cumulative totals: A=', totalA, 'B=', totalB, 'from', allScores?.length, 'scores');
 
     // Update score bar
     document.getElementById('team-a-name').textContent = teamA?.name || 'Team A';
@@ -624,11 +625,30 @@
       return;
     }
 
+    // Dynamic sizing based on number of courts
+    const courtCount = sorted.length;
+    const sizing = {
+      playerFont: courtCount <= 2 ? 'clamp(18px,2.8vw,36px)' :
+                  courtCount <= 3 ? 'clamp(16px,2.2vw,30px)' :
+                  courtCount <= 4 ? 'clamp(14px,1.8vw,26px)' :
+                  courtCount <= 5 ? 'clamp(12px,1.5vw,22px)' :
+                                    'clamp(11px,1.3vw,18px)',
+      scoreFont:  courtCount <= 2 ? 'clamp(36px,6vw,88px)' :
+                  courtCount <= 3 ? 'clamp(30px,5vw,72px)' :
+                  courtCount <= 4 ? 'clamp(26px,4.2vw,64px)' :
+                  courtCount <= 5 ? 'clamp(22px,3.5vw,54px)' :
+                                    'clamp(18px,3vw,46px)',
+      padding:    courtCount <= 2 ? '0 32px' :
+                  courtCount <= 4 ? '0 24px' :
+                                    '0 16px',
+      courtLabel: courtCount <= 2 ? '14px' :
+                  courtCount <= 4 ? '12px' : '10px',
+    };
+
     container.innerHTML = sorted.map((p, i) => {
       const sc = scores.find(s=>s.pairing_id===p.id);
       const aIsTeamA = p.team_a_id === teamAId;
 
-      // Left side (Team A perspective)
       const leftP1 = aIsTeamA ? p.team_a_player1_id : p.team_b_player1_id;
       const leftP2 = aIsTeamA ? p.team_a_player2_id : p.team_b_player2_id;
       const rightP1 = aIsTeamA ? p.team_b_player1_id : p.team_a_player1_id;
@@ -641,39 +661,44 @@
       }
 
       const leftWon = leftGames !== null && rightGames !== null && leftGames > rightGames;
-      const rightWon = leftGames !== null && rightGames !== null && rightGames > leftGames;
+      const rightWon = rightGames !== null && leftGames !== null && rightGames > leftGames;
       const isPlaying = leftGames === null;
+      const isDone = !isPlaying;
 
-      const nameClass = (winner) => winner ? 'player-name' : 'player-name dim';
+      // Dim the whole row slightly when done
+      const rowOpacity = isDone ? '.85' : '1';
 
       return `
-      <div class="court-grid" style="border-left:3px solid ${colorA}">
+      <div class="court-grid" style="border-left:4px solid ${colorA};border-right:4px solid ${colorB};opacity:${rowOpacity}">
         <!-- Team A side -->
-        <div class="court-team team-a">
+        <div class="court-team team-a" style="padding:${sizing.padding}">
           <div class="court-players" style="text-align:right">
-            <div class="${nameClass(leftWon)}">${shortName(leftP1, nc)}</div>
-            <div class="${nameClass(leftWon)}">${shortName(leftP2, nc)}</div>
+            <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP1, nc)}</div>
+            <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP2, nc)}</div>
           </div>
-          ${isPlaying
-            ? `<div class="court-score playing">●</div>`
-            : `<div class="court-score ${leftWon?'winner':'loser'}" style="color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</div>`
-          }
+          <div class="court-score ${isPlaying?'playing':leftWon?'winner':'loser'}"
+            style="color:${isPlaying?'rgba(255,255,255,.2)':leftWon?colorA:'rgba(255,255,255,.3)'};font-size:${isPlaying?sizing.courtLabel:sizing.scoreFont}">
+            ${isPlaying ? '●' : leftGames}
+          </div>
         </div>
 
-        <!-- Court label -->
+        <!-- Court label center -->
         <div class="court-center">
-          <div class="court-label">C${p.court_number}</div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+            <div class="court-label" style="font-size:${sizing.courtLabel}">C${p.court_number}</div>
+            ${isDone ? `<div style="font-size:8px;color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">DONE</div>` : ''}
+          </div>
         </div>
 
         <!-- Team B side -->
-        <div class="court-team team-b" style="border-right:3px solid ${colorB}">
-          ${isPlaying
-            ? `<div class="court-score playing">●</div>`
-            : `<div class="court-score ${rightWon?'winner':'loser'}" style="color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</div>`
-          }
+        <div class="court-team team-b" style="padding:${sizing.padding}">
+          <div class="court-score ${isPlaying?'playing':rightWon?'winner':'loser'}"
+            style="color:${isPlaying?'rgba(255,255,255,.2)':rightWon?colorB:'rgba(255,255,255,.3)'};font-size:${isPlaying?sizing.courtLabel:sizing.scoreFont}">
+            ${isPlaying ? '●' : rightGames}
+          </div>
           <div class="court-players">
-            <div class="${nameClass(rightWon)}">${shortName(rightP1, nc)}</div>
-            <div class="${nameClass(rightWon)}">${shortName(rightP2, nc)}</div>
+            <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP1, nc)}</div>
+            <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP2, nc)}</div>
           </div>
         </div>
       </div>`;
