@@ -528,9 +528,14 @@
       .select('*').eq('round_id', activeRound.id)
       .order('court_number');
 
-    const { data: scores } = pairings?.length
-      ? await sb.from('scores').select('*').in('pairing_id', pairings.map(p=>p.id))
-      : { data: [] };
+    let scores = [];
+    if(pairings?.length) {
+      const pairingIds = pairings.map(p=>p.id);
+      console.log('Fetching scores for pairing IDs:', pairingIds);
+      const { data: scData, error: scErr } = await sb.from('scores').select('*').in('pairing_id', pairingIds);
+      console.log('Scores result:', scData, 'Error:', scErr);
+      scores = scData || [];
+    }
 
     // Fetch player names
     const allPids = [...new Set(
@@ -580,12 +585,15 @@
 
     // Calculate total games won
     let totalA = 0, totalB = 0;
+    console.log('Calculating totals from', scores.length, 'scores, teamAId:', teamAId);
     scores.forEach(sc => {
       const p = sorted.find(x=>x.id===sc.pairing_id);
+      console.log('Score:', sc, '→ pairing found:', !!p);
       if(!p) return;
       if(p.team_a_id===teamAId) { totalA+=sc.team_a_games||0; totalB+=sc.team_b_games||0; }
       else { totalA+=sc.team_b_games||0; totalB+=sc.team_a_games||0; }
     });
+    console.log('Totals: A=', totalA, 'B=', totalB);
 
     // Update score bar
     document.getElementById('team-a-name').textContent = teamA?.name || 'Team A';
