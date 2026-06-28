@@ -2272,9 +2272,9 @@ async function loadRoundPairings(round,teams,eps,soCount){
     const taColor=tcolor(p.team_a_id),tbColor=tcolor(p.team_b_id);
     let scoreCell='';
     if(sc){
-      scoreCell='<div style="display:flex;align-items:center;gap:8px"><span style="font-weight:700">'+sc.team_a_games+' – '+sc.team_b_games+'</span><button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\')" >Edit</button></div>';
+      scoreCell='<div style="display:flex;align-items:center;gap:8px"><span style="font-weight:700">'+sc.team_a_games+' – '+sc.team_b_games+'</span><button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\')" >Edit</button></div>';
     } else if(!round.is_complete){
-      scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\')" >Score</button>';
+      scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\')" >Score</button>';
     }
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:13px;border:1px solid var(--border)">'+
       '<span style="font-weight:700;color:var(--ink-muted);min-width:64px;font-size:12px">Court '+p.court_number+'</span>'+
@@ -2742,10 +2742,10 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
 
   // Set modal content
   document.getElementById('score-modal-title').textContent=existing?'Edit Score':'Enter Score';
-  const isOpen=roundFormat==='OPEN';
-  document.getElementById('score-modal-sub').textContent=isOpen
-    ?`Winner earns ${_courtPts} director point${_courtPts!==1?'s':''}`
-    :'Court score — games won';
+  const isOpen = roundFormat === 'OPEN';
+  document.getElementById('score-modal-sub').textContent = isOpen
+    ? `Winner earns ${_courtPts} director point${_courtPts !== 1 ? 's' : ''}`
+    : 'Court score — games won';
 
   const aLabel=document.getElementById('score-team-a-label');
   aLabel.textContent=teamAName;
