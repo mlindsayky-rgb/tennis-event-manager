@@ -611,7 +611,7 @@
     return parts[0] + ' ' + parts[parts.length-1][0] + '.';
   }
 
-  function renderScoreboard(teams, pairings, scores, nc, sitouts, eps, allPairings, allScores) {
+  function renderScoreboard(teams, pairings, scoreMap, nc, sitouts, eps, allPairings, allScores) {
     const sorted = [...pairings].sort((a,b) => a.court_number - b.court_number);
 
     // Determine team A and B from first pairing
@@ -628,14 +628,11 @@
     (allScores||[]).forEach(sc => {
       const p = (allPairings||[]).find(x=>x.id===sc.pairing_id);
       if(!p) return;
-      // Check if this pairing's round is OPEN format
-      const isOpenPairing = sc.team_a_bonus!=null || sc.team_b_bonus!=null;
-      if(isOpenPairing && (sc.team_a_bonus||0)+(sc.team_b_bonus||0)>0){
-        // OPEN: use director bonus points
+      const isOpen = (sc.team_a_bonus||0)+(sc.team_b_bonus||0) > 0;
+      if(isOpen){
         if(p.team_a_id===teamAId){ totalA+=sc.team_a_bonus||0; totalB+=sc.team_b_bonus||0; }
         else { totalA+=sc.team_b_bonus||0; totalB+=sc.team_a_bonus||0; }
       } else {
-        // All other formats: use games won
         if(p.team_a_id===teamAId){ totalA+=sc.team_a_games||0; totalB+=sc.team_b_games||0; }
         else { totalA+=sc.team_b_games||0; totalB+=sc.team_a_games||0; }
       }
@@ -684,8 +681,8 @@
 
     container.innerHTML = sorted.map((p, i) => {
       // Check current round scores first, then fall back to allScores
-      const sc = scores.find(s=>s.pairing_id===p.id) || allScores.find(s=>s.pairing_id===p.id);
-      console.log(`C${p.court_number} pairing:${p.id} sc:`, sc ? `${sc.team_a_games}-${sc.team_b_games}` : 'NOT FOUND');
+      const sc = scoreMap[p.id];
+      console.log(`C${p.court_number}:`, sc ? `${sc.team_a_games}-${sc.team_b_games}` : 'no score');
       const aIsTeamA = p.team_a_id === teamAId;
 
       const leftP1 = aIsTeamA ? p.team_a_player1_id : p.team_b_player1_id;
