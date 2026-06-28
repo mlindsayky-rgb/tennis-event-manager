@@ -532,8 +532,9 @@
     }[activeRound.format] || activeRound.format;
 
     const totalRounds = rounds?.length || 1;
+    const courtCount = pairings?.length || 0;
     document.getElementById('round-label').textContent =
-      `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${sorted.length} Courts`;
+      `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${courtCount} Courts`;
 
     // Fetch pairings + scores
     const { data: pairings } = await sb.from('pairings')
