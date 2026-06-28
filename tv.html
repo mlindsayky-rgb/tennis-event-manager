@@ -519,7 +519,11 @@
     console.log('All rounds:', rounds?.map(r=>'R'+r.round_number+' id:'+r.id+' complete:'+r.is_complete));
 
     // Pick highest round number that is not complete
-    const activeRound = (rounds||[]).find(r => !r.is_complete) || rounds?.[0];
+    // Show the most recently SCORED round — if Round 2 has scores but Round 3 doesn't,
+    // show Round 2 (active play) not Round 3 (just deployed, no scores yet)
+    // Once Round 3 gets its first score, it takes over
+    const roundsDesc = (rounds||[]).sort((a,b)=>b.round_number-a.round_number);
+    const activeRound = roundsDesc[0]; // start with latest
     console.log('Active round:', activeRound?.round_number, 'id:', activeRound?.id);
     if(!activeRound) {
       showEmpty('No rounds deployed yet');
