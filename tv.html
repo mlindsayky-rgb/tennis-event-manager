@@ -378,9 +378,9 @@
   <!-- Footer -->
   <div id="footer">
     <div id="club-name">Tennis Event Manager</div>
-    <div id="refresh-indicator">
+    <div id="refresh-indicator" onclick="loadScoreboard()" style="cursor:pointer" title="Tap to refresh now">
       <div id="refresh-dot"></div>
-      <span id="refresh-text">Live</span>
+      <span id="refresh-text">Live · tap to refresh</span>
     </div>
   </div>
 </div>
@@ -404,7 +404,7 @@
   // ── STATE ─────────────────────────────────────────────
   let activeEventId = null;
   let refreshTimer = null;
-  const REFRESH_INTERVAL = 30000; // 30 seconds
+  const REFRESH_INTERVAL = 15000; // 15 seconds
 
   // ── CLOCK ─────────────────────────────────────────────
   function updateClock() {
@@ -678,8 +678,12 @@
 
     // Update refresh time
     const now = new Date();
+    let rh = now.getHours();
+    const ram = rh >= 12 ? 'PM' : 'AM';
+    rh = rh % 12 || 12;
+    const rm = now.getMinutes().toString().padStart(2,'0');
     document.getElementById('refresh-text').textContent =
-      `Updated ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+      `Updated ${rh}:${rm} ${ram} · tap to refresh`;
   }
 
   function showEmpty(msg) {
