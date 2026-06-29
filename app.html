@@ -3248,9 +3248,11 @@ function renderOCM(){
   const tps=ocmState.tps;
   const byTeam={};
   tps.forEach(tp=>{if(!byTeam[tp.team_id])byTeam[tp.team_id]=[];byTeam[tp.team_id].push(tp.event_player_id);});
+  // usedIds = ALL players currently assigned to ANY court slot (both teams)
   const usedIds=new Set(courts.flatMap(c=>[...c.teamA,...c.teamB].map(p=>p.id)));
+  // Bench = my team players NOT already on a court
   const myBench=ocmState.playing.filter(p=>byTeam[myTeam?.id]?.includes(p.id)&&!usedIds.has(p.id));
-  const sitOutBench=ocmState.sitout.filter(p=>byTeam[myTeam?.id]?.includes(p.id));
+  const sitOutBench=ocmState.sitout.filter(p=>byTeam[myTeam?.id]?.includes(p.id)&&!usedIds.has(p.id));
   const myBenchAll=[...myBench,...sitOutBench];
 
   html+=`<div style="background:${myColor}08;border:2px solid ${myColor}30;border-radius:14px;padding:14px;margin-bottom:14px">
@@ -3266,7 +3268,7 @@ function renderOCM(){
   // Opponent bench (only if override enabled)
   if(overrideEnabled){
     const oppBench=ocmState.playing.filter(p=>byTeam[oppTeam?.id]?.includes(p.id)&&!usedIds.has(p.id));
-    const oppSitout=ocmState.sitout.filter(p=>byTeam[oppTeam?.id]?.includes(p.id));
+    const oppSitout=ocmState.sitout.filter(p=>byTeam[oppTeam?.id]?.includes(p.id)&&!usedIds.has(p.id));
     const oppBenchAll=[...oppBench,...oppSitout];
     html+=`<div style="background:${oppColor}08;border:2px dashed ${oppColor}60;border-radius:14px;padding:14px">
       <div style="font-size:12px;font-weight:700;color:${oppColor};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
@@ -3407,11 +3409,19 @@ function ocmDoMove(pid,fromCourt,fromSlot,toCourt,toSlot){
     }
   }
 
-  // Add to target court
+  // Check player isn't already on another court
   const tc=parseInt(toCourt);
+  for(let ci=0;ci<courts.length;ci++){
+    if(ci===tc) continue;
+    ['teamA','teamB'].forEach(slot=>{
+      const idx=courts[ci][slot].findIndex(x=>x.id===player.id);
+      if(idx>-1) courts[ci][slot].splice(idx,1);
+    });
+  }
+  // Add to target court
   const toArr=courts[tc][toSlot];
   if(toArr.length>=2){
-    // Displace the first player to bench (they go back to available)
+    // Displace the first player to bench
     toArr.splice(0,1);
   }
   toArr.push(player);
@@ -3696,12 +3706,13 @@ async function showEventSummary() {
           ${teamTotals[team.id]?.wins||0}W – ${teamTotals[team.id]?.losses||0}L
           · ${teamTotals[team.id]?.gw||0} games</div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 40px 40px 80px 48px;gap:4px 8px;
+      <div style="display:grid;grid-template-columns:1fr 36px 36px 36px 80px 48px;gap:4px 8px;
         font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase;
         letter-spacing:.5px;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:4px">
         <span>Player</span>
         <span style="text-align:center">W</span>
         <span style="text-align:center">L</span>
+        <span style="text-align:center">T</span>
         <span style="text-align:center">Games</span>
         <span style="text-align:center">Sits</span>
       </div>`;
@@ -3711,7 +3722,7 @@ async function showEventSummary() {
     } else {
       players.forEach(p=>{
         const isMVP=p.wins===Math.max(...players.map(x=>x.wins))&&p.wins>0;
-        html+=`<div style="display:grid;grid-template-columns:1fr 40px 40px 80px 48px;
+        html+=`<div style="display:grid;grid-template-columns:1fr 36px 36px 36px 80px 48px;
           gap:4px 8px;padding:7px 0;border-bottom:1px solid var(--border);align-items:center">
           <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">
             ${isMVP?'<span style="font-size:12px">⭐</span>':''}
@@ -3721,6 +3732,7 @@ async function showEventSummary() {
           <div style="text-align:center;font-size:15px;font-weight:800;
             color:${p.wins>0?'var(--court)':'var(--ink-muted)'}">${p.wins}</div>
           <div style="text-align:center;font-size:15px;font-weight:600;color:var(--ink-muted)">${p.losses}</div>
+          <div style="text-align:center;font-size:14px;font-weight:600;color:${p.ties>0?'var(--clay)':'var(--ink-ghost)'}">${p.ties||0}</div>
           <div style="text-align:center;font-size:12px;color:var(--ink-muted);font-weight:500">${p.gw}–${p.gl}</div>
           <div style="text-align:center;font-size:13px;font-weight:600;color:${p.sits>1?'var(--clay)':'var(--ink-ghost)'}">
             ${p.sits||0}</div>
