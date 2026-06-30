@@ -548,14 +548,7 @@
     document.getElementById('round-label').textContent =
       `Round ${activeRound.round_number} of ${totalRounds}  ·  ${fmtLabel}  ·  ${pairings?.length||0} Courts`;
 
-    let scores = [];
-    if(pairings?.length) {
-      const pairingIds = pairings.map(p=>p.id);
-      const { data: scData, error: scErr } = await sb.from('scores').select('*').in('pairing_id', pairingIds);
-      if(scErr) console.error('Score fetch error:', scErr);
-      scores = scData || [];
-      console.log('Current round scores:', scores.length, 'for', pairingIds.length, 'pairings');
-    }
+    // scores for current round will be included in allScores below
 
     // Fetch player names
     const allPids = [...new Set(
@@ -593,15 +586,21 @@
           .in('pairing_id', allPairings.map(p=>p.id))
       : { data: [] };
 
+    // ── BUILD SCORE MAP ───────────────────────────────────
+    // Key: pairing_id → score row. Covers ALL rounds so court display never misses.
+    const scoreMap = {};
+    (allScores||[]).forEach(s => { scoreMap[s.pairing_id] = s; });
+    
+    // Log for debugging
+    console.log('scoreMap keys:', Object.keys(scoreMap));
+    console.log('current pairings:', (pairings||[]).map(p=>p.id));
+    (pairings||[]).forEach(p => {
+      const sc = scoreMap[p.id];
+      console.log(`C${p.court_number}: pairing=${p.id} → score=${sc?sc.team_a_games+'-'+sc.team_b_games:'NOT FOUND'}`);
+    });
+
     // ── RENDER ───────────────────────────────────────────
-    // Merge current round scores with allScores — current round takes priority
-    const allScoreIds = new Set((allScores||[]).map(s=>s.pairing_id));
-    const mergedScores = [
-      ...(scores||[]),
-      ...(allScores||[]).filter(s=>!(scores||[]).find(cs=>cs.pairing_id===s.pairing_id))
-    ];
-    console.log('Merged scores:', mergedScores.length, '(current:', (scores||[]).length, '+ additional from allScores:', mergedScores.length-(scores||[]).length, ')');
-    renderScoreboard(teams, pairings||[], mergedScores, nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
+    renderScoreboard(teams, pairings||[], scoreMap, nc, sitouts||[], eps||[], allPairings||[], allScores||[]);
   }
 
   function shortName(id, nc) {
