@@ -2208,7 +2208,8 @@ async function loadRounds(){
         '<div class="card-title">Round '+r.round_number+' — '+(r.format==='MIX'?'MIX (Best Effort)':r.format==='SS'?'SS (Same Sex)':r.format)+'</div>'+
         '<div style="display:flex;gap:8px">'+
           (!r.is_complete?'<button class="btn btn-sm btn-secondary" onclick="redeployRound('+r.round_number+')">↺ Redeploy</button>':'')+
-          '<span class="badge '+(r.is_complete?'badge-green':'badge-gold')+'">'+(r.is_complete?'Complete':'In Progress')+'</span>'+
+          (!r.is_complete?'<button class="btn btn-sm btn-primary" style="background:var(--court);border-color:var(--court)" onclick="endRound('+r.round_number+')">✓ End Round</button>':'')+
+          '<span class="badge '+(r.is_complete?'badge-green':'badge-gold')+'">'+(r.is_complete?'✓ Complete':'In Progress')+'</span>'+
         '</div>'+
       '</div>'+
       '<div class="card-body" id="rb-'+r.round_number+'"><div class="loading"><div class="spinner"></div></div></div>'+
@@ -2283,7 +2284,13 @@ async function loadRoundPairings(round,teams,eps,soCount){
       scoreCell+'</div>';
   }).join('');
   const soRow=soPlayers.length?'<div style="font-size:12px;color:var(--ink-muted);padding:6px 4px">Sitting out: '+soPlayers.map(p=>p.name+(p.total>1?' <span style="color:var(--clay);font-size:11px">('+p.total+'x)</span>':'')).join(', ')+'</div>':'';
-  el.innerHTML='<div style="display:flex;flex-direction:column;gap:8px">'+pairingRows+soRow+'</div>';
+  const endRoundRow = !round.is_complete
+    ? '<div style="padding:12px 4px 4px;border-top:1px solid var(--border);margin-top:8px;display:flex;align-items:center;justify-content:space-between">'+
+        '<span style="font-size:12px;color:var(--ink-muted)">All courts scored? Lock this round.</span>'+
+        '<button class="btn btn-sm btn-primary" style="background:var(--court);border-color:var(--court)" onclick="endRound('+round.round_number+')">✓ End Round '+round.round_number+'</button>'+
+      '</div>'
+    : '<div style="padding:8px 4px 0;font-size:12px;color:var(--court);font-weight:600">✓ Round '+round.round_number+' complete — scores locked</div>';
+  el.innerHTML='<div style="display:flex;flex-direction:column;gap:8px">'+pairingRows+soRow+endRoundRow+'</div>';
 }
 
 async function deployRound(roundNum){
@@ -3750,6 +3757,53 @@ async function showEventSummary() {
   document.getElementById('summary-body').innerHTML=html;
 }
 
+
+
+// ── END ROUND ─────────────────────────────────────────────
+async function endRound(roundNum) {
+  // Find this round
+  const {data:rounds} = await sb.from('rounds')
+    .select('id,round_number')
+    .eq('event_id', currentEvent.id)
+    .eq('round_number', roundNum);
+
+  if(!rounds?.length) { toast('Round not found','error'); return; }
+  const round = rounds[0];
+
+  // Check how many courts are scored
+  const {data:pairings} = await sb.from('pairings')
+    .select('id,court_number').eq('round_id', round.id);
+  const {data:scores} = pairings?.length
+    ? await sb.from('scores').select('pairing_id')
+        .in('pairing_id', pairings.map(p=>p.id))
+    : {data:[]};
+
+  const scoredCount = scores?.length || 0;
+  const totalCourts = pairings?.length || 0;
+  const unscoredCount = totalCourts - scoredCount;
+
+  // Warn if unscored courts remain
+  if(unscoredCount > 0) {
+    const proceed = confirm(
+      `Round ${roundNum} has ${unscoredCount} unscored court${unscoredCount>1?'s':''} of ${totalCourts}.
+
+End round anyway? Unscored courts will count as 0-0.`
+    );
+    if(!proceed) return;
+  } else {
+    if(!confirm(`End Round ${roundNum} and lock all scores?`)) return;
+  }
+
+  // Mark round complete
+  const {error} = await sb.from('rounds')
+    .update({is_complete: true})
+    .eq('id', round.id);
+
+  if(error) { toast('Error: ' + error.message, 'error'); return; }
+
+  toast(`Round ${roundNum} complete ✓`, 'success');
+  loadRounds();
+}
 
 function resetConnection() {
   if(confirm('This will clear saved connection. You will need to update the source file. Continue?')) {
