@@ -704,6 +704,10 @@
       const rowOpacity = isDone ? '.85' : '1';
 
       // Score display — big in center when done, subtle dot when playing
+      const goldenWinner = sc?.golden_game_winner || null;
+      const leftGolden = goldenWinner && ((aIsTeamA && goldenWinner==='A') || (!aIsTeamA && goldenWinner==='B'));
+      const rightGolden = goldenWinner && ((aIsTeamA && goldenWinner==='B') || (!aIsTeamA && goldenWinner==='A'));
+
       const scoreDisplay = isPlaying
         ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
             <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
@@ -712,9 +716,13 @@
         : `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
             <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
             <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-display);font-style:italic;width:100%">
-              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">
+                ${leftGolden?'🥇':''}${leftGames}
+              </span>
               <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);flex-shrink:0">–</span>
-              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">
+                ${rightGames}${rightGolden?'🥇':''}
+              </span>
             </div>
            </div>`;
 
