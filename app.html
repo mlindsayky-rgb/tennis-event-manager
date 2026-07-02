@@ -2295,10 +2295,10 @@ async function loadRoundPairings(round,teams,eps,soCount){
       const bRibbon=ggW==='B'?' 🥇':'';
       scoreCell='<div style="display:flex;align-items:center;gap:8px">'+
         '<span style="font-weight:700">'+sc.team_a_games+aRibbon+' – '+sc.team_b_games+bRibbon+'</span>'+
-        '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\','+(round.golden_game_enabled?'true':'false')+')" >Edit</button>'+
+        '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\',null,'+(round.golden_game_enabled?'true':'false')+')" >Edit</button>'+
         '</div>';
     } else if(!round.is_complete){
-      scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\','+(round.golden_game_enabled?'true':'false')+')" >Score</button>';
+      scoreCell='<button class="btn btn-sm btn-ghost" onclick="enterScore(\''+p.id+'\',\''+taName+'\',\''+tbName+'\',\''+taColor+'\',\''+tbColor+'\',\''+round.format+'\',null,'+(round.golden_game_enabled?'true':'false')+')" >Score</button>';
     }
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:13px;border:1px solid var(--border)">'+
       '<span style="font-weight:700;color:var(--ink-muted);min-width:64px;font-size:12px">Court '+p.court_number+'</span>'+
