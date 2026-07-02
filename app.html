@@ -2773,6 +2773,7 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
     goldenGame: goldenGame===true||goldenGame==='true',
     goldenWinner: existingBonus // 'A', 'B', or null
   };
+  console.log('enterScore goldenGame param:', goldenGame, '→ stored:', _scoreState.goldenGame);
 
   // Set modal content
   document.getElementById('score-modal-title').textContent=existing?'Edit Score':'Enter Score';
@@ -2803,6 +2804,7 @@ function updateGoldenGameDisplay(){
   const row=document.getElementById('golden-game-row');
   if(!row) return;
   const {goldenGame,goldenWinner,teamAColor,teamBColor,teamAName,teamBName}=_scoreState;
+  console.log('updateGoldenGameDisplay: goldenGame=',goldenGame,'row=',row);
   row.style.display = goldenGame ? 'flex' : 'none';
   if(!goldenGame) return;
 
