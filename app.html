@@ -1239,6 +1239,19 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <!-- Divider -->
       <div style="text-align:center;font-size:18px;font-weight:700;color:var(--ink-muted);margin-bottom:20px">vs</div>
 
+      <!-- Golden Game selector (shown only when enabled) -->
+      <div id="golden-game-row" style="display:none;align-items:center;justify-content:center;gap:12px;
+        margin-bottom:20px;padding:12px 16px;background:var(--surface);border-radius:10px;
+        border:1px solid var(--border)">
+        <button id="golden-btn-a" onclick="selectGoldenWinner('A')"
+          style="width:44px;height:44px;border-radius:8px;border:2px solid var(--border);
+          background:var(--white);font-size:18px;font-weight:900;cursor:pointer;transition:all .15s">A</button>
+        <span style="font-size:13px;font-weight:700;color:var(--ink-muted);letter-spacing:.5px">🥇 Golden Game Winner</span>
+        <button id="golden-btn-b" onclick="selectGoldenWinner('B')"
+          style="width:44px;height:44px;border-radius:8px;border:2px solid var(--border);
+          background:var(--white);font-size:18px;font-weight:900;cursor:pointer;transition:all .15s">B</button>
+      </div>
+
       <!-- Team B score -->
       <div style="margin-bottom:8px">
         <div id="score-team-b-label" style="font-size:13px;font-weight:700;margin-bottom:10px;text-align:center"></div>
@@ -2723,7 +2736,7 @@ async function redeployRound(roundNum){
   await deployRound(roundNum);
 }
 
-async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor, roundFormat, courtPts){
+async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor, roundFormat, courtPts, goldenGame){
   // Fetch existing score and pairing court_points
   const {data:existing}=await sb.from('scores')
     .select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
@@ -2736,6 +2749,8 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
     if(!roundFormat) roundFormat = pairing?.rounds?.format;
   }
 
+  // Fetch existing bonus to pre-fill golden game selection
+  const existingBonus = existing ? (existing.team_a_bonus>0?'A':existing.team_b_bonus>0?'B':null) : null;
   _scoreState={
     pairingId,
     a: existing?.team_a_games??0,
@@ -2744,7 +2759,9 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
     teamAColor: teamAColor||'var(--court)',
     teamBColor: teamBColor||'var(--sky)',
     roundFormat: roundFormat||'BG',
-    courtPts: _courtPts
+    courtPts: _courtPts,
+    goldenGame: goldenGame===true||goldenGame==='true',
+    goldenWinner: existingBonus // 'A', 'B', or null
   };
 
   // Set modal content
@@ -2763,7 +2780,39 @@ async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColo
   bLabel.style.color=_scoreState.teamBColor;
 
   updateScoreDisplay();
+  updateGoldenGameDisplay();
   openModal('score-modal');
+}
+
+function selectGoldenWinner(team){
+  _scoreState.goldenWinner = _scoreState.goldenWinner===team ? null : team;
+  updateGoldenGameDisplay();
+}
+
+function updateGoldenGameDisplay(){
+  const row=document.getElementById('golden-game-row');
+  if(!row) return;
+  const {goldenGame,goldenWinner,teamAColor,teamBColor,teamAName,teamBName}=_scoreState;
+  row.style.display = goldenGame ? 'flex' : 'none';
+  if(!goldenGame) return;
+
+  const btnA=document.getElementById('golden-btn-a');
+  const btnB=document.getElementById('golden-btn-b');
+  if(!btnA||!btnB) return;
+
+  // Style A button
+  const aSelected=goldenWinner==='A';
+  btnA.style.background = aSelected ? teamAColor : 'var(--white)';
+  btnA.style.color = aSelected ? 'white' : teamAColor;
+  btnA.style.borderColor = teamAColor;
+  btnA.title = teamAName;
+
+  // Style B button
+  const bSelected=goldenWinner==='B';
+  btnB.style.background = bSelected ? teamBColor : 'var(--white)';
+  btnB.style.color = bSelected ? 'white' : teamBColor;
+  btnB.style.borderColor = teamBColor;
+  btnB.title = teamBName;
 }
 
 function adjustScore(side, delta){
@@ -2788,13 +2837,15 @@ async function submitScore(){
   const isOpen=roundFormat==='OPEN';
   // For OPEN: bonus points go to the winner via team_a_bonus/team_b_bonus
   const aWon=a>b, bWon=b>a;
+  const {goldenGame,goldenWinner}=_scoreState;
   const scoreData={
     pairing_id:pairingId,
     team_a_games:a,
     team_b_games:b,
     entered_by_director_id:dirId,
-    team_a_bonus: isOpen&&aWon?courtPts:0,
-    team_b_bonus: isOpen&&bWon?courtPts:0,
+    team_a_bonus: (isOpen&&aWon?courtPts:0) + (goldenGame&&goldenWinner==='A'?1:0),
+    team_b_bonus: (isOpen&&bWon?courtPts:0) + (goldenGame&&goldenWinner==='B'?1:0),
+    golden_game_winner: goldenGame&&goldenWinner?goldenWinner:null,
   };
   const {error}=await sb.from('scores').upsert(scoreData,{onConflict:'pairing_id'});
   if(error){toast('Error: '+error.message,'error');return;}
