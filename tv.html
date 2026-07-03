@@ -582,7 +582,7 @@
       ? await sb.from('pairings').select('id,team_a_id,team_b_id').in('round_id', allRoundIds)
       : { data: [] };
     const { data: allScores } = allPairings?.length
-      ? await sb.from('scores').select('pairing_id,team_a_games,team_b_games')
+      ? await sb.from('scores').select('pairing_id,team_a_games,team_b_games,team_a_bonus,team_b_bonus,golden_game_winner')
           .in('pairing_id', allPairings.map(p=>p.id))
       : { data: [] };
 
