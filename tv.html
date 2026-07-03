@@ -704,7 +704,9 @@
       const rowOpacity = isDone ? '.85' : '1';
 
       // Score display — big in center when done, subtle dot when playing
-      const goldenWinner = sc?.golden_game_winner || null;
+      // Determine golden game winner — use stored field or infer from bonus
+      const goldenWinner = sc?.golden_game_winner 
+        || (sc?.team_a_bonus > 0 ? 'A' : sc?.team_b_bonus > 0 ? 'B' : null);
       const leftGolden = goldenWinner && ((aIsTeamA && goldenWinner==='A') || (!aIsTeamA && goldenWinner==='B'));
       const rightGolden = goldenWinner && ((aIsTeamA && goldenWinner==='B') || (!aIsTeamA && goldenWinner==='A'));
 
