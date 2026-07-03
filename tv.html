@@ -718,20 +718,20 @@
         : `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
             <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${p.court_number}</div>
             <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-display);font-style:italic;width:100%">
-              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">
-                ${leftGolden?'🥇':''}${leftGames}
-              </span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</span>
               <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);flex-shrink:0">–</span>
-              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">
-                ${rightGames}${rightGolden?'🥇':''}
-              </span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</span>
             </div>
            </div>`;
 
+      // Medal size scales with court count
+      const medalSize = courtCount<=2?'28px':courtCount<=4?'22px':'16px';
+
       return `
       <div class="court-grid" style="border-left:4px solid ${colorA};border-right:4px solid ${colorB};opacity:${rowOpacity}">
-        <!-- Team A side -->
+        <!-- Team A side — medal on far left if they won golden game -->
         <div class="court-team team-a" style="padding:${sizing.padding}">
+          ${leftGolden?`<div style="font-size:${medalSize};flex-shrink:0;margin-right:4px;align-self:center">🥇</div>`:'<div style="width:${medalSize};flex-shrink:0;margin-right:4px"></div>'}
           <div class="court-players" style="text-align:right">
             <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP1, nc)}</div>
             <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP2, nc)}</div>
@@ -741,12 +741,13 @@
         <!-- Score center -->
         <div class="court-center">${scoreDisplay}</div>
 
-        <!-- Team B side -->
+        <!-- Team B side — medal on far right if they won golden game -->
         <div class="court-team team-b" style="padding:${sizing.padding}">
           <div class="court-players">
             <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP1, nc)}</div>
             <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP2, nc)}</div>
           </div>
+          ${rightGolden?`<div style="font-size:${medalSize};flex-shrink:0;margin-left:4px;align-self:center">🥇</div>`:'<div style="width:${medalSize};flex-shrink:0;margin-left:4px"></div>'}
         </div>
       </div>`;
     }).join('');
