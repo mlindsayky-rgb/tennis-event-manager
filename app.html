@@ -1257,25 +1257,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
       </div>
 
-      <!-- Divider with optional golden game selector -->
-      <div style="text-align:center;margin-bottom:20px">
-        <div style="font-size:18px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">vs</div>
-        <div id="golden-game-row" style="display:none;align-items:center;justify-content:center;gap:14px">
-          <button id="golden-btn-a" onclick="selectGoldenWinner('A')"
-            style="width:48px;height:48px;border-radius:10px;border:2.5px solid var(--border);
-            background:var(--white);font-size:20px;font-weight:900;cursor:pointer;
-            transition:all .2s;line-height:1">A</button>
-          <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
-            <span style="font-size:18px;line-height:1">🥇</span>
-            <span style="font-size:11px;font-weight:700;color:var(--ink-muted);
-              text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Golden Game Winner</span>
-          </div>
-          <button id="golden-btn-b" onclick="selectGoldenWinner('B')"
-            style="width:48px;height:48px;border-radius:10px;border:2.5px solid var(--border);
-            background:var(--white);font-size:20px;font-weight:900;cursor:pointer;
-            transition:all .2s;line-height:1">B</button>
-        </div>
-      </div>
+      <!-- Divider -->
+      <div style="text-align:center;font-size:18px;font-weight:700;color:var(--ink-muted);margin-bottom:20px">vs</div>
 
       <!-- Team B score -->
       <div style="margin-bottom:8px">
@@ -1288,6 +1271,24 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <button onclick="adjustScore('b',1)"
             style="width:48px;height:48px;border-radius:50%;border:2px solid var(--border);background:var(--surface);font-size:24px;cursor:pointer;font-weight:300;color:var(--ink-mid);display:flex;align-items:center;justify-content:center">+</button>
         </div>
+      </div>
+
+      <!-- Golden Game selector (bottom of modal, shown only when enabled) -->
+      <div id="golden-game-row" style="display:none;align-items:center;justify-content:center;gap:14px;
+        margin-top:20px;padding:14px 16px;background:var(--surface);border-radius:12px;border:1px solid var(--border)">
+        <button id="golden-btn-a" onclick="selectGoldenWinner('A')"
+          style="width:52px;height:52px;border-radius:10px;border:2.5px solid var(--border);
+          background:var(--white);font-size:22px;font-weight:900;cursor:pointer;
+          transition:all .2s;line-height:1">A</button>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+          <span style="font-size:20px;line-height:1">🥇</span>
+          <span style="font-size:11px;font-weight:700;color:var(--ink-muted);
+            text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">Golden Game Winner</span>
+        </div>
+        <button id="golden-btn-b" onclick="selectGoldenWinner('B')"
+          style="width:52px;height:52px;border-radius:10px;border:2.5px solid var(--border);
+          background:var(--white);font-size:22px;font-weight:900;cursor:pointer;
+          transition:all .2s;line-height:1">B</button>
       </div>
     </div>
     <div class="modal-footer">
@@ -2770,7 +2771,7 @@ async function redeployRound(roundNum){
 async function enterScore(pairingId, teamAName, teamBName, teamAColor, teamBColor, roundFormat, courtPts, goldenGame){
   // Fetch existing score and pairing court_points
   const {data:existing}=await sb.from('scores')
-    .select('team_a_games,team_b_games').eq('pairing_id',pairingId).maybeSingle();
+    .select('team_a_games,team_b_games,team_a_bonus,team_b_bonus').eq('pairing_id',pairingId).maybeSingle();
   
   // If court_points not passed, fetch from pairing
   let _courtPts = courtPts||1;
@@ -2941,14 +2942,20 @@ async function loadTVPreview() {
   const teamA=teams?.find(t=>t.id===teamAId)||teams?.[0];
   const teamB=teams?.find(t=>t.id===teamBId)||teams?.[1];
 
-  // Calculate total games won per team
+  // Calculate total games won per team (including golden game bonus)
   const gamesA=(scores||[]).reduce((s,sc)=>{
     const p=sortedPairings.find(x=>x.id===sc.pairing_id);
-    return s+(p&&p.team_a_id===teamAId?(sc.team_a_games||0):0)+(p&&p.team_b_id===teamAId?(sc.team_b_games||0):0);
+    if(!p) return s;
+    const base = p.team_a_id===teamAId?(sc.team_a_games||0):p.team_b_id===teamAId?(sc.team_b_games||0):0;
+    const bonus = p.team_a_id===teamAId?(sc.team_a_bonus||0):p.team_b_id===teamAId?(sc.team_b_bonus||0):0;
+    return s+base+bonus;
   },0);
   const gamesB=(scores||[]).reduce((s,sc)=>{
     const p=sortedPairings.find(x=>x.id===sc.pairing_id);
-    return s+(p&&p.team_a_id===teamBId?(sc.team_a_games||0):0)+(p&&p.team_b_id===teamBId?(sc.team_b_games||0):0);
+    if(!p) return s;
+    const base = p.team_a_id===teamBId?(sc.team_a_games||0):p.team_b_id===teamBId?(sc.team_b_games||0):0;
+    const bonus = p.team_a_id===teamBId?(sc.team_a_bonus||0):p.team_b_id===teamBId?(sc.team_b_bonus||0):0;
+    return s+base+bonus;
   },0);
 
   // Update header score
@@ -3653,8 +3660,11 @@ async function showEventSummary() {
       tA.gw+=sc.team_a_bonus||0;
       tB.gw+=sc.team_b_bonus||0;
     } else {
-      tA.gw+=sc.team_a_games||0; tA.gl+=sc.team_b_games||0;
-      tB.gw+=sc.team_b_games||0; tB.gl+=sc.team_a_games||0;
+      // All other formats: games won + any golden game bonus
+      tA.gw+=(sc.team_a_games||0)+(sc.team_a_bonus||0);
+      tA.gl+=sc.team_b_games||0;
+      tB.gw+=(sc.team_b_games||0)+(sc.team_b_bonus||0);
+      tB.gl+=sc.team_a_games||0;
     }
     if(sc.team_a_games>sc.team_b_games){ tA.wins++; tB.losses++; }
     else if(sc.team_b_games>sc.team_a_games){ tB.wins++; tA.losses++; }
@@ -3758,7 +3768,8 @@ async function showEventSummary() {
       if(isOpenRound){
         rA+=sc.team_a_bonus||0; rB+=sc.team_b_bonus||0;
       } else {
-        rA+=sc.team_a_games||0; rB+=sc.team_b_games||0;
+        rA+=(sc.team_a_games||0)+(sc.team_a_bonus||0);
+        rB+=(sc.team_b_games||0)+(sc.team_b_bonus||0);
       }
     });
     const tA=teamMap[teamAId], tB=teamMap[teamBId];
