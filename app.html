@@ -1212,6 +1212,27 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- CSV IMPORT MODAL -->
+<div class="modal-overlay" id="import-modal">
+  <div class="modal" style="max-width:780px;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="import-modal-title">Import Players</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px" id="import-modal-sub"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal('import-modal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0;flex:1;overflow-y:auto" id="import-modal-body">
+      <div style="padding:32px;text-align:center;color:var(--ink-muted)">Reading file…</div>
+    </div>
+    <div class="modal-footer" id="import-modal-footer" style="display:none">
+      <button class="btn btn-ghost" onclick="closeModal('import-modal')">Cancel</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">Import Players</button>
+    </div>
+  </div>
+</div>
+
 <!-- SCORE ENTRY MODAL -->
 <div class="modal-overlay" id="score-modal">
   <div class="modal" style="max-width:420px">
@@ -3867,6 +3888,304 @@ End round anyway? Unscored courts will count as 0-0.`
   toast(`Round ${roundNum} complete ✓`, 'success');
   loadRounds();
 }
+
+
+// ══════════════════════════════════════════════
+// CSV / XLSX BULK IMPORT
+// ══════════════════════════════════════════════
+
+let _importRows = []; // parsed rows with status
+let _importClubOverride = null; // club to apply to all
+
+async function handleImportFile(input) {
+  const file = input.files[0];
+  if(!file) return;
+  input.value = ''; // reset so same file can be re-selected
+
+  document.getElementById('import-modal-title').textContent = 'Import Players';
+  document.getElementById('import-modal-sub').textContent = file.name;
+  document.getElementById('import-modal-body').innerHTML =
+    '<div style="padding:32px;text-align:center;color:var(--ink-muted)">Reading file…</div>';
+  document.getElementById('import-modal-footer').style.display = 'none';
+  openModal('import-modal');
+
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+
+    if(!rows.length) {
+      document.getElementById('import-modal-body').innerHTML =
+        '<div style="padding:32px;text-align:center;color:var(--clay)">No data found in file.</div>';
+      return;
+    }
+
+    // Normalize column names (case-insensitive, trim)
+    const norm = rows.map(r => {
+      const out = {};
+      Object.keys(r).forEach(k => { out[k.trim().toLowerCase()] = String(r[k]).trim(); });
+      return out;
+    });
+
+    // Detect columns
+    const sample = norm[0];
+    const keys = Object.keys(sample);
+
+    // Find name columns
+    const hasFirstLast = keys.some(k=>k.includes('first')) && keys.some(k=>k.includes('last'));
+    const hasFullName = keys.some(k=>k.includes('name')&&!k.includes('first')&&!k.includes('last'));
+
+    // Fetch existing clubs for matching
+    const {data:clubs} = await sb.from('clubs').select('id,name');
+    const clubCols = keys.filter(k => (clubs||[]).some(c=>k.includes(c.name.toLowerCase().split(' ')[0].toLowerCase())));
+
+    // Fetch all existing players for duplicate check
+    const {data:existingPlayers} = await sb.from('players').select('id,first_name,last_name,roster_name');
+
+    // Parse rows
+    const parsed = norm.map((r,i) => {
+      const firstName = r['first name'] || r['firstname'] || r['first'] || '';
+      const lastName = r['last name'] || r['lastname'] || r['last'] || '';
+      const fullName = hasFullName ? (r['name'] || r['full name'] || '') : `${firstName} ${lastName}`.trim();
+      const gender = (r['gender'] || r['sex'] || '').toUpperCase();
+      const ntrp = r['ntrp'] || r['rating'] || r['level'] || '';
+
+      // Club affiliation from columns
+      const clubAffils = {};
+      (clubs||[]).forEach(c => {
+        const ckey = keys.find(k=>k.includes(c.name.toLowerCase().split(' ')[0].toLowerCase()));
+        if(ckey) clubAffils[c.id] = r[ckey]==='1'||r[ckey].toLowerCase()==='yes'||r[ckey].toLowerCase()==='x';
+      });
+
+      // Duplicate check - exact match
+      const exactMatch = (existingPlayers||[]).find(p =>
+        p.roster_name?.toLowerCase() === fullName.toLowerCase() ||
+        (p.first_name?.toLowerCase()===firstName.toLowerCase() && p.last_name?.toLowerCase()===lastName.toLowerCase())
+      );
+
+      // Fuzzy match (share first name + similar last name)
+      const fuzzyMatches = exactMatch ? [] : (existingPlayers||[]).filter(p => {
+        if(!firstName || !lastName) return false;
+        const pFirst = (p.first_name||'').toLowerCase();
+        const pLast = (p.last_name||'').toLowerCase();
+        return pFirst===firstName.toLowerCase() && pLast.slice(0,3)===lastName.toLowerCase().slice(0,3) && pLast!==lastName.toLowerCase();
+      });
+
+      return {
+        idx: i,
+        firstName, lastName, fullName,
+        gender: gender==='M'||gender==='MALE'?'MALE':gender==='F'||gender==='FEMALE'?'FEMALE':'',
+        ntrp: ntrp && !isNaN(parseFloat(ntrp)) ? parseFloat(ntrp) : null,
+        clubAffils,
+        exactMatch,
+        fuzzyMatches,
+        status: exactMatch ? 'duplicate' : 'new', // 'new', 'duplicate', 'skip', 'force-new'
+        errors: [
+          ...(!fullName ? ['Missing name'] : []),
+          ...((!gender||gender==='')&&!r['gender'] ? ['Missing gender'] : []),
+        ]
+      };
+    });
+
+    _importRows = parsed;
+    _importClubOverride = null;
+
+    await renderImportPreview(clubs||[]);
+  } catch(e) {
+    document.getElementById('import-modal-body').innerHTML =
+      `<div style="padding:32px;text-align:center;color:var(--clay)">Error reading file: ${e.message}</div>`;
+  }
+}
+
+async function renderImportPreview(clubs) {
+  const {data:fetchedClubs} = clubs.length ? {data:clubs} : await sb.from('clubs').select('id,name');
+  const cl = fetchedClubs||[];
+
+  const newCount = _importRows.filter(r=>r.status==='new'||r.status==='force-new').length;
+  const dupCount = _importRows.filter(r=>r.status==='duplicate').length;
+  const skipCount = _importRows.filter(r=>r.status==='skip').length;
+  const errCount = _importRows.filter(r=>r.errors.length>0).length;
+
+  let html = '';
+
+  // Club prompt if no club columns detected
+  const hasClubCols = _importRows.some(r=>Object.keys(r.clubAffils).length>0&&Object.values(r.clubAffils).some(v=>v));
+  if(!hasClubCols && !_importClubOverride) {
+    html += `<div style="padding:16px 20px;background:var(--surface);border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">Which club are these players from?</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${cl.map(c=>`<button class="btn btn-sm btn-ghost" onclick="setImportClub('${c.id}','${c.name}')">${c.name}</button>`).join('')}
+        <button class="btn btn-sm btn-ghost" onclick="setImportClub('mixed','Mixed / Multiple')">Mixed / Multiple clubs</button>
+      </div>
+    </div>`;
+  } else if(_importClubOverride) {
+    html += `<div style="padding:10px 20px;background:var(--court)18;border-bottom:1px solid var(--border);
+      display:flex;align-items:center;justify-content:space-between">
+      <span style="font-size:13px;font-weight:600">All players → <strong>${_importClubOverride.name}</strong></span>
+      <button class="btn btn-sm btn-ghost" style="font-size:11px" onclick="setImportClub(null,null)">Change</button>
+    </div>`;
+  }
+
+  // Summary bar
+  html += `<div style="padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);
+    display:flex;gap:16px;flex-wrap:wrap;font-size:13px">
+    <span style="color:var(--court);font-weight:700">✓ ${newCount} new</span>
+    ${dupCount?`<span style="color:var(--clay);font-weight:700">⚠ ${dupCount} duplicates</span>`:''}
+    ${skipCount?`<span style="color:var(--ink-muted)">✗ ${skipCount} skipped</span>`:''}
+    ${errCount?`<span style="color:var(--clay)">! ${errCount} errors</span>`:''}
+    <span style="color:var(--ink-muted)">${_importRows.length} total rows</span>
+  </div>`;
+
+  // Table
+  html += `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead>
+      <tr style="background:var(--surface);border-bottom:2px solid var(--border)">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase">Name</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase">Gender</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase">NTRP</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase">Club</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--ink-muted);font-weight:700;text-transform:uppercase">Status</th>
+      </tr>
+    </thead>
+    <tbody>`;
+
+  _importRows.forEach(r => {
+    const isDup = r.status==='duplicate';
+    const isSkip = r.status==='skip';
+    const isForceNew = r.status==='force-new';
+    const hasErr = r.errors.length>0;
+
+    const clubDisplay = _importClubOverride?.id && _importClubOverride.id!=='mixed'
+      ? _importClubOverride.name
+      : Object.entries(r.clubAffils).filter(([,v])=>v).map(([id])=>cl.find(c=>c.id===id)?.name||id).join(', ') || '—';
+
+    const genderDisplay = r.gender==='MALE'?'♂ M':r.gender==='FEMALE'?'♀ F':'<span style="color:var(--clay)">?</span>';
+
+    let statusCell = '';
+    if(isSkip) {
+      statusCell = `<span style="color:var(--ink-muted)">✗ Skip</span>
+        <button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;margin-left:4px" onclick="setRowStatus(${r.idx},'new')">Undo</button>`;
+    } else if(isDup) {
+      statusCell = `<div style="font-size:11px;color:var(--clay);margin-bottom:4px">
+          ⚠ Exists: <strong>${r.exactMatch.roster_name}</strong>
+        </div>
+        <div style="display:flex;gap:4px;justify-content:center">
+          <button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px" onclick="setRowStatus(${r.idx},'skip')">Skip</button>
+          <button class="btn btn-sm btn-secondary" style="font-size:10px;padding:2px 6px" onclick="setRowStatus(${r.idx},'force-new')">New Person</button>
+        </div>`;
+    } else if(isForceNew) {
+      statusCell = `<span style="color:var(--court);font-size:11px">✓ New person</span>
+        <button class="btn btn-sm btn-ghost" style="font-size:10px;padding:2px 6px;margin-left:4px" onclick="setRowStatus(${r.idx},'duplicate')">Undo</button>`;
+    } else if(hasErr) {
+      statusCell = `<span style="color:var(--clay);font-size:11px">${r.errors.join(', ')}</span>`;
+    } else {
+      statusCell = `<span style="color:var(--court);font-size:11px">✓ New</span>`;
+    }
+
+    const rowBg = isSkip ? 'opacity:.4;' : isDup ? 'background:#fff3cd;' : '';
+
+    html += `<tr style="${rowBg}border-bottom:1px solid var(--border)">
+      <td style="padding:10px 12px;font-weight:600">${r.fullName||'<span style="color:var(--clay)">Missing</span>'}</td>
+      <td style="padding:10px 12px;text-align:center">${genderDisplay}</td>
+      <td style="padding:10px 12px;text-align:center">${r.ntrp||'NR'}</td>
+      <td style="padding:10px 12px">${clubDisplay}</td>
+      <td style="padding:10px 12px;text-align:center">${statusCell}</td>
+    </tr>`;
+
+    // Show fuzzy matches as sub-row
+    if(r.fuzzyMatches.length) {
+      html += `<tr style="background:var(--surface)"><td colspan="5" style="padding:4px 12px 8px;font-size:11px;color:var(--ink-muted)">
+        Similar names found: ${r.fuzzyMatches.map(m=>m.roster_name).join(', ')} — is this the same person?
+        <button class="btn btn-sm btn-ghost" style="font-size:10px;padding:1px 6px;margin-left:6px" onclick="setRowStatus(${r.idx},'skip')">Skip (same person)</button>
+      </td></tr>`;
+    }
+  });
+
+  html += `</tbody></table>`;
+
+  document.getElementById('import-modal-body').innerHTML = html;
+  document.getElementById('import-modal-footer').style.display = 'flex';
+
+  // Update confirm button
+  const importable = _importRows.filter(r=>r.status==='new'||r.status==='force-new').length;
+  document.getElementById('import-confirm-btn').textContent = `Import ${importable} Player${importable!==1?'s':''}`;
+  document.getElementById('import-confirm-btn').disabled = importable===0;
+}
+
+function setImportClub(id, name) {
+  _importClubOverride = id ? {id, name} : null;
+  sb.from('clubs').select('id,name').then(({data})=>renderImportPreview(data||[]));
+}
+
+function setRowStatus(idx, status) {
+  const row = _importRows.find(r=>r.idx===idx);
+  if(row) { row.status=status; }
+  sb.from('clubs').select('id,name').then(({data})=>renderImportPreview(data||[]));
+}
+
+async function confirmImport() {
+  const btn = document.getElementById('import-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+
+  const toImport = _importRows.filter(r=>r.status==='new'||r.status==='force-new');
+  let created = 0, failed = 0;
+
+  for(const r of toImport) {
+    try {
+      // Split full name if no first/last
+      let fn = r.firstName, ln = r.lastName;
+      if(!fn && r.fullName) {
+        const parts = r.fullName.trim().split(/\s+/);
+        fn = parts[0];
+        ln = parts.slice(1).join(' ');
+      }
+
+      // Create player
+      const {data:player, error:pErr} = await sb.from('players').insert({
+        first_name: fn,
+        last_name: ln,
+        roster_name: r.fullName,
+        gender: r.gender||'MALE',
+      }).select().single();
+
+      if(pErr) { console.error('Player insert error:', pErr); failed++; continue; }
+
+      // Save NTRP rating if provided
+      if(r.ntrp) {
+        await sb.from('player_ratings').insert({
+          player_id: player.id,
+          source: 'NTRP',
+          designation: 'E',
+          value: String(r.ntrp),
+          fetched_at: new Date().toISOString()
+        });
+      }
+
+      // Club affiliations
+      const clubsToAdd = [];
+      if(_importClubOverride?.id && _importClubOverride.id!=='mixed') {
+        clubsToAdd.push(_importClubOverride.id);
+      } else {
+        Object.entries(r.clubAffils).filter(([,v])=>v).forEach(([id])=>clubsToAdd.push(id));
+      }
+      for(const clubId of clubsToAdd) {
+        await sb.from('player_clubs').insert({player_id:player.id, club_id:clubId}).maybeSingle();
+      }
+
+      created++;
+    } catch(e) {
+      console.error('Import error for', r.fullName, e);
+      failed++;
+    }
+  }
+
+  toast(`Imported ${created} player${created!==1?'s':''}${failed?` (${failed} failed)`:''}`, created>0?'success':'error');
+  closeModal('import-modal');
+  loadRosterTab();
+}
+
 
 function resetConnection() {
   if(confirm('This will clear saved connection. You will need to update the source file. Continue?')) {
