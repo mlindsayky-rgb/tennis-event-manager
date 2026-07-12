@@ -1035,7 +1035,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <div class="section-sub" id="roster-count">Tap + Add Players to build your roster</div>
         </div>
         <div style="display:flex;gap:10px">
-          <button class="btn btn-primary" onclick="openModal('add-players-modal')">+ Add Players</button>
+          <button class="btn btn-primary" onclick="openModal('add-players-modal');updatePlayerCounter()">+ Add Players</button>
         </div>
       </div>
       <div id="roster-empty-hint" style="margin-bottom:16px;padding:16px;background:var(--sky-light);border-radius:var(--r);border:1px solid #90CAF9;font-size:13px;color:var(--sky);display:none">
@@ -1133,6 +1133,16 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <button class="modal-close" onclick="closeModal('add-players-modal')">×</button>
     </div>
     <div class="modal-body">
+      <!-- Sticky counter bar -->
+      <div id="add-players-counter" style="display:flex;align-items:center;justify-content:space-between;
+        background:var(--surface);border-radius:10px;padding:10px 14px;margin-bottom:14px;
+        border:1px solid var(--border)">
+        <div>
+          <span style="font-size:22px;font-weight:900;color:var(--court)" id="counter-selected">0</span>
+          <span style="font-size:13px;color:var(--ink-muted);margin-left:6px">players selected</span>
+        </div>
+        <div id="counter-message" style="font-size:13px;color:var(--ink-muted);text-align:right"></div>
+      </div>
       <div style="margin-bottom:12px;display:flex;gap:8px">
         <input class="form-input" id="add-players-search" type="text" placeholder="Search by name…" oninput="searchAddPlayers(this.value)">
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('add-players-search').value='';searchAddPlayers('')">Clear</button>
@@ -1140,7 +1150,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
         Showing players from your club. Search to find anyone in the global pool.
       </div>
-      <div id="add-players-list" style="max-height:400px;overflow-y:auto">
+      <div id="add-players-list" style="max-height:360px;overflow-y:auto">
         <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
@@ -1208,6 +1218,25 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div class="modal-body" style="padding:0" id="summary-body">
       <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- RD OVERRIDE MODAL -->
+<div class="modal-overlay" id="rd-override-modal" style="padding:0;align-items:stretch">
+  <div style="display:flex;flex-direction:column;width:100%;max-width:100%;height:100%;background:var(--bg)">
+    <div style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--white)">
+      <div>
+        <div style="font-family:var(--font-display);font-size:20px;font-weight:400">Round <span id="rdo-round-num">1</span> — Override Lineup</div>
+        <div style="font-size:12px;color:var(--ink-muted);margin-top:2px">Move players between courts. Only players in this round can be reassigned.</div>
+      </div>
+      <button onclick="closeModal('rd-override-modal')" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--ink-muted)">×</button>
+    </div>
+    <div id="rdo-body" style="flex:1;overflow-y:auto;padding:16px 20px"></div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);background:var(--white);display:flex;align-items:center;gap:12px">
+      <button class="btn btn-ghost" onclick="closeModal('rd-override-modal')">Cancel</button>
+      <div id="rdo-status" style="flex:1;font-size:13px;color:var(--ink-muted);text-align:center"></div>
+      <button class="btn btn-primary" id="rdo-confirm-btn" onclick="confirmRoundOverride()">✓ Save New Lineup</button>
     </div>
   </div>
 </div>
@@ -1677,7 +1706,7 @@ async function loadRoster() {
       <div class="empty-icon">👥</div>
       <div class="empty-title">No players yet</div>
       <div class="empty-sub">Click "+ Add Players" to add players from your club roster</div>
-      <button class="btn btn-primary" onclick="openModal('add-players-modal')">+ Add Players</button>
+      <button class="btn btn-primary" onclick="openModal('add-players-modal');updatePlayerCounter()">+ Add Players</button>
     </div>`;
     return;
   }
@@ -1687,29 +1716,50 @@ async function loadRoster() {
     const p=ep.players;
     const r=rm[ep.player_id]||{};
     const ntrp=r['NTRP'],trr=r['TRR']||r['UTR'];
+    const isSub = p.roster_name?.startsWith('SUB - ');
+
+    // SUB players get special styling
+    if(isSub){
+      return '<tr style="opacity:.55;background:var(--surface)">'+
+        '<td style="font-size:16px;width:30px">🔄</td>'+
+        '<td><strong style="color:var(--ink-muted)">'+p.roster_name+'</strong>'+
+          '<span style="font-size:10px;color:var(--ink-ghost);margin-left:6px;text-transform:uppercase;letter-spacing:.5px"> Emergency Sub</span>'+
+        '</td>'+
+        '<td style="font-size:13px;color:var(--ink-ghost)">NR</td>'+
+        '<td style="color:var(--ink-ghost)">—</td>'+
+        '<td>'+
+          (ep.status==='INACTIVE'
+            ? '<button class="btn btn-sm btn-secondary" onclick="activateSub(\''+ep.id+'\')" style="font-size:11px">Activate</button>'
+            : '<span class="badge badge-green">Active</span>'+
+              '<button class="btn btn-sm btn-ghost" onclick="deactivateSub(\''+ep.id+'\')" style="font-size:10px;margin-left:4px">Bench</button>'
+          )+
+        '</td>'+
+        '<td></td>'+
+      '</tr>';
+    }
+
     const statusColor = ep.status==='ACTIVE'?'badge-green':ep.status==='OUT'?'badge-red':'badge-gray';
-    return `<tr>
-      <td style="font-size:16px;width:30px">${p.gender==='MALE'?'♂':'♀'}</td>
-      <td><strong>${p.roster_name}</strong></td>
-      <td style="font-size:13px" id="ntrp-cell-${ep.id}">
-        ${ntrp
-          ? parseFloat(ntrp.value).toFixed(1)+(ntrp.designation?` <span style="color:var(--ink-muted)">${ntrp.designation}</span>`:'')
-          : `<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px;color:var(--court);border-color:var(--court)"
-               onclick="showNTRPInput('${ep.id}','${escQ(p.roster_name)}')">+ NTRP</button>`
-        }
-      </td>
-      <td style="font-size:13px">${trr?parseFloat(trr.value).toFixed(3):'<span style="color:var(--ink-ghost)">—</span>'}</td>
-      <td>
-        <select class="form-select" style="font-size:12px;padding:4px 8px;width:auto" onchange="updateEPStatus('${ep.id}',this.value)">
-          <option value="ACTIVE" ${ep.status==='ACTIVE'?'selected':''}>Active</option>
-          <option value="OUT" ${ep.status==='OUT'?'selected':''}>Out</option>
-          <option value="PENDING" ${ep.status==='PENDING'?'selected':''}>Pending</option>
-        </select>
-      </td>
-      <td><button class="btn btn-sm btn-ghost" style="color:var(--clay);padding:4px 8px" onclick="removeEP('${ep.id}','${escQ(p.roster_name)}')">✕</button></td>
-    </tr>`;
+    return '<tr>'+
+      '<td style="font-size:16px;width:30px">'+(p.gender==='MALE'?'♂':'♀')+'</td>'+
+      '<td><strong>'+p.roster_name+'</strong></td>'+
+      '<td style="font-size:13px" id="ntrp-cell-'+ep.id+'">'+
+        (ntrp
+          ? parseFloat(ntrp.value).toFixed(1)+(ntrp.designation?' <span style="color:var(--ink-muted)">'+ntrp.designation+'</span>':'')
+          : '<button class="btn btn-sm btn-ghost" style="font-size:11px;padding:3px 8px;color:var(--court);border-color:var(--court)" onclick="showNTRPInput(\''+ep.id+'\',\''+escQ(p.roster_name)+'\')">+ NTRP</button>'
+        )+
+      '</td>'+
+      '<td style="font-size:13px">'+(trr?parseFloat(trr.value).toFixed(3):'<span style="color:var(--ink-ghost)">—</span>')+'</td>'+
+      '<td>'+
+        '<select class="form-select" style="font-size:12px;padding:4px 8px;width:auto" onchange="updateEPStatus(\''+ep.id+'\',this.value)">'+
+          '<option value="ACTIVE" '+(ep.status==='ACTIVE'?'selected':'')+'>Active</option>'+
+          '<option value="OUT" '+(ep.status==='OUT'?'selected':'')+'>Out</option>'+
+          '<option value="PENDING" '+(ep.status==='PENDING'?'selected':'')+'>Pending</option>'+
+        '</select>'+
+      '</td>'+
+      '<td><button class="btn btn-sm btn-ghost" style="color:var(--clay);padding:4px 8px" onclick="removeEP(\''+ep.id+'\',\''+escQ(p.roster_name)+'\')">✕</button></td>'+
+    '</tr>';
   }).join('')+'</tbody></table>';
-  if(currentEvent.status==='DRAFT'&&eventRoster.length>0) setEventStatus('ROSTER_LOADED');
+  if(currentEvent.status==='DRAFT'&&eventRoster.filter(e=>!e.players?.roster_name?.startsWith('SUB - ')).length>0) setEventStatus('ROSTER_LOADED');
 }
 
 async function updateEPStatus(epId,status){
@@ -1755,6 +1805,66 @@ async function addEP(pid,name,btn){
   btn.textContent='✓ Added';
   await loadRoster();
   searchAddPlayers(document.querySelector('#add-players-modal input')?.value||'');
+  updatePlayerCounter();
+}
+
+
+// ── SUB PLAYER MANAGEMENT ────────────────────────────
+async function activateSub(epId){
+  // Ask for the sub's real name
+  const ep = eventRoster.find(e=>e.id===epId);
+  const teamName = ep?.players?.roster_name?.replace('SUB - ','') || '';
+  const subName = prompt(`What is the sub's name? (${teamName} team)`, '');
+  if(subName===null) return; // cancelled
+
+  // Update status
+  const {error}=await sb.from('event_players').update({status:'ACTIVE'}).eq('id',epId);
+  if(error){toast('Error: '+error.message,'error');return;}
+
+  // Update player name if provided
+  if(subName.trim()) {
+    const parts = subName.trim().split(' ');
+    const fn = parts[0];
+    const ln = parts.slice(1).join(' ') || teamName;
+    const rosterName = subName.trim();
+    await sb.from('players').update({
+      first_name: fn,
+      last_name: ln,
+      roster_name: rosterName
+    }).eq('id', ep.player_id);
+  }
+
+  toast((subName.trim()||'Sub')+' activated for '+teamName+' 🎾','success');
+  loadRoster();
+}
+
+async function deactivateSub(epId){
+  const {error}=await sb.from('event_players').update({status:'INACTIVE'}).eq('id',epId);
+  if(error){toast('Error: '+error.message,'error');return;}
+  toast('Sub player benched','default');
+  loadRoster();
+}
+
+function updatePlayerCounter(){
+  // Count players currently in roster (active)
+  const count = (eps||[]).filter(e=>e.status==='ACTIVE'&&!e.players?.roster_name?.startsWith('SUB - ')).length;
+  const el = document.getElementById('counter-selected');
+  const msg = document.getElementById('counter-message');
+  if(!el) return;
+  el.textContent = count;
+
+  // Courts hint — suggest how many courts they can fill
+  const courts2 = Math.floor(count/4);
+  const msg2 = count < 4
+    ? 'Add at least 4 to play'
+    : `fills ${courts2} court${courts2!==1?'s':''} (${count} players)`;
+
+  if(msg) msg.textContent = msg2;
+
+  // Color the count based on whether it divides evenly into courts
+  if(el){
+    el.style.color = count>0&&count%4===0 ? 'var(--court)' : count>0 ? 'var(--clay)' : 'var(--ink-muted)';
+  }
 }
 
 // ── TEAM BUILDER ─────────────────────────────
@@ -1820,7 +1930,7 @@ async function generateTeams(){
   const {data:ratings}=await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id',pids);
   const rm=buildRatingMap(ratings||[]);
 
-  let players=eventRoster.filter(ep=>ep.status==='ACTIVE').map(ep=>({
+  let players=eventRoster.filter(ep=>ep.status==='ACTIVE'&&!ep.players?.roster_name?.startsWith('SUB - ')).map(ep=>({
     ...ep.players, event_player_id:ep.id, ratings:rm[ep.player_id]||{}
   }));
 
@@ -2100,6 +2210,43 @@ async function lockTeams(){
       if(error) throw error;
       if(t.players.length) await sb.from('team_players').insert(t.players.map(p=>({team_id:nt.id,event_player_id:p.event_player_id})));
       t.id=nt.id;
+
+      // Create a SUB placeholder player for this team
+      // First check if a SUB player already exists for this team name
+      const subName = `SUB - ${t.name}`;
+      let subPlayerId = null;
+      const {data:existingSub} = await sb.from('players')
+        .select('id').eq('roster_name', subName).maybeSingle();
+
+      if(existingSub) {
+        subPlayerId = existingSub.id;
+      } else {
+        const {data:newSub} = await sb.from('players').insert({
+          first_name: 'SUB',
+          last_name: t.name,
+          roster_name: subName,
+          gender: 'MALE', // neutral default, director can change
+        }).select().single();
+        if(newSub) subPlayerId = newSub.id;
+      }
+
+      // Add SUB as INACTIVE event_player for this event
+      if(subPlayerId) {
+        // Check if already in this event
+        const {data:existingEP} = await sb.from('event_players')
+          .select('id').eq('event_id',currentEvent.id).eq('player_id',subPlayerId).maybeSingle();
+        if(!existingEP) {
+          const {data:subEP} = await sb.from('event_players').insert({
+            event_id: currentEvent.id,
+            player_id: subPlayerId,
+            status: 'INACTIVE'
+          }).select().single();
+          // Add to team_players too so they show on the team
+          if(subEP) {
+            await sb.from('team_players').insert({team_id:nt.id, event_player_id:subEP.id});
+          }
+        }
+      }
     }
     // Sync num_teams on event record
     await sb.from('events').update({num_teams:teamData.length}).eq('id',currentEvent.id);
@@ -2247,6 +2394,7 @@ async function loadRounds(){
         '<div class="card-title">Round '+r.round_number+' — '+(r.format==='MIX'?'MIX (Best Effort)':r.format==='SS'?'SS (Same Sex)':r.format)+'</div>'+
         '<div style="display:flex;gap:8px">'+
           (!r.is_complete?'<button class="btn btn-sm btn-secondary" onclick="redeployRound('+r.round_number+')">↺ Redeploy</button>':'')+
+          (!r.is_complete?'<button class="btn btn-sm btn-ghost" style="border-color:var(--clay);color:var(--clay)" onclick="openRoundOverride('+r.round_number+')">⚙ RD Override</button>':'')+
           (!r.is_complete?'<button class="btn btn-sm btn-primary" style="background:var(--court);border-color:var(--court)" onclick="endRound('+r.round_number+')">✓ End Round</button>':'')+
           '<span class="badge '+(r.is_complete?'badge-green':'badge-gold')+'">'+(r.is_complete?'✓ Complete':'In Progress')+'</span>'+
         '</div>'+
@@ -2513,12 +2661,13 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   const effSort=(a,b)=>effR(b)-effR(a);
 
   // ── STEP A: Log sit-outs ──────────────────────────────
-  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
+  const dirId=currentUser?.director_id||null;
   if(sitOutPlayers.length){
     // Insert all sit-outs in one batch
     const sitRows=sitOutPlayers.map(p=>({
       event_player_id:p.id,round_number:roundNum,
-      sitout_type:'FORCED',triggered_by_director_id:dirId
+      sitout_type:'FORCED',
+      ...(dirId?{triggered_by_director_id:dirId}:{})
     }));
     const {error:soErr}=await sb.from('sitout_log').insert(sitRows);
     if(soErr) console.warn('Sitout log error:',soErr.message);
@@ -2867,7 +3016,7 @@ function updateScoreDisplay(){
 
 async function submitScore(){
   const {pairingId,a,b,teamAName,teamBName,roundFormat,courtPts}=_scoreState;
-  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
+  const dirId=currentUser?.director_id||null;
   const isOpen=roundFormat==='OPEN';
   // For OPEN: bonus points go to the winner via team_a_bonus/team_b_bonus
   const aWon=a>b, bWon=b>a;
@@ -2876,7 +3025,7 @@ async function submitScore(){
     pairing_id:pairingId,
     team_a_games:a,
     team_b_games:b,
-    entered_by_director_id:dirId,
+    ...(dirId?{entered_by_director_id:dirId}:{}),
     team_a_bonus: (isOpen&&aWon?courtPts:0) + (goldenGame&&goldenWinner==='A'?1:0),
     team_b_bonus: (isOpen&&bWon?courtPts:0) + (goldenGame&&goldenWinner==='B'?1:0),
     golden_game_winner: goldenGame&&goldenWinner?goldenWinner:null,
@@ -3049,7 +3198,7 @@ async function saveEventNotes(){
   if(!note) return;
   const {error}=await sb.from('event_notes').insert({
     event_id:currentEvent.id,
-    director_id:currentUser.director_id||'00000000-0000-0000-0000-000000000000',
+    director_id:currentUser?.director_id||null,
     note
   });
   if(error){toast('Error: '+error.message,'error');return;}
@@ -3538,7 +3687,7 @@ async function confirmOpenPairings(){
   const btn=document.getElementById('ocm-confirm-btn');
   btn.disabled=true;btn.textContent='Deploying…';
 
-  const dirId=currentUser?.director_id||'00000000-0000-0000-0000-000000000000';
+  const dirId=currentUser?.director_id||null;
 
   // Delete old round
   await sb.from('rounds').delete().eq('event_id',currentEvent.id).eq('round_number',roundNum);
@@ -4195,6 +4344,180 @@ async function confirmImport() {
   toast(`Imported ${created} player${created!==1?'s':''}${failed?` (${failed} failed)`:''}`, created>0?'success':'error');
   closeModal('import-modal');
   loadRosterTab();
+}
+
+
+
+// ══════════════════════════════════════════════
+// RD OVERRIDE — Rearrange players in a live round
+// ══════════════════════════════════════════════
+
+let _rdoState = {
+  roundNum: 0, roundId: null,
+  courts: [],      // [{court_number, pairingId, teamAId, teamBId, teamAPlayers:[{id,name}], teamBPlayers:[{id,name}]}]
+  teams: [],
+  selectedPlayer: null, selectedFrom: null,
+};
+
+async function openRoundOverride(roundNum) {
+  document.getElementById('rdo-round-num').textContent = roundNum;
+  document.getElementById('rdo-body').innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  openModal('rd-override-modal');
+
+  // Fetch round
+  const {data:rounds} = await sb.from('rounds').select('id,format').eq('event_id',currentEvent.id).eq('round_number',roundNum);
+  const round = rounds?.[0];
+  if(!round) { document.getElementById('rdo-body').innerHTML = '<div style="padding:32px;text-align:center;color:var(--ink-muted)">Round not found</div>'; return; }
+
+  // Fetch pairings
+  const {data:pairings} = await sb.from('pairings').select('*').eq('round_id',round.id).order('court_number');
+
+  // Fetch teams
+  const {data:teams} = await sb.from('teams').select('*').eq('event_id',currentEvent.id);
+
+  // Fetch player names
+  const allPids = [...new Set((pairings||[]).flatMap(p=>[
+    p.team_a_player1_id, p.team_a_player2_id,
+    p.team_b_player1_id, p.team_b_player2_id
+  ]).filter(Boolean))];
+  const nc = {};
+  if(allPids.length) {
+    const {data:players} = await sb.from('players').select('id,roster_name').in('id',allPids);
+    (players||[]).forEach(p=>nc[p.id]=p.roster_name);
+  }
+
+  // Build court state
+  const courts = (pairings||[]).map(p => ({
+    court_number: p.court_number,
+    pairingId: p.id,
+    teamAId: p.team_a_id,
+    teamBId: p.team_b_id,
+    teamAPlayers: [
+      {pid: p.team_a_player1_id, name: nc[p.team_a_player1_id]||'?'},
+      {pid: p.team_a_player2_id, name: nc[p.team_a_player2_id]||'?'},
+    ],
+    teamBPlayers: [
+      {pid: p.team_b_player1_id, name: nc[p.team_b_player1_id]||'?'},
+      {pid: p.team_b_player2_id, name: nc[p.team_b_player2_id]||'?'},
+    ],
+  }));
+
+  _rdoState = { roundNum, roundId: round.id, courts, teams: teams||[], selectedPlayer: null, selectedFrom: null };
+  renderRDO();
+}
+
+function renderRDO() {
+  const {courts, teams, selectedPlayer} = _rdoState;
+  const tcolor = id => teams.find(t=>t.id===id)?.color || 'var(--court)';
+  const tname  = id => teams.find(t=>t.id===id)?.name || '?';
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">`;
+
+  courts.forEach(c => {
+    const colorA = tcolor(c.teamAId), colorB = tcolor(c.teamBId);
+
+    const playerRow = (p, side, slotIdx) => {
+      const isSelected = selectedPlayer?.pid === p.pid && selectedPlayer?.side === side && selectedPlayer?.court === c.court_number;
+      return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;
+        background:${isSelected ? tcolor(side==='A'?c.teamAId:c.teamBId)+'25' : 'var(--surface)'};
+        border:1.5px solid ${isSelected ? tcolor(side==='A'?c.teamAId:c.teamBId) : 'var(--border)'};
+        border-radius:10px;cursor:pointer;transition:all .15s"
+        onclick="rdoSelectPlayer('${p.pid}','${p.name}','${side}',${c.court_number},${slotIdx})">
+        <span style="flex:1;font-size:14px;font-weight:${isSelected?700:500}">${p.name}</span>
+        <button style="background:${isSelected?tcolor(side==='A'?c.teamAId:c.teamBId):'#22c55e'};color:white;
+          border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">
+          ${isSelected?'Cancel':'Move'}
+        </button>
+      </div>`;
+    };
+
+    html += `<div style="background:var(--white);border:2px solid var(--border);border-radius:14px;overflow:hidden">
+      <div style="padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);
+        display:flex;align-items:center;justify-content:space-between">
+        <span style="font-weight:700;font-size:15px">Court ${c.court_number}</span>
+        <span style="font-size:11px;color:var(--ink-muted)">click slot to place selected player</span>
+      </div>
+      <div style="padding:12px 14px">
+        <!-- Team A -->
+        <div style="font-size:11px;font-weight:700;color:${colorA};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamAId)}</div>
+        ${c.teamAPlayers.map((p,i)=>playerRow(p,'A',i)).join('')}
+        <div style="border-top:1px solid var(--border);margin:10px 0"></div>
+        <!-- Team B -->
+        <div style="font-size:11px;font-weight:700;color:${colorB};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamBId)}</div>
+        ${c.teamBPlayers.map((p,i)=>playerRow(p,'B',i)).join('')}
+      </div>
+    </div>`;
+  });
+
+  html += `</div>`;
+
+  // Show selected player hint
+  if(selectedPlayer) {
+    html += `<div style="position:sticky;bottom:0;background:var(--court);color:white;padding:12px 16px;
+      border-radius:10px;margin-top:16px;font-weight:700;font-size:14px;text-align:center">
+      Moving: ${selectedPlayer.name} — tap another player to swap positions
+    </div>`;
+  }
+
+  document.getElementById('rdo-body').innerHTML = html;
+  document.getElementById('rdo-status').textContent = `${courts.length} courts · ${selectedPlayer ? 'Select target player to swap' : 'Tap Move to start'}`;
+}
+
+function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
+  const {selectedPlayer, courts} = _rdoState;
+
+  if(selectedPlayer) {
+    // If clicking the same player — deselect
+    if(selectedPlayer.pid === pid) {
+      _rdoState.selectedPlayer = null;
+      renderRDO();
+      return;
+    }
+
+    // Swap the two players
+    const fromCourt = courts.find(c=>c.court_number===selectedPlayer.court);
+    const toCourt   = courts.find(c=>c.court_number===courtNum);
+    const fromArr   = selectedPlayer.side==='A' ? fromCourt.teamAPlayers : fromCourt.teamBPlayers;
+    const toArr     = side==='A' ? toCourt.teamAPlayers : toCourt.teamBPlayers;
+
+    const fromSlot  = fromArr.findIndex(p=>p.pid===selectedPlayer.pid);
+    const toSlot    = slotIdx;
+
+    // Swap
+    const temp     = fromArr[fromSlot];
+    fromArr[fromSlot] = toArr[toSlot];
+    toArr[toSlot]     = temp;
+
+    _rdoState.selectedPlayer = null;
+    toast(`Swapped ${temp.name} ↔ ${toArr[toSlot].name}`,'success');
+  } else {
+    // Select this player
+    _rdoState.selectedPlayer = {pid, name, side, court: courtNum, slotIdx};
+  }
+
+  renderRDO();
+}
+
+async function confirmRoundOverride() {
+  const {roundId, courts} = _rdoState;
+  const btn = document.getElementById('rdo-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  // Update each pairing with new player assignments
+  for(const c of courts) {
+    const {error} = await sb.from('pairings').update({
+      team_a_player1_id: c.teamAPlayers[0].pid,
+      team_a_player2_id: c.teamAPlayers[1].pid,
+      team_b_player1_id: c.teamBPlayers[0].pid,
+      team_b_player2_id: c.teamBPlayers[1].pid,
+    }).eq('id', c.pairingId);
+    if(error) { toast('Error saving court '+c.court_number+': '+error.message,'error'); btn.disabled=false; btn.textContent='✓ Save New Lineup'; return; }
+  }
+
+  toast('Lineup updated! Scoreboard will reflect new matchups.','success');
+  closeModal('rd-override-modal');
+  loadRounds();
 }
 
 
