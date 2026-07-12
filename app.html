@@ -1036,6 +1036,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
         <div style="display:flex;gap:10px">
           <button class="btn btn-primary" onclick="openModal('add-players-modal');updatePlayerCounter()">+ Add Players</button>
+          <button class="btn btn-ghost" onclick="addSubPlayer()" title="Add an emergency sub placeholder">+ SUB</button>
         </div>
       </div>
       <div id="roster-empty-hint" style="margin-bottom:16px;padding:16px;background:var(--sky-light);border-radius:var(--r);border:1px solid #90CAF9;font-size:13px;color:var(--sky);display:none">
@@ -1808,6 +1809,64 @@ async function addEP(pid,name,btn){
   updatePlayerCounter();
 }
 
+
+
+// ── ADD SUB PLAYER ON DEMAND ─────────────────────────
+async function addSubPlayer() {
+  // Ask which team (if teams exist) or just generic
+  const {data:teams} = await sb.from('teams').select('id,name').eq('event_id',currentEvent.id);
+
+  let teamName = 'Sub';
+  if(teams?.length) {
+    const options = teams.map((t,i)=>`${i+1}. ${t.name}`).join('\n');
+    const choice = prompt(`Which team needs a sub?\n${options}\n\nEnter number:`);
+    if(choice===null) return;
+    const idx = parseInt(choice)-1;
+    if(idx>=0 && idx<teams.length) teamName = teams[idx].name;
+  }
+
+  const subName = `SUB - ${teamName}`;
+
+  // Check if one already exists for this event
+  const {data:existing} = await sb.from('event_players')
+    .select('id,players(roster_name)')
+    .eq('event_id',currentEvent.id);
+  const alreadyHasSub = (existing||[]).some(ep=>ep.players?.roster_name===subName);
+
+  if(alreadyHasSub) {
+    toast(`${subName} already exists on this roster`,'default');
+    return;
+  }
+
+  // Create or find the sub player
+  let subPlayerId = null;
+  const {data:existingPlayer} = await sb.from('players')
+    .select('id').eq('roster_name',subName).maybeSingle();
+
+  if(existingPlayer) {
+    subPlayerId = existingPlayer.id;
+  } else {
+    const {data:newPlayer,error:pErr} = await sb.from('players').insert({
+      first_name:'SUB',
+      last_name:teamName,
+      roster_name:subName,
+      gender:'MALE',
+    }).select().single();
+    if(pErr){toast('Error: '+pErr.message,'error');return;}
+    subPlayerId = newPlayer.id;
+  }
+
+  // Add to event as INACTIVE
+  const {error:epErr} = await sb.from('event_players').insert({
+    event_id:currentEvent.id,
+    player_id:subPlayerId,
+    status:'INACTIVE'
+  });
+  if(epErr){toast('Error: '+epErr.message,'error');return;}
+
+  toast(`${subName} added to roster — activate when needed`,'success');
+  loadRoster();
+}
 
 // ── SUB PLAYER MANAGEMENT ────────────────────────────
 async function activateSub(epId){
