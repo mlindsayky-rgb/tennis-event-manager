@@ -4417,17 +4417,20 @@ function renderRDO() {
     const colorA = tcolor(c.teamAId), colorB = tcolor(c.teamBId);
 
     const playerRow = (p, side, slotIdx) => {
+      const teamColor = tcolor(side==='A' ? c.teamAId : c.teamBId);
       const isSelected = selectedPlayer?.pid === p.pid && selectedPlayer?.side === side && selectedPlayer?.court === c.court_number;
+      // If a player is selected and this is the wrong team side — dim it
+      const isWrongSide = selectedPlayer && selectedPlayer.side !== side && selectedPlayer.pid !== p.pid;
       return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;
-        background:${isSelected ? tcolor(side==='A'?c.teamAId:c.teamBId)+'25' : 'var(--surface)'};
-        border:1.5px solid ${isSelected ? tcolor(side==='A'?c.teamAId:c.teamBId) : 'var(--border)'};
-        border-radius:10px;cursor:pointer;transition:all .15s"
+        background:${isSelected ? teamColor+'25' : 'var(--surface)'};
+        border:1.5px solid ${isSelected ? teamColor : 'var(--border)'};
+        border-radius:10px;transition:all .15s;opacity:${isWrongSide?'.35':'1'}"
         onclick="rdoSelectPlayer('${p.pid}','${p.name}','${side}',${c.court_number},${slotIdx})">
         <span style="flex:1;font-size:14px;font-weight:${isSelected?700:500}">${p.name}</span>
-        <button style="background:${isSelected?tcolor(side==='A'?c.teamAId:c.teamBId):'#22c55e'};color:white;
+        ${!isWrongSide?`<button style="background:${isSelected?teamColor:'#22c55e'};color:white;
           border:none;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">
           ${isSelected?'Cancel':'Move'}
-        </button>
+        </button>`:''}
       </div>`;
     };
 
@@ -4474,7 +4477,15 @@ function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
       return;
     }
 
-    // Swap the two players
+    // Block cross-team swaps — must be same side (A↔A or B↔B)
+    if(selectedPlayer.side !== side) {
+      toast('Can only swap players within the same team — A with A, B with B','error');
+      _rdoState.selectedPlayer = null;
+      renderRDO();
+      return;
+    }
+
+    // Swap within same team side
     const fromCourt = courts.find(c=>c.court_number===selectedPlayer.court);
     const toCourt   = courts.find(c=>c.court_number===courtNum);
     const fromArr   = selectedPlayer.side==='A' ? fromCourt.teamAPlayers : fromCourt.teamBPlayers;
@@ -4484,12 +4495,14 @@ function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
     const toSlot    = slotIdx;
 
     // Swap
-    const temp     = fromArr[fromSlot];
-    fromArr[fromSlot] = toArr[toSlot];
+    const fromName = fromArr[fromSlot].name;
+    const toName   = toArr[toSlot].name;
+    const temp     = {...fromArr[fromSlot]};
+    fromArr[fromSlot] = {...toArr[toSlot]};
     toArr[toSlot]     = temp;
 
     _rdoState.selectedPlayer = null;
-    toast(`Swapped ${temp.name} ↔ ${toArr[toSlot].name}`,'success');
+    toast(`Swapped ${fromName} ↔ ${toName}`,'success');
   } else {
     // Select this player
     _rdoState.selectedPlayer = {pid, name, side, court: courtNum, slotIdx};
@@ -4504,20 +4517,44 @@ async function confirmRoundOverride() {
   btn.disabled = true;
   btn.textContent = 'Saving…';
 
-  // Update each pairing with new player assignments
+  let success = true;
+
   for(const c of courts) {
+    console.log('Saving court', c.court_number, 'pairing', c.pairingId, {
+      team_a_player1_id: c.teamAPlayers[0]?.pid,
+      team_a_player2_id: c.teamAPlayers[1]?.pid,
+      team_b_player1_id: c.teamBPlayers[0]?.pid,
+      team_b_player2_id: c.teamBPlayers[1]?.pid,
+    });
+
+    if(!c.pairingId) { toast('Missing pairing ID for court '+c.court_number,'error'); success=false; break; }
+    if(!c.teamAPlayers[0]?.pid || !c.teamAPlayers[1]?.pid || !c.teamBPlayers[0]?.pid || !c.teamBPlayers[1]?.pid) {
+      toast('Missing player on court '+c.court_number,'error'); success=false; break;
+    }
+
     const {error} = await sb.from('pairings').update({
       team_a_player1_id: c.teamAPlayers[0].pid,
       team_a_player2_id: c.teamAPlayers[1].pid,
       team_b_player1_id: c.teamBPlayers[0].pid,
       team_b_player2_id: c.teamBPlayers[1].pid,
     }).eq('id', c.pairingId);
-    if(error) { toast('Error saving court '+c.court_number+': '+error.message,'error'); btn.disabled=false; btn.textContent='✓ Save New Lineup'; return; }
+
+    if(error) {
+      toast('Error saving court '+c.court_number+': '+error.message,'error');
+      console.error('Pairing update error:', error);
+      success = false;
+      break;
+    }
   }
 
-  toast('Lineup updated! Scoreboard will reflect new matchups.','success');
-  closeModal('rd-override-modal');
-  loadRounds();
+  btn.disabled = false;
+  btn.textContent = '✓ Save New Lineup';
+
+  if(success) {
+    toast('Lineup updated! Scoreboard will reflect new matchups.','success');
+    closeModal('rd-override-modal');
+    loadRounds();
+  }
 }
 
 
