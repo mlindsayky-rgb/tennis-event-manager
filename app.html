@@ -1815,7 +1815,7 @@ async function loadLiveRoster() {
       }
 
       return `<div class="${rowClass}" id="lr-row-${ep.id}">
-        <div class="lr-player-name">
+        <div class="lr-player-name" title="${escQ(p?.roster_name||'')}" onclick="toast('${escQ(p?.roster_name||'')} — ${rtg}','default')" style="cursor:pointer">
           <span class="gender">${gender}</span>
           <span class="${nameClass}">${p?.roster_name||'?'}</span>
         </div>
