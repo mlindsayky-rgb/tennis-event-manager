@@ -470,8 +470,61 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 @keyframes fadeIn { from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)} }
 .fade-in { animation: fadeIn .2s ease forwards; }
 
+/* ── LIVE ROSTER ── */
+.lr-team-card {
+  background: var(--white); border: 2px solid var(--border);
+  border-radius: var(--rlg); overflow: hidden; box-shadow: var(--shadow-sm);
+}
+.lr-team-header {
+  padding: 13px 16px; display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.lr-team-dot { width: 13px; height: 13px; border-radius: 50%; flex-shrink: 0; }
+.lr-team-name { font-size: 15px; font-weight: 700; font-family: var(--font-display); flex: 1; letter-spacing: -.2px; }
+.lr-team-meta { font-size: 12px; color: var(--ink-muted); }
+.lr-col-headers {
+  display: grid; grid-template-columns: 1fr 52px 52px 52px 110px;
+  padding: 6px 14px; gap: 6px;
+  font-size: 10px; font-weight: 700; color: var(--ink-ghost);
+  text-transform: uppercase; letter-spacing: .4px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.lr-player-row {
+  display: grid; grid-template-columns: 1fr 52px 52px 52px 110px;
+  align-items: center; padding: 9px 14px; gap: 6px;
+  border-bottom: 1px solid var(--border); transition: background .1s;
+}
+.lr-player-row:last-child { border-bottom: none; }
+.lr-player-row:hover { background: var(--surface); }
+.lr-player-row.lr-skip { background: var(--gold-light); }
+.lr-player-row.lr-out { opacity: .6; background: var(--clay-light); }
+.lr-player-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.lr-player-name span.gender { font-size: 13px; flex-shrink: 0; }
+.lr-player-name span.name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr-player-name span.name.struck { text-decoration: line-through; color: var(--ink-muted); }
+.lr-cell { font-size: 12px; color: var(--ink-muted); text-align: center; font-weight: 600; }
+.lr-cell.rating { color: var(--ink); font-weight: 700; font-size: 13px; }
+.lr-cell.sits-hi { color: var(--clay); }
+.lr-ctrl { display: flex; align-items: center; gap: 5px; }
+.lr-btn {
+  height: 26px; padding: 0 9px; border-radius: 7px; border: 1.5px solid;
+  font-size: 11px; font-weight: 600; cursor: pointer; transition: all .12s;
+  font-family: var(--font-body); letter-spacing: -.1px; white-space: nowrap;
+}
+.lr-btn-skip { background: var(--gold-light); color: var(--gold); border-color: var(--gold); }
+.lr-btn-skip:hover { background: var(--amber); color: white; }
+.lr-btn-backin { background: var(--white); color: var(--ink-muted); border-color: var(--border); }
+.lr-btn-backin:hover { background: var(--surface); }
+.lr-btn-out { background: var(--white); color: var(--clay); border-color: var(--clay); }
+.lr-btn-out:hover { background: var(--clay-light); }
+.lr-btn-reinstate { background: var(--white); color: var(--court); border-color: var(--court); }
+.lr-btn-reinstate:hover { background: var(--court-pale); }
+
 /* ── RESPONSIVE ── */
 @media (max-width: 640px) {
+  #lr-team-grid { grid-template-columns: 1fr !important; }
+  .lr-col-headers, .lr-player-row { grid-template-columns: 1fr 42px 36px 36px 96px; padding: 8px 10px; gap: 4px; }
+  .lr-btn { padding: 0 7px; font-size: 10px; }
   .content { padding: 16px; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .form-row, .form-row-3 { grid-template-columns: 1fr; }
@@ -1022,7 +1075,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="event-nav-tab active" onclick="eventTab('roster',this)">Roster</button>
     <button class="event-nav-tab" onclick="eventTab('teams',this)">Team Builder</button>
     <button class="event-nav-tab" onclick="eventTab('rounds',this)">Rounds</button>
-    <button class="event-nav-tab" onclick="eventTab('tv',this)">📺 TV Preview</button>
+    <button class="event-nav-tab" id="nav-liveRoster" onclick="eventTab('liveRoster',this)">📋 Live Roster</button>
     <button class="event-nav-tab" onclick="eventTab('notes',this)">Notes</button>
   </nav>
 
@@ -1088,29 +1141,26 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
   </div>
 
-  <!-- TV PREVIEW TAB -->
-  <div id="etab-tv" style="display:none;background:#0a1628;min-height:80vh;padding:0">
-    <div style="background:#0a1628;color:white;min-height:80vh;font-family:var(--font-body)">
-      <!-- TV Header -->
-      <div style="background:linear-gradient(135deg,#0F1F3D,#1A5C2A);padding:20px 32px;display:flex;align-items:center;justify-content:space-between">
+  <!-- LIVE ROSTER TAB -->
+  <div id="etab-liveRoster" style="display:none;flex:1;overflow-y:auto">
+    <div style="padding:20px">
+      <div class="section-header" style="margin-bottom:8px">
         <div>
-          <div style="font-family:var(--font-display);font-size:28px;font-weight:400;letter-spacing:-.5px" id="tv-event-name">Event</div>
-          <div style="font-size:14px;opacity:.7;margin-top:2px" id="tv-round-label">Round — of —</div>
+          <div class="section-title">Live Roster</div>
+          <div class="section-sub" id="lr-sub">Player stats &amp; availability for next round</div>
         </div>
-        <div style="text-align:right">
-          <div style="font-size:13px;opacity:.6;margin-bottom:4px">TEAM SCORE</div>
-          <div style="font-size:22px;font-weight:700" id="tv-score-summary">— vs —</div>
-        </div>
+        <button class="btn btn-ghost btn-sm" onclick="loadLiveRoster()">↺ Refresh</button>
       </div>
-      <!-- Courts -->
-      <div style="padding:24px 32px" id="tv-courts">
-        <div style="text-align:center;opacity:.4;padding:40px">No active round — deploy a round to see TV preview</div>
+      <!-- Pre-live notice -->
+      <div id="lr-prelive-notice" style="display:none;margin-bottom:16px;padding:14px 16px;background:var(--gold-light);border-radius:var(--r);border:1px solid #FDE68A;font-size:13px;color:var(--gold)">
+        <strong>Event not yet Live.</strong> Ratings are shown below. Active/inactive toggles and play counts activate once the event goes Live.
       </div>
-      <!-- Sitting out -->
-      <div style="padding:0 32px 24px;font-size:13px;opacity:.5" id="tv-sitout"></div>
-      <div style="padding:16px 32px;border-top:1px solid rgba(255,255,255,.1);font-size:12px;opacity:.4;display:flex;justify-content:space-between">
-        <span id="tv-club-name">Hunting Creek Country Club</span>
-        <span id="tv-refresh-time">Auto-refreshes every 30s</span>
+      <!-- Inactive banner -->
+      <div id="lr-inactive-banner" style="display:none;margin-bottom:14px;padding:10px 14px;background:var(--clay-light);border-radius:var(--r);border:1px solid #FBBFB9;font-size:13px;color:var(--clay)">
+        ⚠ <span id="lr-inactive-count"></span>
+      </div>
+      <div id="lr-team-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:16px">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
       </div>
     </div>
   </div>
@@ -1596,6 +1646,7 @@ function openEventById(eid) {
 
 function openEvent(event) {
   currentEvent = typeof event === 'string' ? JSON.parse(decodeURIComponent(event)) : event;
+  window._inactiveEPs = new Set(); // clear Live Roster toggles when switching events
   document.getElementById('event-header-name').textContent = currentEvent.name;
   document.getElementById('event-header-sub').textContent = (currentEvent.status||'').replace(/_/g,' ');
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
@@ -1603,8 +1654,7 @@ function openEvent(event) {
   updateLifecycle(currentEvent.status);
   updateActionBtn(currentEvent.status);
   const firstTab = document.querySelector('.event-nav-tab');
-  eventTab('roster', firstTab);
-  loadRoster();
+  eventTab('roster', firstTab); // eventTab now triggers loadRoster
 }
 
 function closeEvent() {
@@ -1619,18 +1669,272 @@ function closeEvent() {
 function eventTab(name, btn) {
   document.querySelectorAll('.event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['roster','teams','rounds','notes'].forEach(t=>{
+  ['roster','teams','rounds','liveRoster','notes'].forEach(t=>{
     const el=document.getElementById('etab-'+t);
     if(el) el.style.display=t===name?'block':'none';
   });
+  if(name==='roster') loadRoster();
   if(name==='teams') initTeamBuilder();
   if(name==='rounds') loadRounds();
-  if(name==='tv'){
-    const tvEl=document.getElementById('etab-tv');
-    if(tvEl) tvEl.style.display='block';
-    loadTVPreview();
-  }
+  if(name==='liveRoster') loadLiveRoster();
   if(name==='notes') loadNotes();
+}
+
+// ── LIVE ROSTER COMMAND CENTER ────────────────────────
+// Tracks which event_player IDs are toggled inactive for the NEXT round only.
+// Cleared after each round is deployed (see deployRound).
+if(!window._inactiveEPs) window._inactiveEPs = new Set();
+
+async function loadLiveRoster() {
+  const grid = document.getElementById('lr-team-grid');
+  const subEl = document.getElementById('lr-sub');
+  const noticePre = document.getElementById('lr-prelive-notice');
+  if(!grid) return;
+  grid.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+
+  const isLive = currentEvent?.status === 'LIVE';
+  if(noticePre) noticePre.style.display = isLive ? 'none' : 'block';
+
+  // Load teams
+  const {data:teams} = await sb.from('teams').select('id,name,color').eq('event_id', currentEvent.id);
+  const {data:tps} = await sb.from('team_players').select('team_id,event_player_id').in('team_id', (teams||[]).map(t=>t.id));
+
+  // Load event players (ACTIVE + OUT so we see everyone who's enrolled)
+  const {data:eps} = await sb.from('event_players')
+    .select('id,player_id,status,players(id,roster_name,gender)')
+    .eq('event_id', currentEvent.id)
+    .neq('status','PENDING');
+  const allEPs = eps || [];
+
+  // Load ratings
+  const pids = [...new Set(allEPs.map(e=>e.player_id).filter(Boolean))];
+  const ratingMap = {};
+  if(pids.length){
+    const {data:rats} = await sb.from('player_ratings').select('player_id,source,value,designation,fetched_at').in('player_id', pids);
+    (rats||[]).forEach(r=>{
+      if(!ratingMap[r.player_id]) ratingMap[r.player_id]={};
+      const ex = ratingMap[r.player_id][r.source];
+      if(!ex || new Date(r.fetched_at) > new Date(ex.fetched_at)) ratingMap[r.player_id][r.source]=r;
+    });
+  }
+
+  // Load sit-out history and play counts for this event
+  const soCount={}, playCount={};
+  if(isLive && allEPs.length){
+    const {data:sitLogs} = await sb.from('sitout_log')
+      .select('event_player_id,sitout_type')
+      .in('event_player_id', allEPs.map(e=>e.id));
+    (sitLogs||[]).forEach(s=>{
+      if(s.sitout_type !== 'STRATEGIC'){
+        soCount[s.event_player_id] = (soCount[s.event_player_id]||0) + 1;
+      }
+    });
+
+    // Count rounds played via pairings table
+    const {data:rounds} = await sb.from('rounds').select('id').eq('event_id', currentEvent.id);
+    if(rounds?.length){
+      const rid = rounds.map(r=>r.id);
+      // Count pairings (non-sitout) for each event_player via team membership
+      const epIds = allEPs.map(e=>e.id);
+      const tpMap = {};
+      (tps||[]).forEach(tp=> tpMap[tp.event_player_id] = tp.team_id);
+
+      const {data:pairings} = await sb.from('pairings').select('round_id,team_a_player1_id,team_a_player2_id,team_b_player1_id,team_b_player2_id').in('round_id', rid);
+      // Pairings store player_id (not event_player_id), so build a player_id → ep map
+      const pidToEP = {};
+      allEPs.forEach(e=>{ if(e.player_id) pidToEP[e.player_id]=e.id; });
+      (pairings||[]).forEach(p=>{
+        [p.team_a_player1_id, p.team_a_player2_id, p.team_b_player1_id, p.team_b_player2_id].forEach(pid=>{
+          if(!pid) return;
+          const epid = pidToEP[pid];
+          if(epid) playCount[epid] = (playCount[epid]||0) + 1;
+        });
+      });
+    }
+  }
+
+  // Map event_player → team
+  const epTeamMap = {};
+  (tps||[]).forEach(tp=> epTeamMap[tp.event_player_id] = tp.team_id);
+
+  // Group players by team, sort by effective rating desc
+  const teamMap = {};
+  (teams||[]).forEach(t=>{ teamMap[t.id] = {...t, players:[]}; });
+  allEPs.forEach(ep=>{
+    const tid = epTeamMap[ep.id];
+    if(tid && teamMap[tid]) teamMap[tid].players.push(ep);
+  });
+
+  const ratingStr = (ep) => {
+    const r = ratingMap[ep.player_id]||{};
+    const ntrp = r['NTRP'], trr = r['TRR']||r['UTR'];
+    if(ntrp) return parseFloat(ntrp.value).toFixed(1)+(ntrp.designation||'');
+    if(trr)  return parseFloat(trr.value).toFixed(1);
+    return 'NR';
+  };
+  const effRating = (ep) => {
+    const r = ratingMap[ep.player_id]||{};
+    const ntrp = r['NTRP'], trr = r['TRR']||r['UTR'];
+    const base = ntrp ? parseFloat(ntrp.value) : trr ? parseFloat(trr.value) : 0;
+    return ep.players?.gender==='FEMALE' ? base-0.5 : base;
+  };
+
+  const sortedTeams = Object.values(teamMap).sort((a,b)=>a.name.localeCompare(b.name));
+
+  grid.innerHTML = sortedTeams.map(team=>{
+    const sorted = [...team.players].sort((a,b)=>effRating(b)-effRating(a));
+    const playerRows = sorted.map(ep=>{
+      const p = ep.players;
+      const gender = p?.gender==='MALE' ? '♂' : '♀';
+      const rtg = ratingStr(ep);
+      const plays = isLive ? (playCount[ep.id]||0) : '—';
+      const sits  = isLive ? (soCount[ep.id]||0) : '—';
+      const isSkip = window._inactiveEPs.has(ep.id);
+      const isOut = ep.status === 'OUT';
+      const rowClass = isOut ? 'lr-player-row lr-out' : isSkip ? 'lr-player-row lr-skip' : 'lr-player-row';
+      const nameClass = isOut ? 'name struck' : 'name';
+
+      let ctrl = '';
+      if(!isLive){
+        ctrl = '<div class="lr-ctrl"><span style="font-size:11px;color:var(--ink-ghost)">—</span></div>';
+      } else if(isOut){
+        ctrl = `<div class="lr-ctrl">
+          <span style="font-size:11px;font-weight:700;color:var(--clay)">OUT</span>
+          <button class="lr-btn lr-btn-reinstate" onclick="lrReinstate('${ep.id}')">↩ Back</button>
+        </div>`;
+      } else if(isSkip){
+        ctrl = `<div class="lr-ctrl">
+          <button class="lr-btn lr-btn-backin" onclick="lrCancelSkip('${ep.id}')">↩ In</button>
+          <button class="lr-btn lr-btn-out" onclick="lrMarkOut('${ep.id}','${escQ(p?.roster_name||'')}')">Out</button>
+        </div>`;
+      } else {
+        ctrl = `<div class="lr-ctrl">
+          <button class="lr-btn lr-btn-skip" onclick="lrSkip('${ep.id}')">Skip</button>
+          <button class="lr-btn lr-btn-out" onclick="lrMarkOut('${ep.id}','${escQ(p?.roster_name||'')}')">Out</button>
+        </div>`;
+      }
+
+      return `<div class="${rowClass}" id="lr-row-${ep.id}">
+        <div class="lr-player-name">
+          <span class="gender">${gender}</span>
+          <span class="${nameClass}">${p?.roster_name||'?'}</span>
+        </div>
+        <div class="lr-cell rating">${rtg}</div>
+        <div class="lr-cell">${plays}</div>
+        <div class="lr-cell ${typeof sits==='number'&&sits>0?'sits-hi':''}">${sits}</div>
+        ${ctrl}
+      </div>`;
+    }).join('');
+
+    const avgNTRP = (() => {
+      const rated = team.players.filter(ep=>ratingMap[ep.player_id]?.['NTRP']);
+      if(!rated.length) return '—';
+      return (rated.reduce((s,ep)=>s+parseFloat(ratingMap[ep.player_id]['NTRP'].value),0)/rated.length).toFixed(2);
+    })();
+    const males = team.players.filter(ep=>ep.players?.gender==='MALE').length;
+    const females = team.players.filter(ep=>ep.players?.gender==='FEMALE').length;
+
+    return `<div class="lr-team-card">
+      <div class="lr-team-header">
+        <div class="lr-team-dot" style="background:${team.color}"></div>
+        <div class="lr-team-name">${team.name}</div>
+        <div class="lr-team-meta">${team.players.length} players · Avg ${avgNTRP} · ♂${males} ♀${females}</div>
+      </div>
+      <div class="lr-col-headers">
+        <div>Player</div>
+        <div style="text-align:center">Rating</div>
+        <div style="text-align:center">Played</div>
+        <div style="text-align:center">Sat</div>
+        <div style="text-align:center">Availability</div>
+      </div>
+      ${playerRows}
+    </div>`;
+  }).join('');
+
+  if(subEl) subEl.textContent = `${allEPs.length} players across ${sortedTeams.length} teams`;
+  updateLRBanner();
+}
+
+// ── LIVE ROSTER AVAILABILITY CONTROLS ────────────────
+// Skip: in-memory only, clears after round deploy (sit-out for next round)
+// Out:  writes to DB immediately, persists until Reinstate
+
+function lrSkip(epId) {
+  window._inactiveEPs.add(epId);
+  lrRedrawRow(epId, 'skip');
+  updateLRBanner();
+}
+
+function lrCancelSkip(epId) {
+  window._inactiveEPs.delete(epId);
+  lrRedrawRow(epId, 'active');
+  updateLRBanner();
+}
+
+async function lrMarkOut(epId, name) {
+  if(!confirm(`Mark ${name} as OUT for the rest of this event?`)) return;
+  const {error} = await sb.from('event_players').update({status:'OUT'}).eq('id', epId);
+  if(error){ toast('Error: '+error.message, 'error'); return; }
+  // Update local eventRoster cache so other tabs stay in sync
+  const ep = eventRoster.find(e=>e.id===epId);
+  if(ep) ep.status = 'OUT';
+  // Also remove from skip set if they were there
+  window._inactiveEPs.delete(epId);
+  lrRedrawRow(epId, 'out');
+  updateLRBanner();
+  toast(name+' marked out for the event', 'default');
+}
+
+async function lrReinstate(epId) {
+  const {error} = await sb.from('event_players').update({status:'ACTIVE'}).eq('id', epId);
+  if(error){ toast('Error: '+error.message, 'error'); return; }
+  const ep = eventRoster.find(e=>e.id===epId);
+  if(ep) ep.status = 'ACTIVE';
+  lrRedrawRow(epId, 'active');
+  updateLRBanner();
+  toast('Player reinstated', 'success');
+}
+
+function lrRedrawRow(epId, state) {
+  const row = document.getElementById('lr-row-'+epId);
+  if(!row) return;
+  // Update row background class
+  row.className = state==='out' ? 'lr-player-row lr-out'
+                : state==='skip' ? 'lr-player-row lr-skip'
+                : 'lr-player-row';
+  // Update name strikethrough
+  const nameEl = row.querySelector('.name');
+  if(nameEl) nameEl.className = state==='out' ? 'name struck' : 'name';
+  // Rebuild control cell
+  const ctrl = row.querySelector('.lr-ctrl');
+  if(!ctrl) return;
+  const name = nameEl?.textContent || '';
+  const safeName = escQ(name);
+  if(state==='out'){
+    ctrl.innerHTML = `<span style="font-size:11px;font-weight:700;color:var(--clay)">OUT</span>
+      <button class="lr-btn lr-btn-reinstate" onclick="lrReinstate('${epId}')">↩ Back</button>`;
+  } else if(state==='skip'){
+    ctrl.innerHTML = `<button class="lr-btn lr-btn-backin" onclick="lrCancelSkip('${epId}')">↩ In</button>
+      <button class="lr-btn lr-btn-out" onclick="lrMarkOut('${epId}','${safeName}')">Out</button>`;
+  } else {
+    ctrl.innerHTML = `<button class="lr-btn lr-btn-skip" onclick="lrSkip('${epId}')">Skip</button>
+      <button class="lr-btn lr-btn-out" onclick="lrMarkOut('${epId}','${safeName}')">Out</button>`;
+  }
+}
+
+function updateLRBanner() {
+  const banner = document.getElementById('lr-inactive-banner');
+  const countEl = document.getElementById('lr-inactive-count');
+  if(!banner) return;
+  const skipCount = window._inactiveEPs.size;
+  // Count OUT players from eventRoster cache (already scoped to current event)
+  const outCount = eventRoster.filter(e=>e.status==='OUT').length;
+  const n = skipCount + outCount;
+  banner.style.display = n > 0 ? 'block' : 'none';
+  if(countEl) countEl.textContent =
+    [skipCount ? `${skipCount} skipping next round` : '',
+     outCount  ? `${outCount} out for event` : '']
+    .filter(Boolean).join(' · ');
 }
 
 function updateLifecycle(status) {
@@ -2550,7 +2854,10 @@ async function deployRound(roundNum){
   const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
   const {data:tps}=await sb.from('team_players').select('team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
   const {data:eps}=await sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id).eq('status','ACTIVE');
-  const activePlayers=eps||[];
+  // Respect Live Roster inactive toggles: remove toggled-off players from active pool
+  const _inactive = window._inactiveEPs||new Set();
+  const forcedSitOuts = (eps||[]).filter(e=>_inactive.has(e.id));
+  const activePlayers = (eps||[]).filter(e=>!_inactive.has(e.id));
 
   // Load sit-out history for this event
   const {data:sitLogs}=await sb.from('sitout_log').select('event_player_id,round_number,sitout_type').in('event_player_id',activePlayers.map(e=>e.id));
@@ -2682,8 +2989,10 @@ async function deployRound(roundNum){
   }
 
   const playing=activePlayers.filter(p=>playingSet.has(p.id));
-  const sitOutPlayers=activePlayers.filter(p=>!playingSet.has(p.id));
-  console.log('Playing:',playing.length,'Sitting out:',sitOutPlayers.length);
+  // Merge fairness sit-outs with forced (Live Roster toggle) sit-outs, deduplicated
+  const fairSitOuts=activePlayers.filter(p=>!playingSet.has(p.id));
+  const sitOutPlayers=[...fairSitOuts,...forcedSitOuts.filter(p=>!fairSitOuts.find(x=>x.id===p.id))];
+  console.log('Playing:',playing.length,'Sitting out:',sitOutPlayers.length,'(forced:',forcedSitOuts.length,')');
   console.log('Sit-outs:',sitOutPlayers.map(p=>(p.players?.roster_name||'?')+'('+(soCount[p.id]||0)+'sits)'));
 
   // ── STEP 3: OPEN format — show court builder ───────────
@@ -2935,6 +3244,9 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
 
   if(currentEvent.status==='TEAMS_SET') await setEventStatus('LIVE');
   toast('Round '+roundNum+' deployed! '+pairings.length+' courts.','success');
+
+  // Clear Live Roster inactive toggles — they apply to one round only
+  window._inactiveEPs = new Set();
 
   // Reload rounds display
   const {data:roundsCheck}=await sb.from('rounds').select('id,round_number').eq('event_id',currentEvent.id).order('round_number');
@@ -3796,6 +4108,8 @@ async function confirmOpenPairings(){
 
   if(currentEvent.status==='TEAMS_SET') await setEventStatus('LIVE');
   toast('Round '+roundNum+' deployed! '+pairings.length+' courts.','success');
+  // Clear Live Roster inactive toggles — they apply to one round only
+  window._inactiveEPs = new Set();
   closeModal('open-court-modal');
   loadRounds();
 }
