@@ -543,6 +543,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" onclick="adminTab('directors',this)">Directors</button>
     <button class="nav-tab" onclick="adminTab('players',this)">Players</button>
     <button class="nav-tab" onclick="adminTab('events',this)">Events</button>
+    <button class="nav-tab" onclick="adminTab('leagues',this)">Leagues</button>
     <button class="nav-tab" onclick="adminTab('settings',this)">Settings</button>
   </nav>
   <div class="content">
@@ -611,6 +612,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       </div>
     </div>
 
+    <div id="tab-leagues" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Leagues</div><div class="section-sub">Genesis League — Singles &amp; Doubles</div></div>
+        <button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button>
+      </div>
+      <div id="leagues-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+
     <div id="tab-settings" style="display:none">
       <div class="section-title" style="margin-bottom:20px">Settings</div>
       <div class="grid-2">
@@ -657,6 +666,32 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           </div>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ LEAGUE DETAIL SCREEN ══ -->
+<div id="league-screen" class="screen">
+  <header class="app-header" id="league-detail-header" style="background:linear-gradient(135deg,var(--navy) 0%,var(--court) 100%)">
+    <div class="app-header-left">
+      <button class="header-btn" onclick="closeLeague()" style="margin-right:8px">← Back</button>
+      <div>
+        <div class="app-header-title" id="league-detail-name">League</div>
+        <div class="app-header-sub" id="league-detail-sub">—</div>
+      </div>
+    </div>
+    <button class="header-btn" onclick="openTeamModalNew()">+ Add Team</button>
+  </header>
+  <nav class="event-nav">
+    <button class="event-nav-tab active" onclick="leagueDetailTab('teams',this)">Teams</button>
+    <button class="event-nav-tab" onclick="leagueDetailTab('settings',this)">League Settings</button>
+  </nav>
+  <div class="content">
+    <div id="ltab-teams">
+      <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+    <div id="ltab-settings" style="display:none">
+      <div class="card"><div class="card-body" id="league-settings-body"></div></div>
     </div>
   </div>
 </div>
@@ -805,6 +840,85 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('director-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveDirector()">Create Director</button>
+    </div>
+  </div>
+</div>
+
+<!-- LEAGUE MODAL -->
+<div class="modal-overlay" id="league-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="league-modal-title">New League</div><button class="modal-close" onclick="closeModal('league-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">League Name <span class="req">*</span></label><input class="form-input" id="league-name" placeholder="e.g. Genesis League — Fall 2026 Singles"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Format <span class="req">*</span></label>
+          <select class="form-select" id="league-format"><option value="SINGLES">Singles</option><option value="DOUBLES">Doubles</option></select>
+        </div>
+        <div class="form-group"><label class="form-label">Session Length <span class="req">*</span></label>
+          <select class="form-select" id="league-session-length"><option value="5">5 weeks</option><option value="10">10 weeks</option></select>
+        </div>
+      </div>
+      <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="2" max="16" placeholder="e.g. 4"><div class="form-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date"></div>
+        <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Dates Off</label>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input class="form-input" id="league-date-off-input" type="date" style="max-width:200px">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="addLeagueDateOff()">+ Add</button>
+        </div>
+        <div id="league-dates-off-list" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+        <div class="form-hint">Holidays or breaks — the schedule generator will skip these dates.</div>
+      </div>
+      <div id="league-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('league-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLeague()" id="save-league-btn">Create League</button>
+    </div>
+  </div>
+</div>
+
+<!-- LEAGUE TEAM MODAL -->
+<div class="modal-overlay" id="league-team-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title" id="league-team-modal-title">New Team</div><button class="modal-close" onclick="closeModal('league-team-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Team Name <span class="req">*</span></label><input class="form-input" id="team-name" placeholder="e.g. Oakwood A"></div>
+      <div class="form-group"><label class="form-label">Home Club <span class="req">*</span></label><select class="form-select" id="team-club"><option value="">Select club…</option></select></div>
+      <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Coach</div>
+        <div class="form-group">
+          <label class="form-label">Link to an existing player</label>
+          <select class="form-select" id="team-coach-player" onchange="autofillCoachFromPlayer(this.value)"><option value="">— Coach is not a current player —</option></select>
+          <div class="form-hint">Optional. If the coach already plays in the system, linking auto-fills their name.</div>
+        </div>
+        <div class="form-group"><label class="form-label">Coach Name <span class="req">*</span></label><input class="form-input" id="team-coach-name" placeholder="Full name"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Coach Phone</label><input class="form-input" id="team-coach-phone" placeholder="(555) 555-5555"></div>
+          <div class="form-group"><label class="form-label">Coach Email</label><input class="form-input" id="team-coach-email" type="email" placeholder="coach@email.com"></div>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Locked Time Slot</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Day <span class="req">*</span></label>
+            <select class="form-select" id="team-slot-day">
+              <option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option>
+              <option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option><option value="0">Sunday</option>
+            </select>
+          </div>
+          <div class="form-group"><label class="form-label">Time <span class="req">*</span></label><input class="form-input" id="team-slot-time" type="time"></div>
+        </div>
+        <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time.</div>
+      </div>
+      <div id="league-team-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('league-team-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLeagueTeam()" id="save-league-team-btn">Add Team</button>
     </div>
   </div>
 </div>
@@ -4628,7 +4742,7 @@ let adminAllEvents = [], adminEventFilter = 'all';
 function adminTab(name,btn) {
   document.querySelectorAll('#admin-screen .nav-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
-  ['overview','clubs','directors','players','events','settings'].forEach(t=>{
+  ['overview','clubs','directors','players','events','leagues','settings'].forEach(t=>{
     const el = document.getElementById(`tab-${t}`);
     if(el) el.style.display = t===name?'block':'none';
   });
@@ -4636,6 +4750,7 @@ function adminTab(name,btn) {
   if(name==='directors') loadDirectors();
   if(name==='players') loadPlayers('players-list');
   if(name==='events') loadAdminEvents();
+  if(name==='leagues') loadLeagues();
   if(name==='settings') {
     document.getElementById('auto-lookup-toggle').checked = AUTO_LOOKUP;
     document.getElementById('lookup-states-input').value = LOOKUP_STATES.join(', ');
@@ -4793,6 +4908,332 @@ async function loadDirectors() {
     </td>
   </tr>`).join('')}
   </tbody></table>`;
+}
+
+// ══════════════════════════════════════════════
+// LEAGUES
+// ══════════════════════════════════════════════
+const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+let currentLeague = null;
+let currentLeagueTeams = [];
+let leagueDatesOffDraft = [];
+let editLeagueId = null;
+let editTeamId = null;
+
+async function loadLeagues() {
+  const el = document.getElementById('leagues-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const [{data:leagues}, {data:teams}] = await Promise.all([
+    sb.from('leagues').select('*').order('start_date',{ascending:false}),
+    sb.from('league_teams').select('id,league_id')
+  ]);
+  const counts = {};
+  (teams||[]).forEach(t=>{ counts[t.league_id]=(counts[t.league_id]||0)+1; });
+  renderLeaguesList(leagues||[], counts);
+}
+
+function renderLeaguesList(leagues, counts) {
+  const el = document.getElementById('leagues-list');
+  if(!leagues.length){
+    el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-title">No leagues yet</div><button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button></div></div>';
+    return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  el.innerHTML = leagues.map(l=>{
+    const teamCount = counts[l.id]||0;
+    const status = today < l.start_date ? 'Upcoming' : today > l.end_date ? 'Complete' : 'Active';
+    const statusClass = status==='Active'?'badge-green':status==='Upcoming'?'badge-blue':'badge-red';
+    const accentClass = status==='Active'?'live':status==='Complete'?'complete':'draft';
+    return `<div class="event-card" onclick="openLeagueById('${l.id}')">
+      <div class="event-card-accent ${accentClass}"></div>
+      <div class="event-card-body">
+        <div>
+          <div class="event-card-name">${l.name}</div>
+          <div class="event-card-meta">
+            <span>${l.format==='SINGLES'?'Singles':'Doubles'}</span>
+            <span>${l.session_length_weeks} weeks</span>
+            <span>${teamCount} of ${l.team_count} teams</span>
+            <span>${fmtDate(l.start_date)} – ${fmtDate(l.end_date)}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge ${statusClass}">${status}</span>
+          <span class="event-card-arrow">›</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openNewLeagueModal() {
+  editLeagueId = null;
+  leagueDatesOffDraft = [];
+  document.getElementById('league-modal-title').textContent='New League';
+  document.getElementById('save-league-btn').textContent='Create League';
+  ['league-name','league-start-date','league-end-date','league-team-count'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('league-format').value='SINGLES';
+  document.getElementById('league-session-length').value='5';
+  renderDatesOffList();
+  document.getElementById('league-error').style.display='none';
+  openModal('league-modal');
+}
+
+async function editLeague(id) {
+  const {data:l} = await sb.from('leagues').select('*').eq('id',id).single();
+  if(!l) return;
+  editLeagueId = id;
+  leagueDatesOffDraft = [...(l.dates_off||[])];
+  document.getElementById('league-modal-title').textContent='Edit League';
+  document.getElementById('save-league-btn').textContent='Save Changes';
+  document.getElementById('league-name').value=l.name;
+  document.getElementById('league-format').value=l.format;
+  document.getElementById('league-session-length').value=String(l.session_length_weeks);
+  document.getElementById('league-team-count').value=l.team_count;
+  document.getElementById('league-start-date').value=l.start_date;
+  document.getElementById('league-end-date').value=l.end_date;
+  renderDatesOffList();
+  document.getElementById('league-error').style.display='none';
+  openModal('league-modal');
+}
+
+function addLeagueDateOff() {
+  const input = document.getElementById('league-date-off-input');
+  if(!input.value) return;
+  if(!leagueDatesOffDraft.includes(input.value)) {
+    leagueDatesOffDraft.push(input.value);
+    leagueDatesOffDraft.sort();
+  }
+  input.value='';
+  renderDatesOffList();
+}
+
+function removeLeagueDateOff(d) {
+  leagueDatesOffDraft = leagueDatesOffDraft.filter(x=>x!==d);
+  renderDatesOffList();
+}
+
+function renderDatesOffList() {
+  const el = document.getElementById('league-dates-off-list');
+  if(!leagueDatesOffDraft.length){ el.innerHTML=''; return; }
+  el.innerHTML = leagueDatesOffDraft.map(d=>
+    `<span class="badge badge-blue" style="display:inline-flex;align-items:center;gap:6px">${fmtDate(d)} <span style="cursor:pointer" onclick="removeLeagueDateOff('${d}')">×</span></span>`
+  ).join('');
+}
+
+async function saveLeague() {
+  const name = document.getElementById('league-name').value.trim();
+  const format = document.getElementById('league-format').value;
+  const sessionLength = parseInt(document.getElementById('league-session-length').value);
+  const teamCount = parseInt(document.getElementById('league-team-count').value);
+  const startDate = document.getElementById('league-start-date').value;
+  const endDate = document.getElementById('league-end-date').value;
+  const errEl = document.getElementById('league-error');
+  errEl.style.display='none';
+  if(!name){errEl.textContent='League name required.';errEl.style.display='flex';return;}
+  if(!teamCount||teamCount<2){errEl.textContent='Number of teams must be at least 2.';errEl.style.display='flex';return;}
+  if(!startDate||!endDate){errEl.textContent='Start and end dates are required.';errEl.style.display='flex';return;}
+  if(endDate<startDate){errEl.textContent='End date must be after start date.';errEl.style.display='flex';return;}
+
+  const payload = {
+    name, format, session_length_weeks: sessionLength, team_count: teamCount,
+    start_date: startDate, end_date: endDate, dates_off: leagueDatesOffDraft
+  };
+  const btn = document.getElementById('save-league-btn');
+  btn.disabled=true;
+  const {error} = editLeagueId
+    ? await sb.from('leagues').update(payload).eq('id',editLeagueId)
+    : await sb.from('leagues').insert(payload);
+  btn.disabled=false;
+  if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+  toast(editLeagueId?'League updated!':'League created!','success');
+  const wasEditingCurrent = currentLeague && currentLeague.id===editLeagueId;
+  closeModal('league-modal');
+  loadLeagues();
+  if(wasEditingCurrent) openLeagueById(editLeagueId);
+}
+
+async function deleteLeague(id, name) {
+  if(!confirm(`Permanently delete "${name}"? This also deletes all its teams.`)) return;
+  await sb.from('leagues').delete().eq('id',id);
+  toast(`"${name}" deleted`,'success');
+  closeLeague();
+}
+
+function openLeagueById(id) {
+  sb.from('leagues').select('*').eq('id',id).single().then(({data})=>{
+    if(data) openLeague(data);
+  });
+}
+
+function openLeague(league) {
+  currentLeague = league;
+  document.getElementById('league-detail-name').textContent = league.name;
+  document.getElementById('league-detail-sub').textContent = `${league.format==='SINGLES'?'Singles':'Doubles'} · ${league.session_length_weeks} weeks · ${fmtDate(league.start_date)} – ${fmtDate(league.end_date)}`;
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('league-screen').classList.add('active');
+  leagueDetailTab('teams', document.querySelector('#league-screen .event-nav-tab'));
+  loadLeagueTeams();
+}
+
+function closeLeague() {
+  currentLeague = null; currentLeagueTeams = [];
+  document.getElementById('league-screen').classList.remove('active');
+  document.getElementById('admin-screen').classList.add('active');
+  loadLeagues();
+  loadAdminData();
+}
+
+function leagueDetailTab(name, btn) {
+  document.querySelectorAll('#league-screen .event-nav-tab').forEach(t=>t.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  ['teams','settings'].forEach(t=>{
+    document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
+  });
+  if(name==='settings') renderLeagueSettings();
+}
+
+function renderLeagueSettings() {
+  const l = currentLeague;
+  const el = document.getElementById('league-settings-body');
+  el.innerHTML = `
+    <table class="data-table">
+      <tbody>
+        <tr><td style="font-weight:600;width:180px">Format</td><td>${l.format==='SINGLES'?'Singles':'Doubles'}</td></tr>
+        <tr><td style="font-weight:600">Session Length</td><td>${l.session_length_weeks} weeks</td></tr>
+        <tr><td style="font-weight:600">Team Count</td><td>${l.team_count}</td></tr>
+        <tr><td style="font-weight:600">Start Date</td><td>${fmtDate(l.start_date)}</td></tr>
+        <tr><td style="font-weight:600">End Date</td><td>${fmtDate(l.end_date)}</td></tr>
+        <tr><td style="font-weight:600">Dates Off</td><td>${(l.dates_off||[]).length?l.dates_off.map(d=>fmtDate(d)).join(', '):'None'}</td></tr>
+      </tbody>
+    </table>
+    <div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn btn-secondary" onclick="editLeague('${l.id}')">Edit League</button>
+      <button class="btn btn-danger" onclick="deleteLeague('${l.id}','${escQ(l.name)}')">Delete League</button>
+    </div>`;
+}
+
+async function loadLeagueTeams() {
+  const el = document.getElementById('league-teams-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const {data} = await sb.from('league_teams').select('*,clubs(name),players(roster_name)').eq('league_id',currentLeague.id).order('name');
+  currentLeagueTeams = data||[];
+  renderLeagueTeams();
+}
+
+function renderLeagueTeams() {
+  const el = document.getElementById('league-teams-list');
+  if(!currentLeagueTeams.length){
+    el.innerHTML=`<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No teams yet</div><div class="empty-sub">${currentLeague.team_count} planned for this league</div><button class="btn btn-primary" onclick="openTeamModalNew()">+ Add Team</button></div></div>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Actions</th></tr></thead><tbody>
+  ${currentLeagueTeams.map(t=>`<tr>
+    <td><strong>${t.name}</strong></td>
+    <td>${t.clubs?.name||'—'}</td>
+    <td>${t.coach_name}${t.players?.roster_name?` <span style="font-size:11px;color:var(--ink-muted)">(${t.players.roster_name})</span>`:''}</td>
+    <td>${t.time_slot_day!=null&&t.time_slot_time?`${DAY_NAMES[t.time_slot_day]} ${fmtTime(t.time_slot_time)}`:'—'}</td>
+    <td style="display:flex;gap:6px">
+      <button class="btn btn-sm btn-ghost" onclick="openTeamModalEdit('${t.id}')">Edit</button>
+      <button class="btn btn-sm btn-danger" onclick="deleteLeagueTeam('${t.id}','${escQ(t.name)}')">Delete</button>
+    </td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">${currentLeagueTeams.length} of ${currentLeague.team_count} planned teams</div>`;
+}
+
+async function populateTeamSelects(selectedClub, selectedPlayer) {
+  const clubSel=document.getElementById('team-club');
+  clubSel.innerHTML='<option value="">Select club…</option>';
+  const {data:clubs}=await sb.from('clubs').select('id,name').order('name');
+  (clubs||[]).forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;clubSel.appendChild(o);});
+  clubSel.value=selectedClub||'';
+
+  const playerSel=document.getElementById('team-coach-player');
+  playerSel.innerHTML='<option value="">— Coach is not a current player —</option>';
+  const {data:players}=await sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name');
+  (players||[]).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.roster_name;playerSel.appendChild(o);});
+  playerSel.value=selectedPlayer||'';
+}
+
+function autofillCoachFromPlayer(playerId) {
+  if(!playerId) return;
+  const opt = document.querySelector(`#team-coach-player option[value="${playerId}"]`);
+  if(opt) document.getElementById('team-coach-name').value = opt.textContent;
+}
+
+async function openTeamModalNew() {
+  editTeamId = null;
+  await populateTeamSelects('', '');
+  document.getElementById('league-team-modal-title').textContent='New Team';
+  document.getElementById('save-league-team-btn').textContent='Add Team';
+  ['team-name','team-coach-name','team-coach-phone','team-coach-email','team-slot-time'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('team-slot-day').value='1';
+  document.getElementById('league-team-error').style.display='none';
+  openModal('league-team-modal');
+}
+
+async function openTeamModalEdit(id) {
+  const t = currentLeagueTeams.find(x=>x.id===id);
+  if(!t) return;
+  editTeamId = id;
+  await populateTeamSelects(t.club_id||'', t.coach_player_id||'');
+  document.getElementById('league-team-modal-title').textContent='Edit Team';
+  document.getElementById('save-league-team-btn').textContent='Save Changes';
+  document.getElementById('team-name').value=t.name;
+  document.getElementById('team-coach-name').value=t.coach_name||'';
+  document.getElementById('team-coach-phone').value=t.coach_phone||'';
+  document.getElementById('team-coach-email').value=t.coach_email||'';
+  document.getElementById('team-slot-day').value = t.time_slot_day!=null?String(t.time_slot_day):'1';
+  document.getElementById('team-slot-time').value = t.time_slot_time||'';
+  document.getElementById('league-team-error').style.display='none';
+  openModal('league-team-modal');
+}
+
+async function saveLeagueTeam() {
+  const name=document.getElementById('team-name').value.trim();
+  const clubId=document.getElementById('team-club').value;
+  const coachPlayerId=document.getElementById('team-coach-player').value||null;
+  const coachName=document.getElementById('team-coach-name').value.trim();
+  const coachPhone=document.getElementById('team-coach-phone').value.trim()||null;
+  const coachEmail=document.getElementById('team-coach-email').value.trim()||null;
+  const slotDay=document.getElementById('team-slot-day').value;
+  const slotTime=document.getElementById('team-slot-time').value||null;
+  const errEl=document.getElementById('league-team-error');
+  errEl.style.display='none';
+  if(!name){errEl.textContent='Team name required.';errEl.style.display='flex';return;}
+  if(!clubId){errEl.textContent='Home club required.';errEl.style.display='flex';return;}
+  if(!coachName){errEl.textContent='Coach name required.';errEl.style.display='flex';return;}
+
+  const payload = {
+    league_id: currentLeague.id, name, club_id: clubId,
+    coach_player_id: coachPlayerId, coach_name: coachName, coach_phone: coachPhone, coach_email: coachEmail,
+    time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime
+  };
+  const btn=document.getElementById('save-league-team-btn');
+  btn.disabled=true;
+  const {error} = editTeamId
+    ? await sb.from('league_teams').update(payload).eq('id',editTeamId)
+    : await sb.from('league_teams').insert(payload);
+  btn.disabled=false;
+  if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+  toast(editTeamId?'Team updated!':'Team added!','success');
+  closeModal('league-team-modal');
+  loadLeagueTeams();
+}
+
+async function deleteLeagueTeam(id, name) {
+  if(!confirm(`Remove team "${name}" from this league?`)) return;
+  await sb.from('league_teams').delete().eq('id',id);
+  toast(`"${name}" removed`,'success');
+  loadLeagueTeams();
+}
+
+function fmtTime(t) {
+  if(!t) return '—';
+  const [h,m] = t.split(':').map(Number);
+  const period = h>=12?'PM':'AM';
+  const h12 = h%12===0?12:h%12;
+  return `${h12}:${String(m).padStart(2,'0')} ${period}`;
 }
 
 async function loadPlayers(containerId, filterMode) {
