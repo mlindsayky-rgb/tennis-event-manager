@@ -680,19 +680,40 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub" id="league-detail-sub">—</div>
       </div>
     </div>
-    <button class="header-btn" onclick="openTeamModalNew()">+ Add Team</button>
+    <button class="header-btn" id="league-detail-action-btn" onclick="openTeamModalNew()">+ Add Team</button>
   </header>
   <nav class="event-nav">
     <button class="event-nav-tab active" onclick="leagueDetailTab('teams',this)">Teams</button>
+    <button class="event-nav-tab" onclick="leagueDetailTab('matches',this)">Matches</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
   <div class="content">
     <div id="ltab-teams">
       <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
+    <div id="ltab-matches" style="display:none">
+      <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
     <div id="ltab-settings" style="display:none">
       <div class="card"><div class="card-body" id="league-settings-body"></div></div>
     </div>
+  </div>
+</div>
+
+<!-- ══ MATCH SCORE ENTRY SCREEN ══ -->
+<div id="match-screen" class="screen">
+  <header class="app-header" id="match-header" style="background:linear-gradient(135deg,var(--navy) 0%,var(--court) 100%)">
+    <div class="app-header-left">
+      <button class="header-btn" onclick="closeMatch()" style="margin-right:8px">← Back</button>
+      <div>
+        <div class="app-header-title" id="match-header-name">Match</div>
+        <div class="app-header-sub" id="match-header-sub">—</div>
+      </div>
+    </div>
+  </header>
+  <div class="content">
+    <div class="card" id="match-summary-card" style="margin-bottom:20px"></div>
+    <div id="match-courts-list"></div>
   </div>
 </div>
 
@@ -919,6 +940,30 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('league-team-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveLeagueTeam()" id="save-league-team-btn">Add Team</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW MATCH MODAL -->
+<div class="modal-overlay" id="new-match-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">New Match</div><button class="modal-close" onclick="closeModal('new-match-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Team A <span class="req">*</span></label><select class="form-select" id="match-team-a" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
+        <div class="form-group"><label class="form-label">Team B <span class="req">*</span></label><select class="form-select" id="match-team-b" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Match Date <span class="req">*</span></label><input class="form-input" id="match-date" type="date"></div>
+      <div class="form-group">
+        <label class="form-label">Court Site Split</label>
+        <div id="match-court-split"><div class="form-hint">Select both teams to set the court split.</div></div>
+        <div class="form-hint">Which team's site hosts each court. Suggested split alternates automatically based on how many times these two teams have already met this league.</div>
+      </div>
+      <div id="new-match-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('new-match-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewMatch()" id="save-match-btn">Create Match</button>
     </div>
   </div>
 </div>
@@ -5086,9 +5131,14 @@ function closeLeague() {
 function leagueDetailTab(name, btn) {
   document.querySelectorAll('#league-screen .event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['teams','settings'].forEach(t=>{
+  ['teams','matches','settings'].forEach(t=>{
     document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
   });
+  const actionBtn = document.getElementById('league-detail-action-btn');
+  if(name==='teams') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ Add Team'; actionBtn.onclick=openTeamModalNew; }
+  else if(name==='matches') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
+  else { actionBtn.style.display='none'; }
+  if(name==='matches') loadLeagueMatches();
   if(name==='settings') renderLeagueSettings();
 }
 
@@ -5234,6 +5284,391 @@ function fmtTime(t) {
   const period = h>=12?'PM':'AM';
   const h12 = h%12===0?12:h%12;
   return `${h12}:${String(m).padStart(2,'0')} ${period}`;
+}
+
+// ══════════════════════════════════════════════
+// LEAGUE MATCHES — court result entry & scoring
+// ══════════════════════════════════════════════
+let matchSiteACourts = [];
+let currentMatch = null, currentMatchTeamA = null, currentMatchTeamB = null;
+let currentMatchResults = {};   // court_number -> saved court_results row
+let courtDrafts = {};           // court_number -> in-progress edit state
+let matchAllPlayers = [];       // cached active players for court pickers
+
+function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
+
+async function loadLeagueMatches() {
+  const el = document.getElementById('league-matches-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const [{data:matches}, {data:teams}] = await Promise.all([
+    sb.from('league_matches').select('*').eq('league_id',currentLeague.id).order('match_date',{ascending:false}),
+    sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id)
+  ]);
+  const matchIds = (matches||[]).map(m=>m.id);
+  const {data:results} = matchIds.length
+    ? await sb.from('court_results').select('match_id').in('match_id',matchIds)
+    : {data:[]};
+  const resultCounts = {};
+  (results||[]).forEach(r=>{ resultCounts[r.match_id]=(resultCounts[r.match_id]||0)+1; });
+  renderLeagueMatches(matches||[], teams||[], resultCounts);
+}
+
+function renderLeagueMatches(matches, teams, resultCounts) {
+  const el = document.getElementById('league-matches-list');
+  if(!matches.length){
+    el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No matches yet</div><button class="btn btn-primary" onclick="openNewMatchModal()">+ New Match</button></div></div>';
+    return;
+  }
+  const n = courtsForFormat();
+  const teamName = id => teams.find(t=>t.id===id)?.name || '—';
+  el.innerHTML = matches.map(m=>{
+    const entered = resultCounts[m.id]||0;
+    const complete = entered>=n;
+    return `<div class="event-card" onclick="openMatchById('${m.id}')">
+      <div class="event-card-accent ${complete?'complete':'draft'}"></div>
+      <div class="event-card-body">
+        <div>
+          <div class="event-card-name">${teamName(m.team_a_id)} vs ${teamName(m.team_b_id)}</div>
+          <div class="event-card-meta"><span>${fmtDate(m.match_date)}</span><span>${entered} of ${n} courts entered</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="badge ${complete?'badge-green':'badge-blue'}">${complete?'Complete':'In Progress'}</span>
+          <span class="event-card-arrow">›</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function openNewMatchModal() {
+  matchSiteACourts = [];
+  document.getElementById('match-date').value='';
+  document.getElementById('new-match-error').style.display='none';
+  document.getElementById('match-court-split').innerHTML='<div class="form-hint">Select both teams to set the court split.</div>';
+  const {data:teams} = await sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id).order('name');
+  ['match-team-a','match-team-b'].forEach(id=>{
+    const s=document.getElementById(id);
+    s.innerHTML='<option value="">Select…</option>'+(teams||[]).map(t=>`<option value="${t.id}">${escQ(t.name)}</option>`).join('');
+  });
+  openModal('new-match-modal');
+}
+
+async function renderCourtSplitPicker() {
+  const teamAId = document.getElementById('match-team-a').value;
+  const teamBId = document.getElementById('match-team-b').value;
+  const el = document.getElementById('match-court-split');
+  if(!teamAId || !teamBId || teamAId===teamBId) {
+    el.innerHTML = '<div class="form-hint">Select two different teams to set the court split.</div>';
+    matchSiteACourts = [];
+    return;
+  }
+  const n = courtsForFormat();
+  const {data:prior} = await sb.from('league_matches').select('id')
+    .or(`and(team_a_id.eq.${teamAId},team_b_id.eq.${teamBId}),and(team_a_id.eq.${teamBId},team_b_id.eq.${teamAId})`);
+  const flip = (prior||[]).length % 2 === 1;
+  matchSiteACourts = n===3 ? (flip?[3]:[1,2]) : (flip?[3,4]:[1,2]);
+  renderCourtSplitButtons(n);
+}
+
+function renderCourtSplitButtons(n) {
+  const teamAName = document.querySelector('#match-team-a option:checked').textContent;
+  const teamBName = document.querySelector('#match-team-b option:checked').textContent;
+  const el = document.getElementById('match-court-split');
+  el.innerHTML = Array.from({length:n},(_,i)=>i+1).map(c=>{
+    const atA = matchSiteACourts.includes(c);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <span style="width:64px;font-weight:600">Court ${c}</span>
+      <button type="button" class="btn btn-sm ${atA?'btn-primary':'btn-ghost'}" onclick="toggleCourtSite(${c},true)">${escQ(teamAName)}'s site</button>
+      <button type="button" class="btn btn-sm ${!atA?'btn-primary':'btn-ghost'}" onclick="toggleCourtSite(${c},false)">${escQ(teamBName)}'s site</button>
+    </div>`;
+  }).join('');
+}
+
+function toggleCourtSite(court, toA) {
+  matchSiteACourts = toA
+    ? [...new Set([...matchSiteACourts, court])]
+    : matchSiteACourts.filter(c=>c!==court);
+  renderCourtSplitButtons(courtsForFormat());
+}
+
+async function saveNewMatch() {
+  const teamAId = document.getElementById('match-team-a').value;
+  const teamBId = document.getElementById('match-team-b').value;
+  const date = document.getElementById('match-date').value;
+  const errEl = document.getElementById('new-match-error');
+  errEl.style.display='none';
+  if(!teamAId || !teamBId || teamAId===teamBId){ errEl.textContent='Select two different teams.'; errEl.style.display='flex'; return; }
+  if(!date){ errEl.textContent='Match date is required.'; errEl.style.display='flex'; return; }
+  const n = courtsForFormat();
+  if(matchSiteACourts.length===0 || matchSiteACourts.length===n){ errEl.textContent='Split the courts between both sites — one team can\'t host every court.'; errEl.style.display='flex'; return; }
+
+  const btn = document.getElementById('save-match-btn');
+  btn.disabled = true;
+  const {error} = await sb.from('league_matches').insert({
+    league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
+    match_date: date, site_a_courts: matchSiteACourts
+  });
+  btn.disabled = false;
+  if(error){ errEl.textContent='Error: '+error.message; errEl.style.display='flex'; return; }
+  toast('Match created!','success');
+  closeModal('new-match-modal');
+  loadLeagueMatches();
+}
+
+async function openMatchById(id) {
+  const {data:match} = await sb.from('league_matches').select('*').eq('id',id).single();
+  if(!match) return;
+  const [{data:teamA},{data:teamB},{data:results},{data:players}] = await Promise.all([
+    sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_a_id).single(),
+    sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_b_id).single(),
+    sb.from('court_results').select('*').eq('match_id',id),
+    sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name')
+  ]);
+  currentMatch = match;
+  currentMatchTeamA = teamA;
+  currentMatchTeamB = teamB;
+  matchAllPlayers = players||[];
+  currentMatchResults = {};
+  courtDrafts = {};
+  (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
+
+  document.getElementById('match-header-name').textContent = `${teamA.name} vs ${teamB.name}`;
+  document.getElementById('match-header-sub').textContent = fmtDate(match.match_date);
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('match-screen').classList.add('active');
+  renderMatchScreen();
+}
+
+function closeMatch() {
+  currentMatch = null; currentMatchTeamA = null; currentMatchTeamB = null;
+  currentMatchResults = {}; courtDrafts = {};
+  document.getElementById('match-screen').classList.remove('active');
+  document.getElementById('league-screen').classList.add('active');
+  loadLeagueMatches();
+}
+
+function playerOptionsHtml(selectedId) {
+  return '<option value="">Select player…</option>' + matchAllPlayers.map(p =>
+    `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${escQ(p.roster_name)}</option>`
+  ).join('');
+}
+
+function renderMatchScreen() {
+  const n = courtsForFormat();
+  const isDoubles = currentLeague.format==='DOUBLES';
+  const list = document.getElementById('match-courts-list');
+  let html = '';
+  for (let c=1; c<=n; c++) {
+    initCourtDraft(c);
+    const atTeamA = (currentMatch.site_a_courts||[]).includes(c);
+    const siteLabel = atTeamA
+      ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name}`
+      : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name}`;
+    const d = courtDrafts[c];
+    html += `<div class="card" style="margin-bottom:16px">
+      <div class="card-header"><div class="card-title">Court ${c}</div><span class="badge badge-blue">${escQ(siteLabel)}</span></div>
+      <div class="card-body">
+        <div class="form-row">
+          <div>
+            <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)}</div>
+            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1)}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2)}</select>`:''}
+            <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
+              <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
+              <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
+              <option value="SOS" ${d.teamAType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)}</div>
+            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1)}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2)}</select>`:''}
+            <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
+              <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
+              <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
+              <option value="SOS" ${d.teamBType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <div style="font-weight:700;margin-bottom:8px">Sets</div>
+          <div id="court-${c}-sets"></div>
+          <button class="btn btn-sm btn-secondary" type="button" onclick="addSetRow(${c})">+ Add Set</button>
+        </div>
+        <div id="court-${c}-winner" style="margin-top:12px;font-size:13px;color:var(--ink-muted)"></div>
+        <button class="btn btn-primary" style="margin-top:14px" onclick="saveCourtResult(${c})">Save Court ${c}</button>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html;
+  for (let c=1; c<=n; c++) { renderSetRows(c); updateCourtWinnerDisplay(c); }
+  renderMatchSummary();
+}
+
+function initCourtDraft(c) {
+  const existing = currentMatchResults[c];
+  courtDrafts[c] = existing ? {
+    teamAP1: existing.team_a_player1_id || '', teamAP2: existing.team_a_player2_id || '',
+    teamBP1: existing.team_b_player1_id || '', teamBP2: existing.team_b_player2_id || '',
+    teamAType: existing.team_a_entry_type, teamBType: existing.team_b_entry_type,
+    sets: (existing.sets && existing.sets.length) ? existing.sets.map(s=>({...s})) : [{team_a_games:0,team_b_games:0,is_complete:true}]
+  } : {
+    teamAP1:'', teamAP2:'', teamBP1:'', teamBP2:'', teamAType:'NORMAL', teamBType:'NORMAL',
+    sets:[{team_a_games:0,team_b_games:0,is_complete:true}]
+  };
+}
+
+function updateDraftField(c, field, value) {
+  courtDrafts[c][field] = value;
+  updateCourtWinnerDisplay(c);
+  renderMatchSummary();
+}
+
+function renderSetRows(c) {
+  const el = document.getElementById(`court-${c}-sets`);
+  const sets = courtDrafts[c].sets;
+  el.innerHTML = sets.map((s,i)=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+    <input class="form-input" type="number" min="0" placeholder="Games" style="max-width:80px" value="${s.team_a_games}" oninput="updateSetField(${c},${i},'team_a_games',this.value)">
+    <span>–</span>
+    <input class="form-input" type="number" min="0" placeholder="Games" style="max-width:80px" value="${s.team_b_games}" oninput="updateSetField(${c},${i},'team_b_games',this.value)">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-muted)"><input type="checkbox" ${s.is_complete?'checked':''} onchange="updateSetField(${c},${i},'is_complete',this.checked)"> Finished</label>
+    ${sets.length>1?`<button class="btn btn-sm btn-ghost" type="button" onclick="removeSetRow(${c},${i})">✕</button>`:''}
+  </div>`).join('');
+}
+
+function updateSetField(c, i, field, value) {
+  courtDrafts[c].sets[i][field] = field==='is_complete' ? value : value;
+  updateCourtWinnerDisplay(c);
+  renderMatchSummary();
+}
+
+function addSetRow(c) {
+  courtDrafts[c].sets.push({team_a_games:0, team_b_games:0, is_complete:true});
+  renderSetRows(c);
+  updateCourtWinnerDisplay(c);
+  renderMatchSummary();
+}
+
+function removeSetRow(c, i) {
+  courtDrafts[c].sets.splice(i,1);
+  renderSetRows(c);
+  updateCourtWinnerDisplay(c);
+  renderMatchSummary();
+}
+
+// ── Pure scoring logic ──
+// A set's winner: more games, even mid-set (the incomplete-set rule applies whether
+// or not "Finished" is checked). An exact tie only happens on an unfinished set —
+// treated as a push: no set-win for either side, but its games still count.
+function setWinner(set) {
+  const a = Number(set.team_a_games)||0, b = Number(set.team_b_games)||0;
+  if (a===b) return null;
+  return a>b ? 'A' : 'B';
+}
+
+// A court's winner: SOS auto-loses that side's court outright; otherwise most sets
+// won, then that court's own total games if sets are tied (an extension beyond the
+// doc's explicit text, to resolve an otherwise-undefined all-push edge case).
+function courtWinner(cr) {
+  if (cr.teamAType==='SOS') return 'B';
+  if (cr.teamBType==='SOS') return 'A';
+  let aSets=0, bSets=0, aGames=0, bGames=0;
+  (cr.sets||[]).forEach(s=>{
+    aGames += Number(s.team_a_games)||0; bGames += Number(s.team_b_games)||0;
+    const w = setWinner(s);
+    if (w==='A') aSets++; else if (w==='B') bSets++;
+  });
+  if (aSets!==bSets) return aSets>bSets ? 'A' : 'B';
+  if (aGames!==bGames) return aGames>bGames ? 'A' : 'B';
+  return null;
+}
+
+function courtGames(cr) {
+  let a=0,b=0;
+  (cr.sets||[]).forEach(s=>{ a+=Number(s.team_a_games)||0; b+=Number(s.team_b_games)||0; });
+  return {a,b};
+}
+
+// Match winner, exactly per the doc's three-step order: courts won, then total
+// games across every court (SOS courts' real games still count here), then Court 1.
+function matchSummary(courtDraftsMap, n) {
+  let aCourts=0, bCourts=0, aGames=0, bGames=0, court1Winner=null;
+  for (let c=1; c<=n; c++) {
+    const cr = courtDraftsMap[c];
+    if (!cr) continue;
+    const w = courtWinner(cr);
+    if (w==='A') aCourts++; else if (w==='B') bCourts++;
+    const g = courtGames(cr);
+    aGames += g.a; bGames += g.b;
+    if (c===1) court1Winner = w;
+  }
+  let winner=null, reason='';
+  if (aCourts!==bCourts) { winner = aCourts>bCourts?'A':'B'; reason = 'courts won'; }
+  else if (aGames!==bGames) { winner = aGames>bGames?'A':'B'; reason = 'total games (courts tied)'; }
+  else { winner = court1Winner; reason = court1Winner ? 'Court 1 (courts and games tied)' : 'undecided'; }
+  return {aCourts,bCourts,aGames,bGames,winner,reason};
+}
+
+function updateCourtWinnerDisplay(c) {
+  const el = document.getElementById(`court-${c}-winner`);
+  if (!el) return;
+  const d = courtDrafts[c];
+  const w = courtWinner(d);
+  const g = courtGames(d);
+  const label = w==='A' ? currentMatchTeamA.name : w==='B' ? currentMatchTeamB.name : '—';
+  el.textContent = `Games: ${currentMatchTeamA.name} ${g.a} – ${g.b} ${currentMatchTeamB.name}  ·  Court winner so far: ${label}`;
+}
+
+function renderMatchSummary() {
+  const n = courtsForFormat();
+  const s = matchSummary(courtDrafts, n);
+  const enteredCount = Object.keys(currentMatchResults).length;
+  const complete = enteredCount >= n;
+  const winnerName = s.winner==='A' ? currentMatchTeamA.name : s.winner==='B' ? currentMatchTeamB.name : 'Not yet decided';
+  document.getElementById('match-summary-card').innerHTML = `
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:20px;font-weight:700">${escQ(currentMatchTeamA.name)} ${s.aCourts} – ${s.bCourts} ${escQ(currentMatchTeamB.name)}</div>
+          <div style="font-size:13px;color:var(--ink-muted);margin-top:4px">Total games: ${s.aGames} – ${s.bGames} &nbsp;·&nbsp; ${enteredCount} of ${n} courts saved</div>
+        </div>
+        <div style="text-align:right">
+          <span class="badge ${complete?'badge-green':'badge-blue'}">${complete?'Complete':'In Progress'}</span>
+          <div style="font-size:14px;font-weight:700;margin-top:6px">${escQ(winnerName)}</div>
+          <div style="font-size:11px;color:var(--ink-muted)">${escQ(s.reason)}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveCourtResult(c) {
+  const d = courtDrafts[c];
+  const isDoubles = currentLeague.format==='DOUBLES';
+  if (!d.teamAP1 || !d.teamBP1) { toast(`Select both players for Court ${c}`,'error'); return; }
+  if (isDoubles && (!d.teamAP2 || !d.teamBP2)) { toast(`Doubles needs both partners for Court ${c}`,'error'); return; }
+  if (d.teamAType==='SOS' && d.teamBType==='SOS') { toast('Both sides can\'t be SOS on the same court','error'); return; }
+  if (!d.sets.length) { toast('Add at least one set','error'); return; }
+  for (const s of d.sets) {
+    const a=Number(s.team_a_games), b=Number(s.team_b_games);
+    if (isNaN(a)||isNaN(b)||a<0||b<0) { toast('Set scores must be non-negative numbers','error'); return; }
+    if (s.is_complete && a===b) { toast('A finished set can\'t be tied in games','error'); return; }
+  }
+
+  const payload = {
+    match_id: currentMatch.id, court_number: c,
+    team_a_player1_id: d.teamAP1, team_a_player2_id: isDoubles ? d.teamAP2 : null,
+    team_b_player1_id: d.teamBP1, team_b_player2_id: isDoubles ? d.teamBP2 : null,
+    team_a_entry_type: d.teamAType, team_b_entry_type: d.teamBType,
+    sets: d.sets.map(s=>({team_a_games:Number(s.team_a_games), team_b_games:Number(s.team_b_games), is_complete:!!s.is_complete}))
+  };
+  const existing = currentMatchResults[c];
+  const {data, error} = existing
+    ? await sb.from('court_results').update(payload).eq('id',existing.id).select().single()
+    : await sb.from('court_results').insert(payload).select().single();
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  currentMatchResults[c] = data;
+  toast(`Court ${c} saved`,'success');
+  renderMatchSummary();
 }
 
 async function loadPlayers(containerId, filterMode) {
