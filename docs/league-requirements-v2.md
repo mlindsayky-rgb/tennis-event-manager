@@ -90,12 +90,24 @@ Access is controlled by a **PIN system** — each role (Admin, Coach, Captain, P
 
 ---
 
-## 8. Admin Panel & Player Directory (new, noted for later)
+## 8. Admin Panel & Player Directory
 
 - The admin panel will have a top-level view for each league program (e.g. **Genesis League**, and eventually **Junior League**), each opening to a list of the leagues/seasons started under it.
 - We'll maintain a **player directory** for anyone who's participated in any league: name, email, phone, and communication preferences.
 - Communication preferences will likely be broken into categories rather than one blanket opt-out — for example, **Sub Alerts**, **League Updates**, and **Emergency Communications** (e.g. "club power is out, don't come to your match"). Emergency Communications may need to reach active players regardless of their other preferences, since it protects them from a wasted trip rather than being a general notice — exact rules still being worked out.
 - **Sending these communications (email/text) will require a backend integration** (e.g. a transactional email/SMS service connected to the app) — not yet decided which provider, to be revisited later.
+
+**Roster import:** after a team is created, the admin can bulk-upload a spreadsheet of players (first name, last name, email, phone) to build that team's roster in one step — reusing the same CSV/XLSX upload pattern already built for Event Manager. Each uploaded row is matched against the existing Player directory by email (or phone as a fallback); if the person already exists in the system, their existing record is linked rather than duplicated, and only genuinely new people get a new Player record created.
+
+**Master player list — recruitment tool:** the same roster import feeds a master list, visible to admin, of everyone who has ever played in a league. Each player shows:
+- **Current / Inactive status** — a player is "Current" if they're actively rostered on a team belonging to a league that's within its active session window (5 or 10 weeks, start date to end date). The moment that session ends, or they're otherwise no longer on an active roster, they become "Inactive."
+- For Inactive players: a **snapshot** of their last coach, last captain, and the date their last session ended — recorded at the moment they go Inactive, not a live link to team history.
+- The purpose of this list is **recruiting from the club's own past pool** — filtering to Inactive players lets the admin (or a coach/captain) reach out with real context about what that person last did, rather than a cold outreach. Contact can happen through the coach, the captain, or the player directly.
+- If an Inactive player becomes Current again (joins a new team), their old snapshot is simply discarded — they're just shown as Current, with no history pile-up or record of prior stints.
+
+**End-of-session roster carryover:** since a team might continue into a new session rather than disbanding, at the end of a session the coach/captain gets a simple **carryover screen**: every player defaults to "Stay," and the coach/captain only needs to act on exceptions by unchecking anyone who is leaving. Players left as "Stay" carry forward onto the team's roster for the next session automatically. Anyone explicitly released is removed from the team and flows into the master list as Inactive, timestamped with that session's end date and snapshotted with the coach/captain who last had them.
+
+**Export:** the admin can export the master list to a spreadsheet, filterable to Inactive players only, showing name, contact details, last coach, last captain, and last-played date — intended specifically for recruitment outreach ahead of a new session.
 
 ## 9. Future Consideration — Junior League (not being built yet)
 
