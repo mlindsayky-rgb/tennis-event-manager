@@ -944,6 +944,35 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </div>
 </div>
 
+<!-- TEAM ROSTER MODAL -->
+<div class="modal-overlay" id="roster-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header"><div class="modal-title" id="roster-modal-title">Team Roster</div><button class="modal-close" onclick="closeModal('roster-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Upload Roster (.xlsx or .csv)</label>
+        <input class="form-input" type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" onchange="handleRosterFile(this)">
+        <div class="form-hint">Columns: First Name, Last Name, Email, Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
+      </div>
+      <div id="roster-import-preview"></div>
+      <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Add One Player</div>
+        <div style="display:flex;gap:8px">
+          <select class="form-select" id="roster-add-player" style="flex:1"><option value="">Search players…</option></select>
+          <button class="btn btn-secondary" type="button" onclick="addPlayerToRoster()">+ Add</button>
+        </div>
+      </div>
+      <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Current Roster</div>
+        <div id="roster-current-list"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('roster-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- NEW MATCH MODAL -->
 <div class="modal-overlay" id="new-match-modal">
   <div class="modal">
@@ -5162,11 +5191,19 @@ function renderLeagueSettings() {
     </div>`;
 }
 
+let currentLeagueRosterCounts = {};
+
 async function loadLeagueTeams() {
   const el = document.getElementById('league-teams-list');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const {data} = await sb.from('league_teams').select('*,clubs(name),players(roster_name)').eq('league_id',currentLeague.id).order('name');
   currentLeagueTeams = data||[];
+  const teamIds = currentLeagueTeams.map(t=>t.id);
+  currentLeagueRosterCounts = {};
+  if (teamIds.length) {
+    const {data:rosterRows} = await sb.from('league_team_players').select('team_id').in('team_id', teamIds);
+    (rosterRows||[]).forEach(r=>{ currentLeagueRosterCounts[r.team_id] = (currentLeagueRosterCounts[r.team_id]||0) + 1; });
+  }
   renderLeagueTeams();
 }
 
@@ -5176,12 +5213,13 @@ function renderLeagueTeams() {
     el.innerHTML=`<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No teams yet</div><div class="empty-sub">${currentLeague.team_count} planned for this league</div><button class="btn btn-primary" onclick="openTeamModalNew()">+ Add Team</button></div></div>`;
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Actions</th></tr></thead><tbody>
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Roster</th><th>Actions</th></tr></thead><tbody>
   ${currentLeagueTeams.map(t=>`<tr>
     <td><strong>${t.name}</strong></td>
     <td>${t.clubs?.name||'—'}</td>
     <td>${t.coach_name}${t.players?.roster_name?` <span style="font-size:11px;color:var(--ink-muted)">(${t.players.roster_name})</span>`:''}</td>
     <td>${t.time_slot_day!=null&&t.time_slot_time?`${DAY_NAMES[t.time_slot_day]} ${fmtTime(t.time_slot_time)}`:'—'}</td>
+    <td><button class="btn btn-sm btn-secondary" onclick="openRosterModal('${t.id}')">Roster (${currentLeagueRosterCounts[t.id]||0})</button></td>
     <td style="display:flex;gap:6px">
       <button class="btn btn-sm btn-ghost" onclick="openTeamModalEdit('${t.id}')">Edit</button>
       <button class="btn btn-sm btn-danger" onclick="deleteLeagueTeam('${t.id}','${escQ(t.name)}')">Delete</button>
@@ -5189,6 +5227,197 @@ function renderLeagueTeams() {
   </tr>`).join('')}
   </tbody></table>
   <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">${currentLeagueTeams.length} of ${currentLeague.team_count} planned teams</div>`;
+}
+
+// ══════════════════════════════════════════════
+// TEAM ROSTER — manage & bulk-upload
+// ══════════════════════════════════════════════
+let currentRosterTeamId = null;
+let currentRosterMembers = [];
+let rosterImportRows = [];
+let rosterAllPlayers = [];
+
+async function openRosterModal(teamId) {
+  currentRosterTeamId = teamId;
+  rosterImportRows = [];
+  document.getElementById('roster-file-input').value = '';
+  document.getElementById('roster-import-preview').innerHTML = '';
+  const team = currentLeagueTeams.find(t=>t.id===teamId);
+  document.getElementById('roster-modal-title').textContent = `${team?.name||'Team'} Roster`;
+  await loadRosterMembers();
+  await populateRosterAddPlayerSelect();
+  openModal('roster-modal');
+}
+
+async function loadRosterMembers() {
+  const {data} = await sb.from('league_team_players').select('id,player_id,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
+  currentRosterMembers = (data||[]).map(r=>({
+    id: r.id, player_id: r.player_id,
+    roster_name: r.players?.roster_name || '—', email: r.players?.email || '', phone: r.players?.phone || ''
+  })).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  renderRosterCurrentList();
+}
+
+function renderRosterCurrentList() {
+  const el = document.getElementById('roster-current-list');
+  if (!currentRosterMembers.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players on this roster yet</div></div>';
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th></th></tr></thead><tbody>
+  ${currentRosterMembers.map(m=>`<tr>
+    <td>${escQ(m.roster_name)}</td>
+    <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.email)||'—'}</td>
+    <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.phone)||'—'}</td>
+    <td><button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button></td>
+  </tr>`).join('')}
+  </tbody></table>`;
+}
+
+async function populateRosterAddPlayerSelect() {
+  const {data:players} = await sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name');
+  const onRosterIds = new Set(currentRosterMembers.map(m=>m.player_id));
+  const sel = document.getElementById('roster-add-player');
+  sel.innerHTML = '<option value="">Search players…</option>' + (players||[])
+    .filter(p=>!onRosterIds.has(p.id))
+    .map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
+}
+
+async function addPlayerToRoster() {
+  const sel = document.getElementById('roster-add-player');
+  const playerId = sel.value;
+  if (!playerId) return;
+  const {error} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast('Player added to roster','success');
+  await loadRosterMembers();
+  await populateRosterAddPlayerSelect();
+  refreshRosterCountBadge();
+}
+
+async function removeFromRoster(rosterRowId) {
+  await sb.from('league_team_players').delete().eq('id',rosterRowId);
+  await loadRosterMembers();
+  await populateRosterAddPlayerSelect();
+  refreshRosterCountBadge();
+}
+
+function refreshRosterCountBadge() {
+  currentLeagueRosterCounts[currentRosterTeamId] = currentRosterMembers.length;
+  renderLeagueTeams();
+}
+
+async function handleRosterFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const previewEl = document.getElementById('roster-import-preview');
+  previewEl.innerHTML = '<div class="loading"><div class="spinner"></div> Reading file…</div>';
+
+  let rows;
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, {type:'array'});
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+  } catch (e) {
+    previewEl.innerHTML = '<div class="alert alert-error">Could not read that file. Please upload a .xlsx or .csv.</div>';
+    return;
+  }
+  if (!rows.length) { previewEl.innerHTML = '<div class="alert alert-error">No data found in file.</div>'; return; }
+
+  const norm = rows.map(r => {
+    const out = {};
+    Object.keys(r).forEach(k => { out[k.trim().toLowerCase()] = String(r[k]).trim(); });
+    return out;
+  });
+
+  const {data:allPlayers} = await sb.from('players').select('id,roster_name,email,phone');
+  rosterAllPlayers = allPlayers || [];
+
+  const normPhone = p => (p||'').replace(/\D/g,'');
+  const normEmail = e => (e||'').trim().toLowerCase();
+
+  rosterImportRows = norm.map(r => {
+    const firstName = r['first name']||r['firstname']||r['first']||'';
+    const lastName = r['last name']||r['lastname']||r['last']||'';
+    const fullName = `${firstName} ${lastName}`.trim();
+    const email = r['email']||'';
+    const phone = r['phone']||r['phone number']||'';
+    const emailN = normEmail(email), phoneN = normPhone(phone);
+
+    let matched = null, matchType = null;
+    if (emailN) matched = rosterAllPlayers.find(p=>normEmail(p.email)===emailN);
+    if (matched) matchType = 'email';
+    if (!matched && phoneN) {
+      matched = rosterAllPlayers.find(p=>normPhone(p.phone) && normPhone(p.phone)===phoneN);
+      if (matched) matchType = 'phone';
+    }
+    if (!matched && fullName) {
+      matched = rosterAllPlayers.find(p=>p.roster_name.toLowerCase()===fullName.toLowerCase());
+      if (matched) matchType = 'name';
+    }
+    return { firstName, lastName, fullName, email, phone, matchedPlayerId: matched?matched.id:null, matchType, gender:'' };
+  }).filter(r => r.fullName);
+
+  renderRosterImportPreview();
+}
+
+function renderRosterImportPreview() {
+  const el = document.getElementById('roster-import-preview');
+  if (!rosterImportRows.length) { el.innerHTML = '<div class="alert alert-error">No valid rows found — each row needs at least a name.</div>'; return; }
+  el.innerHTML = `<div class="card" style="margin-top:12px">
+    <div class="card-body">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">${rosterImportRows.length} row${rosterImportRows.length===1?'':'s'} found — review before adding to the roster</div>
+      <table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Gender (new only)</th></tr></thead><tbody>
+      ${rosterImportRows.map((r,i)=>`<tr>
+        <td>${escQ(r.fullName)}</td>
+        <td style="font-size:12px">${escQ(r.email)||'—'}</td>
+        <td style="font-size:12px">${escQ(r.phone)||'—'}</td>
+        <td>${r.matchedPlayerId?`<span class="badge badge-green">Matched (${r.matchType})</span>`:'<span class="badge badge-blue">New player</span>'}</td>
+        <td>${r.matchedPlayerId?'—':`<select class="form-select" style="font-size:12px" onchange="rosterImportRows[${i}].gender=this.value">
+          <option value="">Select…</option><option value="MALE">Male</option><option value="FEMALE">Female</option>
+        </select>`}</td>
+      </tr>`).join('')}
+      </tbody></table>
+      <div id="roster-import-error" class="alert alert-error" style="display:none;margin-top:10px"></div>
+      <button class="btn btn-primary" style="margin-top:14px" onclick="confirmRosterImport()">Add ${rosterImportRows.length} to Roster</button>
+    </div>
+  </div>`;
+}
+
+async function confirmRosterImport() {
+  const errEl = document.getElementById('roster-import-error');
+  errEl.style.display = 'none';
+  const missingGender = rosterImportRows.filter(r=>!r.matchedPlayerId && !r.gender);
+  if (missingGender.length) {
+    errEl.textContent = `Select a gender for ${missingGender.length} new player(s) before continuing — every player record needs one.`;
+    errEl.style.display = 'flex';
+    return;
+  }
+  for (const r of rosterImportRows) {
+    let playerId = r.matchedPlayerId;
+    if (!playerId) {
+      // player_type defaults to 'AD' — Leagues is adult-only for now (Junior League is a future phase per the doc)
+      const {data:newPlayer, error} = await sb.from('players').insert({
+        first_name: r.firstName, last_name: r.lastName, roster_name: r.fullName,
+        gender: r.gender, player_type: 'AD',
+        email: r.email || null, phone: r.phone || null
+      }).select().single();
+      if (error) { toast('Error creating '+r.fullName+': '+error.message,'error'); continue; }
+      playerId = newPlayer.id;
+    }
+    const {error: rosterErr} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
+    if (rosterErr && !/duplicate/i.test(rosterErr.message||'')) {
+      toast('Error adding '+r.fullName+' to roster: '+rosterErr.message,'error');
+    }
+  }
+  toast('Roster updated!','success');
+  rosterImportRows = [];
+  document.getElementById('roster-import-preview').innerHTML = '';
+  document.getElementById('roster-file-input').value = '';
+  await loadRosterMembers();
+  await populateRosterAddPlayerSelect();
+  refreshRosterCountBadge();
 }
 
 async function populateTeamSelects(selectedClub, selectedPlayer) {
@@ -5294,6 +5523,7 @@ let currentMatch = null, currentMatchTeamA = null, currentMatchTeamB = null;
 let currentMatchResults = {};   // court_number -> saved court_results row
 let courtDrafts = {};           // court_number -> in-progress edit state
 let matchAllPlayers = [];       // cached active players for court pickers
+let matchRosterA = [], matchRosterB = []; // this match's two teams' rosters, if any are on file
 
 function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
 
@@ -5418,16 +5648,20 @@ async function saveNewMatch() {
 async function openMatchById(id) {
   const {data:match} = await sb.from('league_matches').select('*').eq('id',id).single();
   if(!match) return;
-  const [{data:teamA},{data:teamB},{data:results},{data:players}] = await Promise.all([
+  const [{data:teamA},{data:teamB},{data:results},{data:players},{data:rosterA},{data:rosterB}] = await Promise.all([
     sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_a_id).single(),
     sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_b_id).single(),
     sb.from('court_results').select('*').eq('match_id',id),
-    sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name')
+    sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name'),
+    sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_a_id),
+    sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_b_id)
   ]);
   currentMatch = match;
   currentMatchTeamA = teamA;
   currentMatchTeamB = teamB;
   matchAllPlayers = players||[];
+  matchRosterA = (rosterA||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  matchRosterB = (rosterB||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
   currentMatchResults = {};
   courtDrafts = {};
   (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
@@ -5441,16 +5675,27 @@ async function openMatchById(id) {
 
 function closeMatch() {
   currentMatch = null; currentMatchTeamA = null; currentMatchTeamB = null;
-  currentMatchResults = {}; courtDrafts = {};
+  currentMatchResults = {}; courtDrafts = {}; matchRosterA = []; matchRosterB = [];
   document.getElementById('match-screen').classList.remove('active');
   document.getElementById('league-screen').classList.add('active');
   loadLeagueMatches();
 }
 
-function playerOptionsHtml(selectedId) {
-  return '<option value="">Select player…</option>' + matchAllPlayers.map(p =>
-    `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${escQ(p.roster_name)}</option>`
-  ).join('');
+// Roster players (if any are on file for this team) are listed first so the
+// common case needs no searching; every active player stays reachable below
+// for subs, who by definition aren't on the roster.
+function playerOptionsHtml(selectedId, roster) {
+  const rosterIds = new Set((roster||[]).map(p=>p.id));
+  const others = matchAllPlayers.filter(p=>!rosterIds.has(p.id));
+  const opt = p => `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${escQ(p.roster_name)}</option>`;
+  let html = '<option value="">Select player…</option>';
+  if (roster && roster.length) {
+    html += roster.map(opt).join('');
+    html += `<optgroup label="Other Players">${others.map(opt).join('')}</optgroup>`;
+  } else {
+    html += others.map(opt).join('');
+  }
+  return html;
 }
 
 function renderMatchScreen() {
@@ -5471,8 +5716,8 @@ function renderMatchScreen() {
         <div class="form-row">
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)}</div>
-            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1)}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2)}</select>`:''}
+            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA)}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA)}</select>`:''}
             <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
               <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
@@ -5481,8 +5726,8 @@ function renderMatchScreen() {
           </div>
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)}</div>
-            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1)}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2)}</select>`:''}
+            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB)}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB)}</select>`:''}
             <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
               <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
