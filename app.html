@@ -6808,8 +6808,8 @@ async function loadRankingSettings() {
   const values = {};
   (data||[]).forEach(row=>{ values[row.key] = row.value; });
   renderRankingSettings(values);
-  const ranked = await computeLeagueRankings(values);
-  renderRankingsBoard(ranked);
+  const rankingsResult = await computeLeagueRankings(values);
+  renderRankingsBoard(rankingsResult);
 }
 
 function renderRankingSettings(values) {
@@ -6854,10 +6854,10 @@ async function computeLeagueRankings(values) {
   const courtBump = parseFloat(values.ranking_court12_bump) || 0;
 
   const teamIds = currentLeagueTeams.map(t => t.id);
-  if (!teamIds.length) return [];
+  if (!teamIds.length) return { ranked: [], record: [] };
   const { data: matches } = await sb.from('league_matches').select('id').eq('league_id', currentLeague.id);
   const matchIds = (matches || []).map(m => m.id);
-  if (!matchIds.length) return [];
+  if (!matchIds.length) return { ranked: [], record: [] };
   const { data: results } = await sb.from('court_results').select('*').in('match_id', matchIds);
   const rows = results || [];
 
@@ -6900,7 +6900,7 @@ async function computeLeagueRankings(values) {
   });
 
   const playerIds = Object.keys(score);
-  if (!playerIds.length) return [];
+  if (!playerIds.length) return { ranked: [], record: [] };
   const [{ data: players }, { data: rosterRows }] = await Promise.all([
     sb.from('players').select('id,roster_name').in('id', playerIds),
     sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds),
@@ -6908,25 +6908,48 @@ async function computeLeagueRankings(values) {
   const nameMap = {}; (players || []).forEach(p => nameMap[p.id] = p.roster_name);
   const teamOfPlayer = {}; (rosterRows || []).forEach(r => { if (!(r.player_id in teamOfPlayer)) teamOfPlayer[r.player_id] = r.team_id; });
   const teamNameMap = {}; currentLeagueTeams.forEach(t => teamNameMap[t.id] = t.name);
+  const teamNameFor = pid => teamOfPlayer[pid] ? (teamNameMap[teamOfPlayer[pid]] || '—') : 'Sub';
 
-  return playerIds.map(pid => {
+  const ranked = playerIds.map(pid => {
     const s = score[pid];
     return {
       player_id: pid,
       name: nameMap[pid] || '—',
-      team_name: teamOfPlayer[pid] ? (teamNameMap[teamOfPlayer[pid]] || '—') : 'Sub',
+      team_name: teamNameFor(pid),
       matches: s.matches,
       total: s.total,
       average: s.matches ? s.total / s.matches : 0,
     };
   }).filter(r => r.matches >= 2).sort((a, b) => b.average - a.average);
+
+  // Win-loss record — what Captains see instead of the points-based board,
+  // and available to everyone as the plain factual record behind the ranking.
+  const record = playerIds.map(pid => {
+    const t = tally[pid] || { wins: 0, losses: 0 };
+    return {
+      player_id: pid,
+      name: nameMap[pid] || '—',
+      team_name: teamNameFor(pid),
+      wins: t.wins,
+      losses: t.losses,
+      matches: t.wins + t.losses,
+    };
+  }).sort((a, b) => (b.wins / (b.matches || 1)) - (a.wins / (a.matches || 1)));
+
+  return { ranked, record };
 }
 
-function renderRankingsBoard(ranked) {
+function renderRankingsBoard({ ranked, record }) {
   const el = document.getElementById('rankings-board-body');
   const role = currentUser?.role;
   if (role === 'captain') {
-    el.innerHTML = '<div class="form-hint">Full player rankings aren\'t shown to Captains — participation stats for your own roster are planned as a follow-on.</div>';
+    if (!record.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-sub">No matches played yet</div></div>';
+      return;
+    }
+    el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Matches</th></tr></thead><tbody>
+      ${record.map((r, i) => `<tr><td>${i + 1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.matches}</td></tr>`).join('')}
+      </tbody></table>`;
     return;
   }
   if (!ranked.length) {
