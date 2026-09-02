@@ -783,6 +783,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub" id="match-header-sub">—</div>
       </div>
     </div>
+    <button class="header-btn" id="match-edit-date-btn" onclick="openEditMatchDateModal()" style="display:none">Edit Date</button>
   </header>
   <div class="content">
     <div class="card" id="match-summary-card" style="margin-bottom:20px"></div>
@@ -791,6 +792,23 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="card-body" id="match-subs-card"></div>
     </div>
     <div id="match-courts-list"></div>
+  </div>
+</div>
+
+<!-- EDIT MATCH DATE MODAL -->
+<div class="modal-overlay" id="edit-match-date-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Edit Match Date</div><button class="modal-close" onclick="closeModal('edit-match-date-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-hint" style="margin-bottom:14px">Week number stays fixed — this only moves the actual calendar date, e.g. to get a match off a day the league has marked as off.</div>
+      <div class="form-group"><label class="form-label" id="edit-match-date-a-label">Site A Date</label><input class="form-input" id="edit-match-date-a" type="date"></div>
+      <div class="form-group"><label class="form-label" id="edit-match-date-b-label">Site B Date</label><input class="form-input" id="edit-match-date-b" type="date"></div>
+      <div id="edit-match-date-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('edit-match-date-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMatchDate()">Save Date</button>
+    </div>
   </div>
 </div>
 
@@ -6269,10 +6287,36 @@ async function openMatchById(id) {
 
   document.getElementById('match-header-name').textContent = `${teamA.name} vs ${teamB.name}`;
   document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${teamA.name}: ${fmtDate(match.site_a_date)} · ${teamB.name}: ${fmtDate(match.site_b_date)}`;
+  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
+  document.getElementById('match-edit-date-btn').style.display = isStaff ? 'inline-block' : 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('match-screen').classList.add('active');
   renderMatchScreen();
   loadMatchSubPool();
+}
+
+function openEditMatchDateModal() {
+  document.getElementById('edit-match-date-a-label').textContent = `${currentMatchTeamA.name} Date`;
+  document.getElementById('edit-match-date-b-label').textContent = `${currentMatchTeamB.name} Date`;
+  document.getElementById('edit-match-date-a').value = currentMatch.site_a_date || '';
+  document.getElementById('edit-match-date-b').value = currentMatch.site_b_date || '';
+  document.getElementById('edit-match-date-error').style.display = 'none';
+  openModal('edit-match-date-modal');
+}
+
+async function saveMatchDate() {
+  const dateA = document.getElementById('edit-match-date-a').value;
+  const dateB = document.getElementById('edit-match-date-b').value;
+  const errEl = document.getElementById('edit-match-date-error');
+  errEl.style.display = 'none';
+  if (!dateA || !dateB) { errEl.textContent = 'Both dates are required.'; errEl.style.display = 'flex'; return; }
+  const { error } = await sb.from('league_matches').update({ site_a_date: dateA, site_b_date: dateB }).eq('id', currentMatch.id);
+  if (error) { errEl.textContent = 'Error: ' + error.message; errEl.style.display = 'flex'; return; }
+  currentMatch.site_a_date = dateA;
+  currentMatch.site_b_date = dateB;
+  document.getElementById('match-header-sub').textContent = `Week ${currentMatch.week_number} · ${currentMatchTeamA.name}: ${fmtDate(dateA)} · ${currentMatchTeamB.name}: ${fmtDate(dateB)}`;
+  closeModal('edit-match-date-modal');
+  toast('Match date updated!', 'success');
 }
 
 function closeMatch() {
