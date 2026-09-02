@@ -685,6 +685,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <nav class="event-nav">
     <button class="event-nav-tab active" onclick="leagueDetailTab('teams',this)">Teams</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('matches',this)">Matches</button>
+    <button class="event-nav-tab" onclick="leagueDetailTab('subs',this)">Subs</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('standings',this)">Standings</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
@@ -695,6 +696,21 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div id="ltab-matches" style="display:none">
       <div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
       <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+    <div id="ltab-subs" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title" style="font-size:16px">Sub Pool</div><div class="section-sub">Players available to borrow across teams, by week — a team's own extra roster players don't need to be added here</div></div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Player</label><select class="form-select" id="sub-pool-add-player"><option value="">Select player…</option></select></div>
+            <div class="form-group"><label class="form-label">Week</label><input class="form-input" id="sub-pool-add-week" type="number" min="1"></div>
+          </div>
+          <button class="btn btn-primary" onclick="addToSubPool()">+ Add to Pool</button>
+        </div>
+      </div>
+      <div id="sub-pool-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-standings" style="display:none">
       <div class="section-header"><div><div class="section-title" style="font-size:16px">Team Standings</div><div class="section-sub">Only fully-entered matches count</div></div></div>
@@ -725,6 +741,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   </header>
   <div class="content">
     <div class="card" id="match-summary-card" style="margin-bottom:20px"></div>
+    <div class="card" style="margin-bottom:20px">
+      <div class="card-header"><div class="card-title">Subs</div></div>
+      <div class="card-body" id="match-subs-card"></div>
+    </div>
     <div id="match-courts-list"></div>
   </div>
 </div>
@@ -5209,7 +5229,7 @@ function closeLeague() {
 function leagueDetailTab(name, btn) {
   document.querySelectorAll('#league-screen .event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['teams','matches','standings','settings'].forEach(t=>{
+  ['teams','matches','subs','standings','settings'].forEach(t=>{
     document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
   });
   const actionBtn = document.getElementById('league-detail-action-btn');
@@ -5217,6 +5237,7 @@ function leagueDetailTab(name, btn) {
   else if(name==='matches') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
   else { actionBtn.style.display='none'; }
   if(name==='matches') loadLeagueMatches();
+  if(name==='subs') loadSubPool();
   if(name==='standings') { loadStandings(); loadRankingSettings(); }
   if(name==='settings') renderLeagueSettings();
 }
@@ -5619,7 +5640,9 @@ let currentMatch = null, currentMatchTeamA = null, currentMatchTeamB = null;
 let currentMatchResults = {};   // court_number -> saved court_results row
 let courtDrafts = {};           // court_number -> in-progress edit state
 let matchAllPlayers = [];       // cached active players for court pickers
-let matchRosterA = [], matchRosterB = []; // this match's two teams' rosters, if any are on file
+let matchRosterA = [], matchRosterB = []; // effective picker list: roster + any subs claimed for this match
+let matchRosterABase = [], matchRosterBBase = []; // roster only, before claimed subs are merged in
+let matchSubPool = []; // this match's week's sub pool entries (available + claimed, any team)
 
 function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
 
@@ -5902,8 +5925,10 @@ async function openMatchById(id) {
   currentMatchTeamA = teamA;
   currentMatchTeamB = teamB;
   matchAllPlayers = players||[];
-  matchRosterA = (rosterA||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
-  matchRosterB = (rosterB||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  matchRosterABase = (rosterA||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  matchRosterBBase = (rosterB||[]).map(r=>r.players).filter(Boolean).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  matchRosterA = matchRosterABase;
+  matchRosterB = matchRosterBBase;
   currentMatchResults = {};
   courtDrafts = {};
   (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
@@ -5913,10 +5938,12 @@ async function openMatchById(id) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('match-screen').classList.add('active');
   renderMatchScreen();
+  loadMatchSubPool();
 }
 
 function closeMatch() {
   currentMatch = null; currentMatchTeamA = null; currentMatchTeamB = null;
+  matchRosterABase = []; matchRosterBBase = []; matchSubPool = [];
   currentMatchResults = {}; courtDrafts = {}; matchRosterA = []; matchRosterB = [];
   document.getElementById('match-screen').classList.remove('active');
   document.getElementById('league-screen').classList.add('active');
@@ -6156,6 +6183,173 @@ async function saveCourtResult(c) {
   currentMatchResults[c] = data;
   toast(`Court ${c} saved`,'success');
   renderMatchSummary();
+}
+
+// ══════════════════════════════════════════════
+// SUB POOL — cross-team borrowing. A team's own extra roster players
+// never touch this: they're just picked directly on a court like anyone
+// else. This pool is specifically for "we're short and need to borrow."
+// ══════════════════════════════════════════════
+
+// ── League-level pool management (Subs tab) ──
+async function loadSubPool() {
+  const el = document.getElementById('sub-pool-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const [{data:players}, {data:pool}] = await Promise.all([
+    sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name'),
+    sb.from('league_sub_pool').select('*,players(roster_name),league_teams(name)').eq('league_id',currentLeague.id).order('week_number')
+  ]);
+  const sel = document.getElementById('sub-pool-add-player');
+  sel.innerHTML = '<option value="">Select player…</option>' + (players||[]).map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
+  renderSubPoolList(pool||[]);
+}
+
+function renderSubPoolList(pool) {
+  const el = document.getElementById('sub-pool-list');
+  if (!pool.length) {
+    el.innerHTML = '<div class="card"><div class="empty-state"><div class="empty-icon">🙋</div><div class="empty-title">No one in the pool yet</div><div class="empty-sub">Add a player above for whichever week they can fill in</div></div></div>';
+    return;
+  }
+  const byWeek = {};
+  pool.forEach(p=>{ (byWeek[p.week_number] = byWeek[p.week_number]||[]).push(p); });
+  el.innerHTML = Object.keys(byWeek).sort((a,b)=>a-b).map(week=>`
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-header"><div class="card-title">Week ${week}</div></div>
+      <div class="card-body">
+        <table class="data-table"><thead><tr><th>Player</th><th>Status</th><th></th></tr></thead><tbody>
+        ${byWeek[week].map(p=>`<tr>
+          <td>${escQ(p.players?.roster_name||'—')}</td>
+          <td>${p.claimed_by_team_id ? `<span class="badge badge-blue">Claimed by ${escQ(p.league_teams?.name||'—')}</span>` : '<span class="badge badge-green">Available</span>'}</td>
+          <td><button class="btn btn-sm btn-ghost" onclick="removeSubPoolEntry('${p.id}')">Remove</button></td>
+        </tr>`).join('')}
+        </tbody></table>
+      </div>
+    </div>`).join('');
+}
+
+async function addToSubPool() {
+  const playerId = document.getElementById('sub-pool-add-player').value;
+  const week = parseInt(document.getElementById('sub-pool-add-week').value);
+  if (!playerId) { toast('Select a player','error'); return; }
+  if (!week || week<1) { toast('Enter a valid week number','error'); return; }
+  const {error} = await sb.from('league_sub_pool').insert({league_id:currentLeague.id, player_id:playerId, week_number:week});
+  if (error) { toast(/duplicate/i.test(error.message)?'That player is already in the pool for that week':'Error: '+error.message,'error'); return; }
+  toast('Added to pool','success');
+  document.getElementById('sub-pool-add-player').value='';
+  document.getElementById('sub-pool-add-week').value='';
+  loadSubPool();
+}
+
+async function removeSubPoolEntry(id) {
+  await sb.from('league_sub_pool').delete().eq('id',id);
+  loadSubPool();
+}
+
+// ── Match-level claiming (score entry screen) ──
+async function loadMatchSubPool() {
+  const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name)')
+    .eq('league_id',currentLeague.id).eq('week_number',currentMatch.week_number);
+  matchSubPool = data||[];
+  updateEffectiveRostersWithSubs();
+  renderMatchSubPanel();
+  refreshCourtPlayerOptions();
+}
+
+function updateEffectiveRostersWithSubs() {
+  const dedupe = arr => { const seen=new Set(); return arr.filter(p=>{ if(seen.has(p.id)) return false; seen.add(p.id); return true; }); };
+  const claimedFor = teamId => matchSubPool
+    .filter(p=>p.claimed_by_match_id===currentMatch.id && p.claimed_by_team_id===teamId)
+    .map(p=>p.players).filter(Boolean);
+  matchRosterA = dedupe([...matchRosterABase, ...claimedFor(currentMatchTeamA.id)]);
+  matchRosterB = dedupe([...matchRosterBBase, ...claimedFor(currentMatchTeamB.id)]);
+}
+
+function refreshCourtPlayerOptions() {
+  const n = courtsForFormat();
+  const isDoubles = currentLeague.format==='DOUBLES';
+  for (let c=1; c<=n; c++) {
+    const slots = isDoubles ? ['a-p1','a-p2','b-p1','b-p2'] : ['a-p1','b-p1'];
+    slots.forEach(key=>{
+      const sel = document.getElementById(`court-${c}-${key}`);
+      if (!sel) return;
+      const roster = key[0]==='a' ? matchRosterA : matchRosterB;
+      const current = sel.value;
+      sel.innerHTML = playerOptionsHtml(current, roster);
+    });
+  }
+}
+
+function renderMatchSubPanel() {
+  const el = document.getElementById('match-subs-card');
+  const claimsFor = teamId => matchSubPool.filter(p=>p.claimed_by_match_id===currentMatch.id && p.claimed_by_team_id===teamId);
+  const teamAClaims = claimsFor(currentMatchTeamA.id);
+  const teamBClaims = claimsFor(currentMatchTeamB.id);
+  const available = matchSubPool.filter(p=>!p.claimed_by_match_id);
+
+  const claimsHtml = claims => claims.length
+    ? claims.map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span>${escQ(c.players?.roster_name||'—')}</span>
+        <button class="btn btn-sm btn-ghost" onclick="releaseSubClaim('${c.id}')">Release</button>
+      </div>`).join('')
+    : '<div class="form-hint">No subs claimed yet</div>';
+
+  const availableHtml = available.length
+    ? available.map(p=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
+        <span>${escQ(p.players?.roster_name||'—')}</span>
+        <span style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-secondary" onclick="claimSub('${p.id}','a')">Claim for ${escQ(currentMatchTeamA.name)}</button>
+          <button class="btn btn-sm btn-secondary" onclick="claimSub('${p.id}','b')">Claim for ${escQ(currentMatchTeamB.name)}</button>
+        </span>
+      </div>`).join('')
+    : `<div class="form-hint">No one in the pool for Week ${currentMatch.week_number} yet — add players from the league's Subs tab</div>`;
+
+  el.innerHTML = `
+    <div class="form-row">
+      <div>
+        <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)} needs</div>
+        <input class="form-input" type="number" min="0" value="${currentMatch.team_a_subs_needed}" onchange="saveSubsNeeded('a',this.value)" style="max-width:90px;margin-bottom:10px">
+        ${claimsHtml(teamAClaims)}
+      </div>
+      <div>
+        <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)} needs</div>
+        <input class="form-input" type="number" min="0" value="${currentMatch.team_b_subs_needed}" onchange="saveSubsNeeded('b',this.value)" style="max-width:90px;margin-bottom:10px">
+        ${claimsHtml(teamBClaims)}
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="font-weight:700;margin-bottom:8px">Available in Week ${currentMatch.week_number}'s pool</div>
+      ${availableHtml}
+    </div>`;
+}
+
+async function saveSubsNeeded(side, value) {
+  const n = Math.max(0, parseInt(value)||0);
+  const field = side==='a' ? 'team_a_subs_needed' : 'team_b_subs_needed';
+  await sb.from('league_matches').update({[field]: n}).eq('id',currentMatch.id);
+  currentMatch[field] = n;
+  renderMatchSubPanel();
+}
+
+async function claimSub(poolId, side) {
+  const team = side==='a' ? currentMatchTeamA : currentMatchTeamB;
+  const needed = side==='a' ? currentMatch.team_a_subs_needed : currentMatch.team_b_subs_needed;
+  const currentClaims = matchSubPool.filter(p=>p.claimed_by_match_id===currentMatch.id && p.claimed_by_team_id===team.id);
+  if (currentClaims.length >= needed) {
+    const names = currentClaims.map(c=>c.players?.roster_name).join(' or ');
+    toast(needed>0
+      ? `Already claimed ${needed} sub${needed===1?'':'s'} — release ${names} first to claim someone new`
+      : `${team.name} hasn't declared any subs needed yet — set the number needed first`,'error');
+    return;
+  }
+  const {error} = await sb.from('league_sub_pool').update({claimed_by_match_id:currentMatch.id, claimed_by_team_id:team.id}).eq('id',poolId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast('Sub claimed','success');
+  loadMatchSubPool();
+}
+
+async function releaseSubClaim(poolId) {
+  await sb.from('league_sub_pool').update({claimed_by_match_id:null, claimed_by_team_id:null}).eq('id',poolId);
+  loadMatchSubPool();
 }
 
 // ══════════════════════════════════════════════
