@@ -569,7 +569,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div id="tab-directors" style="display:none">
       <div class="section-header">
         <div><div class="section-title">Directors</div><div class="section-sub">Manage PINs and club assignments</div></div>
-        <button class="btn btn-primary" onclick="openModal('director-modal')">+ New Director</button>
+        <button class="btn btn-primary" onclick="openNewDirectorModal()">+ New Director</button>
       </div>
       <div class="card"><div id="directors-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
@@ -741,13 +741,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <button class="header-btn" onclick="logout()">Sign Out</button>
   </header>
-  <nav class="nav">
-    <button class="nav-tab active" onclick="dirTab('events',this)">Events</button>
-    <button class="nav-tab" onclick="dirTab('players',this)">Players</button>
+  <nav class="nav" id="dir-nav">
+    <button class="nav-tab" id="dir-nav-events" onclick="dirTab('events',this)">Events</button>
+    <button class="nav-tab" id="dir-nav-leagues" onclick="dirTab('leagues',this)" style="display:none">Leagues</button>
+    <button class="nav-tab" id="dir-nav-players" onclick="dirTab('players',this)">Players</button>
     <button class="nav-tab" onclick="dirTab('notes',this)">Notes</button>
   </nav>
   <div class="content">
-    <div id="dir-tab-events">
+    <div id="dir-tab-events" style="display:none">
       <div class="section-header">
         <div><div class="section-title">Your Events</div></div>
         <button class="btn btn-primary" onclick="openModal('new-event-modal')">+ New Event</button>
@@ -777,6 +778,13 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <input class="form-input" type="text" placeholder="Search players…" oninput="searchPlayers(this.value,'dir-players-list')" style="max-width:360px">
       </div>
       <div class="card"><div id="dir-players-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+    </div>
+    <div id="dir-tab-leagues" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Leagues</div></div>
+        <button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button>
+      </div>
+      <div id="dir-leagues-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="dir-tab-notes" style="display:none">
       <div class="card"><div class="card-body"><div class="empty-state"><div class="empty-icon">📝</div><div class="empty-title">No active event</div><div class="empty-sub">Select a live event to add notes</div></div></div></div>
@@ -866,13 +874,18 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Name <span class="req">*</span></label><input class="form-input" id="director-name" placeholder="Full name"></div>
       <div class="form-group"><label class="form-label">Club <span class="req">*</span></label><select class="form-select" id="director-club"><option value="">Select club…</option></select></div>
-      <div class="form-group"><label class="form-label">PIN <span class="req">*</span></label><input class="form-input" id="director-pin" type="password" placeholder="4-6 digits" maxlength="6"><div class="form-hint">Share this PIN with the director verbally.</div></div>
-      <div class="form-group"><label class="form-label">Confirm PIN <span class="req">*</span></label><input class="form-input" id="director-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6"></div>
+      <div class="form-group" id="director-pin-group"><label class="form-label">PIN <span class="req">*</span></label><input class="form-input" id="director-pin" type="password" placeholder="4-6 digits" maxlength="6"><div class="form-hint">Share this PIN with the director verbally.</div></div>
+      <div class="form-group" id="director-pin-confirm-group"><label class="form-label">Confirm PIN <span class="req">*</span></label><input class="form-input" id="director-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6"></div>
+      <div class="form-group">
+        <label class="form-label">Feature Access</label>
+        <div id="director-access-checkboxes" style="display:flex;flex-direction:column;gap:8px;margin-top:6px"></div>
+        <div class="form-hint">Controls which sections this director sees after logging in. More will appear here as they're built.</div>
+      </div>
       <div id="director-error" class="alert alert-error" style="display:none"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('director-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="saveDirector()">Create Director</button>
+      <button class="btn btn-primary" onclick="saveDirector()" id="save-director-btn">Create Director</button>
     </div>
   </div>
 </div>
@@ -1706,14 +1719,18 @@ async function attemptLogin() {
     return;
   }
 
-  currentUser = { role:'director', director_id:dir.id, club_id:dir.club_id, club_name:dir.clubs?.name||'Your Club', director_name:dir.name };
+  currentUser = { role:'director', director_id:dir.id, club_id:dir.club_id, club_name:dir.clubs?.name||'Your Club', director_name:dir.name, access: dir.feature_access||['events'] };
   await sb.from('directors').update({last_login_at:new Date().toISOString(),failed_pin_attempts:0}).eq('id',dir.id);
   applyBranding(dir.clubs);
   pinBuf=''; renderDots();
   document.getElementById('dir-club-name').textContent = currentUser.club_name;
   document.getElementById('dir-name').textContent = currentUser.director_name;
+  document.getElementById('dir-nav-events').style.display = currentUser.access.includes('events') ? '' : 'none';
+  document.getElementById('dir-nav-leagues').style.display = currentUser.access.includes('leagues') ? '' : 'none';
   showScreen('director-screen');
-  loadDirectorEvents();
+  const firstTab = currentUser.access.includes('events') ? 'events' : currentUser.access.includes('leagues') ? 'leagues' : 'players';
+  dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
+  if (firstTab==='events') loadDirectorEvents();
   pinLocked = false;
 }
 
@@ -4930,11 +4947,12 @@ function renderAdminEvents() {
 
 function dirTab(name,btn) {
   document.querySelectorAll('#director-screen .nav-tab').forEach(t=>t.classList.remove('active'));
-  btn.classList.add('active');
-  ['events','players','notes'].forEach(t=>{
+  if(btn) btn.classList.add('active');
+  ['events','leagues','players','notes'].forEach(t=>{
     document.getElementById(`dir-tab-${t}`).style.display = t===name?'block':'none';
   });
   if(name==='players') loadPlayers('dir-players-list');
+  if(name==='leagues') loadLeagues('dir-leagues-list');
 }
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
@@ -4984,12 +5002,17 @@ async function loadDirectors() {
   el.innerHTML='<div class="loading"><div class="spinner"></div> Loading…</div>';
   const {data} = await sb.from('directors').select('*,clubs(name)').order('name');
   if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">No directors yet</div></div>';return;}
-  el.innerHTML=`<table class="data-table"><thead><tr><th>Name</th><th>Club</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>
+  el.innerHTML=`<table class="data-table"><thead><tr><th>Name</th><th>Club</th><th>Access</th><th>Status</th><th>Last Login</th><th>Actions</th></tr></thead><tbody>
   ${data.map(d=>`<tr>
     <td><strong>${d.name}</strong></td><td>${d.clubs?.name||'—'}</td>
+    <td>${(d.feature_access?.length ? d.feature_access : []).map(k=>{
+      const m = FEATURE_MODULES.find(f=>f.key===k);
+      return `<span class="badge badge-blue" style="margin-right:4px">${escQ(m?m.label:k)}</span>`;
+    }).join('') || '<span style="font-size:12px;color:var(--ink-muted)">None</span>'}</td>
     <td>${d.is_active?'<span class="badge badge-green">Active</span>':'<span class="badge badge-red">Inactive</span>'}</td>
     <td style="font-size:13px;color:var(--muted)">${d.last_login_at?fmtDate(d.last_login_at):'Never'}</td>
     <td style="display:flex;gap:6px">
+      <button class="btn btn-sm btn-ghost" onclick="openDirectorModalEdit('${d.id}')">Edit</button>
       <button class="btn btn-sm btn-ghost" onclick="resetDirectorPin('${d.id}','${d.name}')">Reset PIN</button>
       <button class="btn btn-sm ${d.is_active?'btn-danger':'btn-secondary'}" onclick="toggleDirector('${d.id}',${d.is_active})">${d.is_active?'Deactivate':'Activate'}</button>
     </td>
@@ -5007,8 +5030,9 @@ let leagueDatesOffDraft = [];
 let editLeagueId = null;
 let editTeamId = null;
 
-async function loadLeagues() {
-  const el = document.getElementById('leagues-list');
+async function loadLeagues(containerId) {
+  containerId = containerId || 'leagues-list';
+  const el = document.getElementById(containerId);
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{data:leagues}, {data:teams}] = await Promise.all([
     sb.from('leagues').select('*').order('start_date',{ascending:false}),
@@ -5016,11 +5040,11 @@ async function loadLeagues() {
   ]);
   const counts = {};
   (teams||[]).forEach(t=>{ counts[t.league_id]=(counts[t.league_id]||0)+1; });
-  renderLeaguesList(leagues||[], counts);
+  renderLeaguesList(leagues||[], counts, containerId);
 }
 
-function renderLeaguesList(leagues, counts) {
-  const el = document.getElementById('leagues-list');
+function renderLeaguesList(leagues, counts, containerId) {
+  const el = document.getElementById(containerId || 'leagues-list');
   if(!leagues.length){
     el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🏆</div><div class="empty-title">No leagues yet</div><button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button></div></div>';
     return;
@@ -5135,7 +5159,7 @@ async function saveLeague() {
   toast(editLeagueId?'League updated!':'League created!','success');
   const wasEditingCurrent = currentLeague && currentLeague.id===editLeagueId;
   closeModal('league-modal');
-  loadLeagues();
+  loadLeagues(currentUser?.role==='admin' ? 'leagues-list' : 'dir-leagues-list');
   if(wasEditingCurrent) openLeagueById(editLeagueId);
 }
 
@@ -5165,9 +5189,14 @@ function openLeague(league) {
 function closeLeague() {
   currentLeague = null; currentLeagueTeams = [];
   document.getElementById('league-screen').classList.remove('active');
-  document.getElementById('admin-screen').classList.add('active');
-  loadLeagues();
-  loadAdminData();
+  if (currentUser?.role === 'admin') {
+    document.getElementById('admin-screen').classList.add('active');
+    loadLeagues('leagues-list');
+    loadAdminData();
+  } else {
+    document.getElementById('director-screen').classList.add('active');
+    loadLeagues('dir-leagues-list');
+  }
 }
 
 function leagueDetailTab(name, btn) {
@@ -6476,25 +6505,84 @@ document.getElementById('club-name').addEventListener('input', updateBrandPrevie
 // ══════════════════════════════════════════════
 // SAVE DIRECTOR
 // ══════════════════════════════════════════════
+// Feature-gated sections a director can be granted. Adding a future module is
+// just one more entry here — no schema change needed, since access is stored
+// as a plain text array on the director row.
+const FEATURE_MODULES = [
+  {key:'events', label:'Events'},
+  {key:'leagues', label:'Leagues'}
+];
+
+function renderFeatureAccessCheckboxes(granted) {
+  const el = document.getElementById('director-access-checkboxes');
+  el.innerHTML = FEATURE_MODULES.map(m=>`
+    <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+      <input type="checkbox" class="director-access-cb" value="${m.key}" ${(granted||[]).includes(m.key)?'checked':''} style="width:16px;height:16px;accent-color:var(--court)">
+      ${escQ(m.label)}
+    </label>`).join('');
+}
+
+function getCheckedFeatureAccess() {
+  return Array.from(document.querySelectorAll('.director-access-cb:checked')).map(cb=>cb.value);
+}
+
+let editDirectorId = null;
+
+function openNewDirectorModal() {
+  editDirectorId = null;
+  document.getElementById('dir-modal-title').textContent = 'New Director';
+  document.getElementById('save-director-btn').textContent = 'Create Director';
+  ['director-name','director-pin','director-pin-confirm'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('director-pin-group').style.display = '';
+  document.getElementById('director-pin-confirm-group').style.display = '';
+  renderFeatureAccessCheckboxes(['events']);
+  document.getElementById('director-error').style.display='none';
+  openModal('director-modal');
+}
+
+async function openDirectorModalEdit(id) {
+  const {data:d} = await sb.from('directors').select('*').eq('id',id).single();
+  if (!d) return;
+  editDirectorId = id;
+  document.getElementById('dir-modal-title').textContent = 'Edit Director';
+  document.getElementById('save-director-btn').textContent = 'Save Changes';
+  document.getElementById('director-name').value = d.name;
+  document.getElementById('director-pin-group').style.display = 'none';
+  document.getElementById('director-pin-confirm-group').style.display = 'none';
+  document.getElementById('director-error').style.display='none';
+  await openModal('director-modal');
+  document.getElementById('director-club').value = d.club_id;
+  renderFeatureAccessCheckboxes(d.feature_access);
+}
+
 async function saveDirector() {
   const name=document.getElementById('director-name').value.trim();
   const clubId=document.getElementById('director-club').value;
-  const pin=document.getElementById('director-pin').value.trim();
-  const pinC=document.getElementById('director-pin-confirm').value.trim();
+  const featureAccess = getCheckedFeatureAccess();
   const errEl=document.getElementById('director-error');
   errEl.style.display='none';
   if(!name){errEl.textContent='Name required.';errEl.style.display='flex';return;}
   if(!clubId){errEl.textContent='Select a club.';errEl.style.display='flex';return;}
+
+  if (editDirectorId) {
+    const {error} = await sb.from('directors').update({name, club_id:clubId, feature_access:featureAccess}).eq('id',editDirectorId);
+    if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+    toast(`Director "${name}" updated!`,'success');
+    closeModal('director-modal');
+    loadDirectors();
+    return;
+  }
+
+  const pin=document.getElementById('director-pin').value.trim();
+  const pinC=document.getElementById('director-pin-confirm').value.trim();
   if(!pin||pin.length<4){errEl.textContent='PIN must be 4+ digits.';errEl.style.display='flex';return;}
   if(!/^\d+$/.test(pin)){errEl.textContent='PIN must be digits only.';errEl.style.display='flex';return;}
   if(pin!==pinC){errEl.textContent='PINs do not match.';errEl.style.display='flex';return;}
   const hash=await hashPin(pin);
-  const {error}=await sb.from('directors').insert({name,club_id:clubId,pin_hash:hash,supabase_auth_uid:crypto.randomUUID()});
+  const {error}=await sb.from('directors').insert({name,club_id:clubId,pin_hash:hash,feature_access:featureAccess,supabase_auth_uid:crypto.randomUUID()});
   if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
   toast(`Director "${name}" created!`,'success');
   closeModal('director-modal');
-  ['director-name','director-pin','director-pin-confirm'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('director-club').value='';
   loadDirectors(); loadAdminData();
 }
 
