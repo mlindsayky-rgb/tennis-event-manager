@@ -693,6 +693,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-matches" style="display:none">
+      <div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
       <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-standings" style="display:none">
@@ -993,10 +994,11 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="form-group"><label class="form-label">Team A <span class="req">*</span></label><select class="form-select" id="match-team-a" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
         <div class="form-group"><label class="form-label">Team B <span class="req">*</span></label><select class="form-select" id="match-team-b" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
       </div>
-      <div class="form-group"><label class="form-label">Match Date <span class="req">*</span></label><input class="form-input" id="match-date" type="date"></div>
+      <div class="form-group"><label class="form-label">Week <span class="req">*</span></label><input class="form-input" id="match-week" type="number" min="1" onchange="renderCourtSplitPicker()"><div class="form-hint" id="match-week-hint"></div></div>
+      <div id="match-site-dates"></div>
       <div class="form-group">
         <label class="form-label">Court Site Split</label>
-        <div id="match-court-split"><div class="form-hint">Select both teams to set the court split.</div></div>
+        <div id="match-court-split"><div class="form-hint">Select both teams and a week to set the court split.</div></div>
         <div class="form-hint">Which team's site hosts each court. Suggested split alternates automatically based on how many times these two teams have already met this league.</div>
       </div>
       <div id="new-match-error" class="alert alert-error" style="display:none"></div>
@@ -5508,8 +5510,37 @@ async function saveLeagueTeam() {
   btn.disabled=false;
   if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
   toast(editTeamId?'Team updated!':'Team added!','success');
+  if (editTeamId) await cascadeTeamTimeSlotChange(editTeamId);
   closeModal('league-team-modal');
   loadLeagueTeams();
+}
+
+// When a team's locked time slot changes, remaining not-yet-played matches move
+// to the new day automatically; matches with results already entered are left
+// untouched — per the doc's Section 2 rule.
+async function cascadeTeamTimeSlotChange(teamId) {
+  const {data:team} = await sb.from('league_teams').select('*').eq('id',teamId).single();
+  if (!team || team.time_slot_day==null) return;
+  const {data:league} = await sb.from('leagues').select('*').eq('id',team.league_id).single();
+  if (!league) return;
+  const {data:matches} = await sb.from('league_matches').select('id,team_a_id,team_b_id,week_number')
+    .or(`and(team_a_id.eq.${teamId}),and(team_b_id.eq.${teamId})`);
+  if (!matches || !matches.length) return;
+  const matchIds = matches.map(m=>m.id);
+  const {data:results} = await sb.from('court_results').select('match_id').in('match_id',matchIds);
+  const playedIds = new Set((results||[]).map(r=>r.match_id));
+  const weeks = seasonWeekDates(league);
+  let updatedCount = 0;
+  for (const m of matches) {
+    if (playedIds.has(m.id)) continue;
+    const weekEntry = weeks[m.week_number-1];
+    if (!weekEntry) continue;
+    const newDate = toISODate(dateForTeamInWeek(weekEntry.weekStart, team.time_slot_day));
+    const field = m.team_a_id===teamId ? 'site_a_date' : 'site_b_date';
+    await sb.from('league_matches').update({[field]: newDate}).eq('id', m.id);
+    updatedCount++;
+  }
+  if (updatedCount) toast(`${updatedCount} upcoming match date(s) moved to the new time slot`,'success');
 }
 
 async function deleteLeagueTeam(id, name) {
@@ -5531,6 +5562,7 @@ function fmtTime(t) {
 // LEAGUE MATCHES — court result entry & scoring
 // ══════════════════════════════════════════════
 let matchSiteACourts = [];
+let newMatchTeamsCache = [];
 let currentMatch = null, currentMatchTeamA = null, currentMatchTeamB = null;
 let currentMatchResults = {};   // court_number -> saved court_results row
 let courtDrafts = {};           // court_number -> in-progress edit state
@@ -5539,11 +5571,121 @@ let matchRosterA = [], matchRosterB = []; // this match's two teams' rosters, if
 
 function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
 
+// ── Scheduling helpers ──
+// A week's "site date" for a team is that week's nominal start (league.start_date
+// + (week-1)*7 days) advanced to the next occurrence of that team's locked weekday —
+// always within the same 7-day window, so it lands at a fixed weekly cadence.
+function toISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function seasonWeekDates(league) {
+  const start = new Date(league.start_date + 'T00:00:00');
+  const weeks = [];
+  for (let w=1; w<=league.session_length_weeks; w++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + (w-1)*7);
+    weeks.push({weekNumber:w, weekStart:d});
+  }
+  return weeks;
+}
+
+function dateForTeamInWeek(weekStart, timeSlotDay) {
+  const d = new Date(weekStart);
+  let diff = timeSlotDay - d.getDay();
+  if (diff < 0) diff += 7;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
+// The site split alternates every time the same two teams meet again — matches
+// the doc's "next time they play, flip which courts each site gets" rule.
+function defaultSiteACourts(n, meetingIndex) {
+  const flip = meetingIndex % 2 === 1;
+  return n===3 ? (flip?[3]:[1,2]) : (flip?[3,4]:[1,2]);
+}
+
+// Standard circle-method round robin. Returns an array of rounds, each an array
+// of [teamAId, teamBId] pairs; a null placeholder handles an odd team count (bye).
+function generateRoundRobinPairs(teamIds) {
+  const ids = [...teamIds];
+  if (ids.length % 2 !== 0) ids.push(null);
+  const n = ids.length;
+  const fixed = ids[0];
+  let rotating = ids.slice(1);
+  const rounds = [];
+  for (let r=0; r<n-1; r++) {
+    const roundTeams = [fixed, ...rotating];
+    const pairs = [];
+    for (let i=0; i<n/2; i++) {
+      const a = roundTeams[i], b = roundTeams[n-1-i];
+      if (a!=null && b!=null) pairs.push([a,b]);
+    }
+    rounds.push(pairs);
+    rotating.unshift(rotating.pop());
+  }
+  return rounds;
+}
+
+async function generateFullSchedule() {
+  const {data:existingMatches} = await sb.from('league_matches').select('id').eq('league_id',currentLeague.id);
+  if ((existingMatches||[]).length) {
+    if (!confirm(`This league already has ${existingMatches.length} match(es). Generating a new schedule deletes any that haven't been played yet — matches with results already entered are kept. Continue?`)) return;
+    const matchIds = existingMatches.map(m=>m.id);
+    const {data:playedResults} = await sb.from('court_results').select('match_id').in('match_id',matchIds);
+    const playedMatchIds = new Set((playedResults||[]).map(r=>r.match_id));
+    const toDelete = matchIds.filter(id=>!playedMatchIds.has(id));
+    if (toDelete.length) await sb.from('league_matches').delete().in('id',toDelete);
+  }
+
+  const {data:teams} = await sb.from('league_teams').select('*').eq('league_id',currentLeague.id).order('name');
+  if (!teams || teams.length < 2) { toast('Need at least 2 teams to generate a schedule','error'); return; }
+  const missingSlot = teams.filter(t=>t.time_slot_day==null);
+  if (missingSlot.length) { toast(`Set a locked time slot for ${missingSlot.map(t=>t.name).join(', ')} before generating`,'error'); return; }
+  const teamsById = {}; teams.forEach(t=>{ teamsById[t.id]=t; });
+
+  const n = courtsForFormat();
+  const rounds = generateRoundRobinPairs(teams.map(t=>t.id));
+  const cycleLen = rounds.length;
+  const weeks = seasonWeekDates(currentLeague);
+  const datesOff = currentLeague.dates_off || [];
+  const meetingCounts = {};
+  const newMatches = [];
+  let conflictCount = 0;
+
+  weeks.forEach(({weekNumber, weekStart})=>{
+    const pairs = rounds[(weekNumber-1) % cycleLen];
+    pairs.forEach(([teamAId, teamBId])=>{
+      const teamA = teamsById[teamAId], teamB = teamsById[teamBId];
+      const key = [teamAId,teamBId].sort().join('|');
+      const meetingIndex = meetingCounts[key] || 0;
+      meetingCounts[key] = meetingIndex + 1;
+
+      const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
+      const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
+      if (datesOff.includes(siteADate) || datesOff.includes(siteBDate)) conflictCount++;
+
+      newMatches.push({
+        league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
+        week_number: weekNumber, site_a_courts: defaultSiteACourts(n, meetingIndex),
+        site_a_date: siteADate, site_b_date: siteBDate
+      });
+    });
+  });
+
+  if (!newMatches.length) { toast('Nothing to generate','error'); return; }
+  const {error} = await sb.from('league_matches').insert(newMatches);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  toast(`Generated ${newMatches.length} matches across ${currentLeague.session_length_weeks} weeks!`,'success');
+  if (conflictCount) toast(`${conflictCount} match(es) fall on a scheduled day off — flagged in the list, review and adjust manually`,'default');
+  loadLeagueMatches();
+}
+
 async function loadLeagueMatches() {
   const el = document.getElementById('league-matches-list');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{data:matches}, {data:teams}] = await Promise.all([
-    sb.from('league_matches').select('*').eq('league_id',currentLeague.id).order('match_date',{ascending:false}),
+    sb.from('league_matches').select('*').eq('league_id',currentLeague.id).order('week_number',{ascending:true}),
     sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id)
   ]);
   const matchIds = (matches||[]).map(m=>m.id);
@@ -5558,22 +5700,25 @@ async function loadLeagueMatches() {
 function renderLeagueMatches(matches, teams, resultCounts) {
   const el = document.getElementById('league-matches-list');
   if(!matches.length){
-    el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No matches yet</div><button class="btn btn-primary" onclick="openNewMatchModal()">+ New Match</button></div></div>';
+    el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No matches yet</div><div class="empty-sub">Add matches one at a time, or generate the whole season at once</div><button class="btn btn-primary" onclick="openNewMatchModal()">+ New Match</button></div></div>';
     return;
   }
   const n = courtsForFormat();
+  const datesOff = currentLeague.dates_off || [];
   const teamName = id => teams.find(t=>t.id===id)?.name || '—';
   el.innerHTML = matches.map(m=>{
     const entered = resultCounts[m.id]||0;
     const complete = entered>=n;
+    const onDayOff = datesOff.includes(m.site_a_date) || datesOff.includes(m.site_b_date);
     return `<div class="event-card" onclick="openMatchById('${m.id}')">
       <div class="event-card-accent ${complete?'complete':'draft'}"></div>
       <div class="event-card-body">
         <div>
           <div class="event-card-name">${teamName(m.team_a_id)} vs ${teamName(m.team_b_id)}</div>
-          <div class="event-card-meta"><span>${fmtDate(m.match_date)}</span><span>${entered} of ${n} courts entered</span></div>
+          <div class="event-card-meta"><span>Week ${m.week_number}</span><span>${fmtDate(m.site_a_date)} / ${fmtDate(m.site_b_date)}</span><span>${entered} of ${n} courts entered</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
+          ${onDayOff?'<span class="badge badge-red">⚠ Falls on a day off</span>':''}
           <span class="badge ${complete?'badge-green':'badge-blue'}">${complete?'Complete':'In Progress'}</span>
           <span class="event-card-arrow">›</span>
         </div>
@@ -5584,10 +5729,13 @@ function renderLeagueMatches(matches, teams, resultCounts) {
 
 async function openNewMatchModal() {
   matchSiteACourts = [];
-  document.getElementById('match-date').value='';
+  document.getElementById('match-week').value='';
+  document.getElementById('match-week-hint').textContent = `1–${currentLeague.session_length_weeks} for this league`;
+  document.getElementById('match-site-dates').innerHTML='';
   document.getElementById('new-match-error').style.display='none';
-  document.getElementById('match-court-split').innerHTML='<div class="form-hint">Select both teams to set the court split.</div>';
-  const {data:teams} = await sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id).order('name');
+  document.getElementById('match-court-split').innerHTML='<div class="form-hint">Select both teams and a week to set the court split.</div>';
+  const {data:teams} = await sb.from('league_teams').select('id,name,time_slot_day,time_slot_time').eq('league_id',currentLeague.id).order('name');
+  newMatchTeamsCache = teams||[];
   ['match-team-a','match-team-b'].forEach(id=>{
     const s=document.getElementById(id);
     s.innerHTML='<option value="">Select…</option>'+(teams||[]).map(t=>`<option value="${t.id}">${escQ(t.name)}</option>`).join('');
@@ -5598,17 +5746,38 @@ async function openNewMatchModal() {
 async function renderCourtSplitPicker() {
   const teamAId = document.getElementById('match-team-a').value;
   const teamBId = document.getElementById('match-team-b').value;
+  const weekNum = parseInt(document.getElementById('match-week').value);
   const el = document.getElementById('match-court-split');
-  if(!teamAId || !teamBId || teamAId===teamBId) {
-    el.innerHTML = '<div class="form-hint">Select two different teams to set the court split.</div>';
+  const datesEl = document.getElementById('match-site-dates');
+  if(!teamAId || !teamBId || teamAId===teamBId || !weekNum || weekNum<1 || weekNum>currentLeague.session_length_weeks) {
+    el.innerHTML = '<div class="form-hint">Select two different teams and a valid week to set the court split.</div>';
+    datesEl.innerHTML = '';
     matchSiteACourts = [];
     return;
   }
+  const teamA = newMatchTeamsCache.find(t=>t.id===teamAId);
+  const teamB = newMatchTeamsCache.find(t=>t.id===teamBId);
+  if (teamA.time_slot_day==null || teamB.time_slot_day==null) {
+    el.innerHTML = '<div class="alert alert-error">Both teams need a locked time slot set (edit the team) before a match can be scheduled.</div>';
+    datesEl.innerHTML = '';
+    matchSiteACourts = [];
+    return;
+  }
+  const weeks = seasonWeekDates(currentLeague);
+  const weekStart = weeks[weekNum-1].weekStart;
+  const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
+  const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
+  const datesOff = currentLeague.dates_off || [];
+  const warn = d => datesOff.includes(d) ? ' <span class="badge badge-red">⚠ day off</span>' : '';
+  datesEl.innerHTML = `<div class="alert alert-info" style="margin-bottom:14px">
+    ${escQ(teamA.name)}'s site: <strong>${fmtDate(siteADate)}</strong>${warn(siteADate)} &nbsp;·&nbsp;
+    ${escQ(teamB.name)}'s site: <strong>${fmtDate(siteBDate)}</strong>${warn(siteBDate)}
+  </div>`;
+
   const n = courtsForFormat();
   const {data:prior} = await sb.from('league_matches').select('id')
     .or(`and(team_a_id.eq.${teamAId},team_b_id.eq.${teamBId}),and(team_a_id.eq.${teamBId},team_b_id.eq.${teamAId})`);
-  const flip = (prior||[]).length % 2 === 1;
-  matchSiteACourts = n===3 ? (flip?[3]:[1,2]) : (flip?[3,4]:[1,2]);
+  matchSiteACourts = defaultSiteACourts(n, (prior||[]).length);
   renderCourtSplitButtons(n);
 }
 
@@ -5636,19 +5805,28 @@ function toggleCourtSite(court, toA) {
 async function saveNewMatch() {
   const teamAId = document.getElementById('match-team-a').value;
   const teamBId = document.getElementById('match-team-b').value;
-  const date = document.getElementById('match-date').value;
+  const weekNum = parseInt(document.getElementById('match-week').value);
   const errEl = document.getElementById('new-match-error');
   errEl.style.display='none';
   if(!teamAId || !teamBId || teamAId===teamBId){ errEl.textContent='Select two different teams.'; errEl.style.display='flex'; return; }
-  if(!date){ errEl.textContent='Match date is required.'; errEl.style.display='flex'; return; }
+  if(!weekNum || weekNum<1 || weekNum>currentLeague.session_length_weeks){ errEl.textContent=`Week must be between 1 and ${currentLeague.session_length_weeks}.`; errEl.style.display='flex'; return; }
+  const teamA = newMatchTeamsCache.find(t=>t.id===teamAId);
+  const teamB = newMatchTeamsCache.find(t=>t.id===teamBId);
+  if (!teamA || !teamB || teamA.time_slot_day==null || teamB.time_slot_day==null) { errEl.textContent='Both teams need a locked time slot set before a match can be scheduled.'; errEl.style.display='flex'; return; }
   const n = courtsForFormat();
   if(matchSiteACourts.length===0 || matchSiteACourts.length===n){ errEl.textContent='Split the courts between both sites — one team can\'t host every court.'; errEl.style.display='flex'; return; }
+
+  const weeks = seasonWeekDates(currentLeague);
+  const weekStart = weeks[weekNum-1].weekStart;
+  const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
+  const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
 
   const btn = document.getElementById('save-match-btn');
   btn.disabled = true;
   const {error} = await sb.from('league_matches').insert({
     league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
-    match_date: date, site_a_courts: matchSiteACourts
+    week_number: weekNum, site_a_courts: matchSiteACourts,
+    site_a_date: siteADate, site_b_date: siteBDate
   });
   btn.disabled = false;
   if(error){ errEl.textContent='Error: '+error.message; errEl.style.display='flex'; return; }
@@ -5679,7 +5857,7 @@ async function openMatchById(id) {
   (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
 
   document.getElementById('match-header-name').textContent = `${teamA.name} vs ${teamB.name}`;
-  document.getElementById('match-header-sub').textContent = fmtDate(match.match_date);
+  document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${teamA.name}: ${fmtDate(match.site_a_date)} · ${teamB.name}: ${fmtDate(match.site_b_date)}`;
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('match-screen').classList.add('active');
   renderMatchScreen();
@@ -5719,8 +5897,8 @@ function renderMatchScreen() {
     initCourtDraft(c);
     const atTeamA = (currentMatch.site_a_courts||[]).includes(c);
     const siteLabel = atTeamA
-      ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name}`
-      : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name}`;
+      ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
+      : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name} — ${fmtDate(currentMatch.site_b_date)}`;
     const d = courtDrafts[c];
     html += `<div class="card" style="margin-bottom:16px">
       <div class="card-header"><div class="card-title">Court ${c}</div><span class="badge badge-blue">${escQ(siteLabel)}</span></div>
