@@ -720,9 +720,12 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="card" style="margin-bottom:24px"><div class="card-body" id="league-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
       <div class="card">
         <div class="card-header">
-          <div><div class="card-title">Player Ranking Point Values</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Rankings aren't built yet — this just holds the point values for when they are.</div></div>
+          <div><div class="card-title">Player Rankings</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Ranked by average points per match. A win earns points; a loss earns none. Beating a stronger opponent (top or middle third of the league by win rate) earns a bonus, and Court 1/2 wins get a small bump.</div></div>
         </div>
-        <div class="card-body" id="ranking-settings-body"></div>
+        <div class="card-body">
+          <div id="ranking-settings-body"></div>
+          <div id="rankings-board-body" style="margin-top:16px"></div>
+        </div>
       </div>
     </div>
     <div id="ltab-settings" style="display:none">
@@ -6798,38 +6801,152 @@ function renderStandings(rows) {
 // a place to start deciding numbers, stored in the existing app_settings
 // key/value table (same pattern as auto-lookup/lookup-states settings).
 // ══════════════════════════════════════════════
-const RANKING_SETTING_KEYS = [1,2,3,4].flatMap(c=>[`ranking_court${c}_win`,`ranking_court${c}_loss`]);
+const RANKING_SETTING_KEYS = ['ranking_base_win','ranking_top_bonus','ranking_mid_bonus','ranking_court12_bump'];
 
 async function loadRankingSettings() {
   const {data} = await sb.from('app_settings').select('key,value').in('key',RANKING_SETTING_KEYS);
   const values = {};
   (data||[]).forEach(row=>{ values[row.key] = row.value; });
   renderRankingSettings(values);
+  const ranked = await computeLeagueRankings(values);
+  renderRankingsBoard(ranked);
 }
 
 function renderRankingSettings(values) {
   const el = document.getElementById('ranking-settings-body');
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Court</th><th>Win value</th><th>Loss value</th></tr></thead><tbody>
-  ${[1,2,3,4].map(c=>`<tr>
-    <td>Court ${c}</td>
-    <td><input class="form-input" type="number" step="0.1" id="ranking-court${c}-win" value="${values[`ranking_court${c}_win`]||''}" placeholder="e.g. ${(5-c).toFixed(1)}"></td>
-    <td><input class="form-input" type="number" step="0.1" id="ranking-court${c}-loss" value="${values[`ranking_court${c}_loss`]||''}" placeholder="e.g. ${(-(c)).toFixed(1)}"></td>
-  </tr>`).join('')}
-  </tbody></table>
-  <button class="btn btn-primary" style="margin-top:14px" onclick="saveRankingSettings()">Save Point Values</button>
-  <div class="form-hint" style="margin-top:10px">A win on Court 1 should be worth more than a win on a lower court, and a loss on Court 1 should cost less than a loss on a lower court — these values aren't used anywhere yet.</div>`;
+  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
+  if (!isStaff) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Point Values</div>
+  <div class="form-row">
+    <div class="form-group"><label class="form-label">Base Win</label><input class="form-input" type="number" step="0.1" id="ranking-base-win" value="${values.ranking_base_win||''}" placeholder="e.g. 1"></div>
+    <div class="form-group"><label class="form-label">Court 1/2 Bump</label><input class="form-input" type="number" step="0.1" id="ranking-court12-bump" value="${values.ranking_court12_bump||''}" placeholder="e.g. 0.5"></div>
+  </div>
+  <div class="form-row">
+    <div class="form-group"><label class="form-label">Top-Third Opponent Bonus</label><input class="form-input" type="number" step="0.1" id="ranking-top-bonus" value="${values.ranking_top_bonus||''}" placeholder="e.g. 2"></div>
+    <div class="form-group"><label class="form-label">Middle-Third Opponent Bonus</label><input class="form-input" type="number" step="0.1" id="ranking-mid-bonus" value="${values.ranking_mid_bonus||''}" placeholder="e.g. 1"></div>
+  </div>
+  <button class="btn btn-primary" onclick="saveRankingSettings()">Save Point Values</button>
+  <div class="form-hint" style="margin-top:10px">Every win earns Base Win points, plus a bonus for beating someone in the league's top or middle third by win rate (doubles uses the opposing pair's combined average), plus the Court 1/2 bump if that's where it happened. Losses always earn zero.</div>
+  <div style="border-top:1px solid var(--border);margin:16px 0"></div>`;
 }
 
 async function saveRankingSettings() {
-  const writes = [];
-  [1,2,3,4].forEach(c=>{
-    ['win','loss'].forEach(kind=>{
-      const val = document.getElementById(`ranking-court${c}-${kind}`).value;
-      writes.push(sb.from('app_settings').upsert({key:`ranking_court${c}_${kind}`, value: val}));
-    });
-  });
-  await Promise.all(writes);
+  const map = {
+    ranking_base_win: document.getElementById('ranking-base-win').value,
+    ranking_top_bonus: document.getElementById('ranking-top-bonus').value,
+    ranking_mid_bonus: document.getElementById('ranking-mid-bonus').value,
+    ranking_court12_bump: document.getElementById('ranking-court12-bump').value,
+  };
+  await Promise.all(Object.entries(map).map(([key,value])=>sb.from('app_settings').upsert({key,value})));
   toast('Point values saved','success');
+  loadRankingSettings();
+}
+
+// Player Rankings — derived entirely from court_results, nothing stored.
+// Pass 1 tallies each player's win rate (used only to bucket opponent
+// strength); pass 2 scores every win using that bucket, the court-12 bump,
+// and Base Win, with losses always worth zero (so totals can't go negative).
+// Doubles buckets a pair by the average win rate of its two players.
+async function computeLeagueRankings(values) {
+  const baseWin = parseFloat(values.ranking_base_win) || 0;
+  const topBonus = parseFloat(values.ranking_top_bonus) || 0;
+  const midBonus = parseFloat(values.ranking_mid_bonus) || 0;
+  const courtBump = parseFloat(values.ranking_court12_bump) || 0;
+
+  const teamIds = currentLeagueTeams.map(t => t.id);
+  if (!teamIds.length) return [];
+  const { data: matches } = await sb.from('league_matches').select('id').eq('league_id', currentLeague.id);
+  const matchIds = (matches || []).map(m => m.id);
+  if (!matchIds.length) return [];
+  const { data: results } = await sb.from('court_results').select('*').in('match_id', matchIds);
+  const rows = results || [];
+
+  function courtSides(cr) {
+    const winner = courtWinner({ teamAType: cr.team_a_entry_type, teamBType: cr.team_b_entry_type, sets: cr.sets });
+    if (!winner) return null;
+    const aIds = [cr.team_a_player1_id, cr.team_a_player2_id].filter(Boolean);
+    const bIds = [cr.team_b_player1_id, cr.team_b_player2_id].filter(Boolean);
+    return { winIds: winner === 'A' ? aIds : bIds, loseIds: winner === 'A' ? bIds : aIds };
+  }
+
+  // Pass 1: win rate per player, used only to bucket opponent strength
+  const tally = {};
+  rows.forEach(cr => {
+    const sides = courtSides(cr);
+    if (!sides) return;
+    sides.winIds.forEach(pid => { tally[pid] = tally[pid] || { wins: 0, losses: 0 }; tally[pid].wins++; });
+    sides.loseIds.forEach(pid => { tally[pid] = tally[pid] || { wins: 0, losses: 0 }; tally[pid].losses++; });
+  });
+  const winPct = {};
+  Object.keys(tally).forEach(pid => { const t = tally[pid]; const n = t.wins + t.losses; winPct[pid] = n ? t.wins / n : 0; });
+  const sortedPct = Object.values(winPct).sort((a, b) => a - b);
+  const n = sortedPct.length;
+  const bottomCutoff = n ? sortedPct[Math.floor(n / 3)] : 0;
+  const topCutoff = n ? sortedPct[Math.floor((2 * n) / 3)] : 0;
+  const tierFor = pct => pct >= topCutoff ? 'top' : pct <= bottomCutoff ? 'bottom' : 'mid';
+
+  // Pass 2: score every court result
+  const score = {};
+  rows.forEach(cr => {
+    const sides = courtSides(cr);
+    if (!sides) return;
+    const oppPct = sides.loseIds.length ? sides.loseIds.reduce((s, pid) => s + (winPct[pid] || 0), 0) / sides.loseIds.length : 0;
+    const tier = tierFor(oppPct);
+    const tierBonus = tier === 'top' ? topBonus : tier === 'mid' ? midBonus : 0;
+    const courtBonus = (cr.court_number === 1 || cr.court_number === 2) ? courtBump : 0;
+    const winPoints = baseWin + tierBonus + courtBonus;
+    sides.winIds.forEach(pid => { score[pid] = score[pid] || { total: 0, matches: 0 }; score[pid].total += winPoints; score[pid].matches++; });
+    sides.loseIds.forEach(pid => { score[pid] = score[pid] || { total: 0, matches: 0 }; score[pid].matches++; });
+  });
+
+  const playerIds = Object.keys(score);
+  if (!playerIds.length) return [];
+  const [{ data: players }, { data: rosterRows }] = await Promise.all([
+    sb.from('players').select('id,roster_name').in('id', playerIds),
+    sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds),
+  ]);
+  const nameMap = {}; (players || []).forEach(p => nameMap[p.id] = p.roster_name);
+  const teamOfPlayer = {}; (rosterRows || []).forEach(r => { if (!(r.player_id in teamOfPlayer)) teamOfPlayer[r.player_id] = r.team_id; });
+  const teamNameMap = {}; currentLeagueTeams.forEach(t => teamNameMap[t.id] = t.name);
+
+  return playerIds.map(pid => {
+    const s = score[pid];
+    return {
+      player_id: pid,
+      name: nameMap[pid] || '—',
+      team_name: teamOfPlayer[pid] ? (teamNameMap[teamOfPlayer[pid]] || '—') : 'Sub',
+      matches: s.matches,
+      total: s.total,
+      average: s.matches ? s.total / s.matches : 0,
+    };
+  }).filter(r => r.matches >= 2).sort((a, b) => b.average - a.average);
+}
+
+function renderRankingsBoard(ranked) {
+  const el = document.getElementById('rankings-board-body');
+  const role = currentUser?.role;
+  if (role === 'captain') {
+    el.innerHTML = '<div class="form-hint">Full player rankings aren\'t shown to Captains — participation stats for your own roster are planned as a follow-on.</div>';
+    return;
+  }
+  if (!ranked.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-sub">Nobody has played 2+ matches yet</div></div>';
+    return;
+  }
+  const rowHtml = (r, rank) => `<tr><td>${rank}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.matches}</td><td>${r.total.toFixed(1)}</td><td>${r.average.toFixed(2)}</td></tr>`;
+  let rows = ranked, ownRow = null, ownRank = null;
+  if (role === 'player') {
+    const idx = ranked.findIndex(r => r.player_id === currentUser.player_id);
+    if (idx >= 0) { ownRow = ranked[idx]; ownRank = idx + 1; }
+    rows = ranked.slice(0, 10);
+  }
+  let html = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Matches</th><th>Total</th><th>Average</th></tr></thead><tbody>
+    ${rows.map((r, i) => rowHtml(r, i + 1)).join('')}`;
+  if (role === 'player' && ownRank && ownRank > 10) {
+    html += `<tr><td colspan="6" style="text-align:center;color:var(--ink-muted)">⋯</td></tr>${rowHtml(ownRow, ownRank)}`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
 }
 
 async function loadPlayers(containerId, filterMode) {
