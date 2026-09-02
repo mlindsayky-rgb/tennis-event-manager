@@ -674,27 +674,30 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 <div id="league-screen" class="screen">
   <header class="app-header" id="league-detail-header" style="background:linear-gradient(135deg,var(--navy) 0%,var(--court) 100%)">
     <div class="app-header-left">
-      <button class="header-btn" onclick="closeLeague()" style="margin-right:8px">← Back</button>
+      <button class="header-btn" id="league-detail-back-btn" onclick="closeLeague()" style="margin-right:8px">← Back</button>
       <div>
         <div class="app-header-title" id="league-detail-name">League</div>
         <div class="app-header-sub" id="league-detail-sub">—</div>
       </div>
     </div>
-    <button class="header-btn" id="league-detail-action-btn" onclick="openTeamModalNew()">+ Add Team</button>
+    <div style="display:flex;gap:8px">
+      <button class="header-btn" id="league-change-pin-btn" onclick="openChangePinModal()" style="display:none">Change My PIN</button>
+      <button class="header-btn" id="league-detail-action-btn" onclick="openTeamModalNew()">+ Add Team</button>
+    </div>
   </header>
   <nav class="event-nav">
-    <button class="event-nav-tab active" onclick="leagueDetailTab('teams',this)">Teams</button>
-    <button class="event-nav-tab" onclick="leagueDetailTab('matches',this)">Matches</button>
-    <button class="event-nav-tab" onclick="leagueDetailTab('subs',this)">Subs</button>
-    <button class="event-nav-tab" onclick="leagueDetailTab('standings',this)">Standings</button>
-    <button class="event-nav-tab" onclick="leagueDetailTab('settings',this)">League Settings</button>
+    <button class="event-nav-tab active" id="league-nav-teams" onclick="leagueDetailTab('teams',this)">Teams</button>
+    <button class="event-nav-tab" id="league-nav-matches" onclick="leagueDetailTab('matches',this)">Matches</button>
+    <button class="event-nav-tab" id="league-nav-subs" onclick="leagueDetailTab('subs',this)">Subs</button>
+    <button class="event-nav-tab" id="league-nav-standings" onclick="leagueDetailTab('standings',this)">Standings</button>
+    <button class="event-nav-tab" id="league-nav-settings" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
   <div class="content">
     <div id="ltab-teams">
       <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-matches" style="display:none">
-      <div style="margin-bottom:16px"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
+      <div id="generate-schedule-btn-wrap" style="margin-bottom:16px"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
       <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-subs" style="display:none">
@@ -724,6 +727,48 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div id="ltab-settings" style="display:none">
       <div class="card"><div class="card-body" id="league-settings-body"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PLAYER SCREEN ══ -->
+<div id="player-screen" class="screen">
+  <header class="app-header" id="player-header">
+    <div class="app-header-left">
+      <span style="font-size:20px">🎾</span>
+      <div>
+        <div class="app-header-title" id="player-name">Loading…</div>
+        <div class="app-header-sub">Player</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
+      <button class="header-btn" onclick="logout()">Sign Out</button>
+    </div>
+  </header>
+  <div class="content">
+    <div class="section-header"><div><div class="section-title">My Teams</div></div></div>
+    <div id="player-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    <div class="section-header" style="margin-top:24px"><div><div class="section-title">Upcoming Matches</div></div></div>
+    <div id="player-upcoming-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    <div class="section-header" style="margin-top:24px"><div><div class="section-title">My Record</div></div></div>
+    <div class="card"><div class="card-body" id="player-record-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+  </div>
+</div>
+
+<!-- CHANGE MY PIN MODAL (self-service, for director/coach/captain/player) -->
+<div class="modal-overlay" id="change-pin-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Change My PIN</div><button class="modal-close" onclick="closeModal('change-pin-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Current PIN</label><input class="form-input" id="my-pin-current" type="password" maxlength="6"></div>
+      <div class="form-group"><label class="form-label">New PIN</label><input class="form-input" id="my-pin-new" type="password" maxlength="6"></div>
+      <div class="form-group"><label class="form-label">Confirm New PIN</label><input class="form-input" id="my-pin-confirm" type="password" maxlength="6"></div>
+      <div id="change-pin-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('change-pin-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveMyPin()">Update PIN</button>
     </div>
   </div>
 </div>
@@ -759,7 +804,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub" id="dir-name">Director</div>
       </div>
     </div>
-    <button class="header-btn" onclick="logout()">Sign Out</button>
+    <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
+      <button class="header-btn" onclick="logout()">Sign Out</button>
+    </div>
   </header>
   <nav class="nav" id="dir-nav">
     <button class="nav-tab" id="dir-nav-events" onclick="dirTab('events',this)">Events</button>
@@ -987,6 +1035,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
         <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time.</div>
       </div>
+      <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Coach Login PIN</div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">PIN</label><input class="form-input" id="team-coach-pin" type="password" placeholder="4-6 digits" maxlength="6"></div>
+          <div class="form-group"><label class="form-label">Confirm PIN</label><input class="form-input" id="team-coach-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6"></div>
+        </div>
+        <div class="form-hint">Optional — lets the coach log in to manage this team, lineups, and subs. Leave both blank to set later, or leave blank on edit to keep the current PIN unchanged.</div>
+      </div>
       <div id="league-team-error" class="alert alert-error" style="display:none"></div>
     </div>
     <div class="modal-footer">
@@ -1001,13 +1057,15 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <div class="modal" style="max-width:640px">
     <div class="modal-header"><div class="modal-title" id="roster-modal-title">Team Roster</div><button class="modal-close" onclick="closeModal('roster-modal')">×</button></div>
     <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Upload Roster (.xlsx or .csv)</label>
-        <input class="form-input" type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" onchange="handleRosterFile(this)">
-        <div class="form-hint">Columns: First Name, Last Name, Email, Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
+      <div id="roster-upload-section">
+        <div class="form-group">
+          <label class="form-label">Upload Roster (.xlsx or .csv)</label>
+          <input class="form-input" type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" onchange="handleRosterFile(this)">
+          <div class="form-hint">Columns: First Name, Last Name, Email, Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
+        </div>
+        <div id="roster-import-preview"></div>
       </div>
-      <div id="roster-import-preview"></div>
-      <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
+      <div id="roster-addplayer-section" style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
         <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Add One Player</div>
         <div style="display:flex;gap:8px">
           <select class="form-select" id="roster-add-player" style="flex:1"><option value="">Search players…</option></select>
@@ -1015,7 +1073,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
       </div>
       <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
-        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Current Roster</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="font-size:13px;font-weight:700;color:var(--ink-muted)">Current Roster</div>
+          <button class="btn btn-sm btn-ghost" id="roster-reset-captain-pin-btn" onclick="resetCaptainPin()" style="display:none">Reset Captain PIN</button>
+        </div>
         <div id="roster-current-list"></div>
       </div>
     </div>
@@ -1732,33 +1793,73 @@ async function attemptLogin() {
     .select('*, clubs(name,primary_color,secondary_color,accent_color)')
     .eq('pin_hash', hash).eq('is_active', true).maybeSingle();
 
-  if (!dir) {
-    renderDots('error');
-    statusEl.textContent = 'Incorrect PIN';
-    setTimeout(() => { pinBuf=''; renderDots(); statusEl.textContent=''; pinLocked=false; }, 1200);
+  if (dir) {
+    if (dir.locked_until && new Date(dir.locked_until) > new Date()) {
+      const mins = Math.ceil((new Date(dir.locked_until)-new Date())/60000);
+      statusEl.textContent = `Locked. Try again in ${mins} min.`;
+      pinBuf=''; renderDots(); pinLocked=false;
+      return;
+    }
+    currentUser = { role:'director', director_id:dir.id, club_id:dir.club_id, club_name:dir.clubs?.name||'Your Club', director_name:dir.name, access: dir.feature_access||['events'] };
+    await sb.from('directors').update({last_login_at:new Date().toISOString(),failed_pin_attempts:0}).eq('id',dir.id);
+    applyBranding(dir.clubs);
+    pinBuf=''; renderDots();
+    document.getElementById('dir-club-name').textContent = currentUser.club_name;
+    document.getElementById('dir-name').textContent = currentUser.director_name;
+    document.getElementById('dir-nav-events').style.display = currentUser.access.includes('events') ? '' : 'none';
+    document.getElementById('dir-nav-leagues').style.display = currentUser.access.includes('leagues') ? '' : 'none';
+    showScreen('director-screen');
+    const firstTab = currentUser.access.includes('events') ? 'events' : currentUser.access.includes('leagues') ? 'leagues' : 'players';
+    dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
+    if (firstTab==='events') loadDirectorEvents();
+    pinLocked = false;
     return;
   }
 
-  if (dir.locked_until && new Date(dir.locked_until) > new Date()) {
-    const mins = Math.ceil((new Date(dir.locked_until)-new Date())/60000);
-    statusEl.textContent = `Locked. Try again in ${mins} min.`;
-    pinBuf=''; renderDots(); pinLocked=false;
+  // Check coach (team-level PIN)
+  const { data: coachTeam } = await sb.from('league_teams')
+    .select('*, leagues(name,format), clubs(name,primary_color,secondary_color,accent_color)')
+    .eq('coach_pin_hash', hash).maybeSingle();
+  if (coachTeam) {
+    currentUser = { role:'coach', team_id:coachTeam.id, team_name:coachTeam.name, league_id:coachTeam.league_id,
+      league_name:coachTeam.leagues?.name, club_id:coachTeam.club_id, club_name:coachTeam.clubs?.name||'Your Club', person_name:coachTeam.coach_name };
+    applyBranding(coachTeam.clubs);
+    pinBuf=''; renderDots();
+    pinLocked = false;
+    openLeagueById(coachTeam.league_id);
     return;
   }
 
-  currentUser = { role:'director', director_id:dir.id, club_id:dir.club_id, club_name:dir.clubs?.name||'Your Club', director_name:dir.name, access: dir.feature_access||['events'] };
-  await sb.from('directors').update({last_login_at:new Date().toISOString(),failed_pin_attempts:0}).eq('id',dir.id);
-  applyBranding(dir.clubs);
-  pinBuf=''; renderDots();
-  document.getElementById('dir-club-name').textContent = currentUser.club_name;
-  document.getElementById('dir-name').textContent = currentUser.director_name;
-  document.getElementById('dir-nav-events').style.display = currentUser.access.includes('events') ? '' : 'none';
-  document.getElementById('dir-nav-leagues').style.display = currentUser.access.includes('leagues') ? '' : 'none';
-  showScreen('director-screen');
-  const firstTab = currentUser.access.includes('events') ? 'events' : currentUser.access.includes('leagues') ? 'leagues' : 'players';
-  dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
-  if (firstTab==='events') loadDirectorEvents();
-  pinLocked = false;
+  // Check captain (team-level PIN — belongs to whoever currently holds the is_captain flag)
+  const { data: captainTeam } = await sb.from('league_teams')
+    .select('*, leagues(name,format), clubs(name,primary_color,secondary_color,accent_color)')
+    .eq('captain_pin_hash', hash).maybeSingle();
+  if (captainTeam) {
+    const { data: captainRow } = await sb.from('league_team_players')
+      .select('player_id,players(roster_name)').eq('team_id',captainTeam.id).eq('is_captain',true).maybeSingle();
+    currentUser = { role:'captain', team_id:captainTeam.id, team_name:captainTeam.name, league_id:captainTeam.league_id,
+      league_name:captainTeam.leagues?.name, club_id:captainTeam.club_id, club_name:captainTeam.clubs?.name||'Your Club',
+      person_name:captainRow?.players?.roster_name || 'Captain', player_id:captainRow?.player_id||null };
+    applyBranding(captainTeam.clubs);
+    pinBuf=''; renderDots();
+    pinLocked = false;
+    openLeagueById(captainTeam.league_id);
+    return;
+  }
+
+  // Check player
+  const { data: player } = await sb.from('players').select('*').eq('pin_hash', hash).eq('is_active', true).maybeSingle();
+  if (player) {
+    currentUser = { role:'player', player_id:player.id, person_name:player.roster_name };
+    pinBuf=''; renderDots();
+    pinLocked = false;
+    openPlayerScreen();
+    return;
+  }
+
+  renderDots('error');
+  statusEl.textContent = 'Incorrect PIN';
+  setTimeout(() => { pinBuf=''; renderDots(); statusEl.textContent=''; pinLocked=false; }, 1200);
 }
 
 function applyBranding(club) {
@@ -1770,6 +1871,161 @@ async function hashPin(pin) {
   const data = new TextEncoder().encode('tem_salt_v1_' + pin);
   const hash = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+// Every login PIN — admin, director, coach, captain, player — must be globally
+// unique across all five holders, or the flat login waterfall (whichever role
+// is checked first wins) could silently log someone into the wrong role.
+// exceptRef lets a person keep their own current PIN when "changing" it to
+// the same value: {table, id, col}.
+async function pinIsAvailable(hash, exceptRef) {
+  const isSelf = (table, id, col) => exceptRef && exceptRef.table === table && exceptRef.id === id && exceptRef.col === col;
+  const [{ data: admin }, { data: dirs }, { data: teams }, { data: plyrs }] = await Promise.all([
+    sb.from('admin_config').select('id,pin_hash'),
+    sb.from('directors').select('id,pin_hash'),
+    sb.from('league_teams').select('id,coach_pin_hash,captain_pin_hash'),
+    sb.from('players').select('id,pin_hash'),
+  ]);
+  if ((admin || []).some(r => r.pin_hash === hash && !isSelf('admin_config', r.id, 'pin_hash'))) return false;
+  if ((dirs || []).some(r => r.pin_hash === hash && !isSelf('directors', r.id, 'pin_hash'))) return false;
+  for (const t of teams || []) {
+    if (t.coach_pin_hash === hash && !isSelf('league_teams', t.id, 'coach_pin_hash')) return false;
+    if (t.captain_pin_hash === hash && !isSelf('league_teams', t.id, 'captain_pin_hash')) return false;
+  }
+  if ((plyrs || []).some(r => r.pin_hash === hash && !isSelf('players', r.id, 'pin_hash'))) return false;
+  return true;
+}
+
+// ══════════════════════════════════════════════
+// PLAYER SCREEN
+// ══════════════════════════════════════════════
+async function openPlayerScreen() {
+  showScreen('player-screen');
+  document.getElementById('player-name').textContent = currentUser.person_name;
+  await loadPlayerData();
+}
+
+async function loadPlayerData() {
+  const teamsEl = document.getElementById('player-teams-list');
+  const upcomingEl = document.getElementById('player-upcoming-list');
+  const recordEl = document.getElementById('player-record-body');
+
+  const { data: rosterRows } = await sb.from('league_team_players')
+    .select('team_id,is_captain,league_teams(id,name,league_id,leagues(name,format))')
+    .eq('player_id', currentUser.player_id);
+  const teams = (rosterRows || []).map(r => ({
+    team_id: r.team_id,
+    team_name: r.league_teams?.name || '—',
+    league_id: r.league_teams?.league_id,
+    league_name: r.league_teams?.leagues?.name || '—',
+    format: r.league_teams?.leagues?.format || 'SINGLES',
+    is_captain: !!r.is_captain,
+  }));
+
+  teamsEl.innerHTML = teams.length
+    ? `<table class="data-table"><thead><tr><th>Team</th><th>League</th><th></th></tr></thead><tbody>
+      ${teams.map(t => `<tr><td>${escQ(t.team_name)}</td><td>${escQ(t.league_name)}</td><td>${t.is_captain ? '<span class="badge badge-green">Captain</span>' : ''}</td></tr>`).join('')}
+      </tbody></table>`
+    : '<div class="card"><div class="empty-state" style="padding:20px 0"><div class="empty-sub">You\'re not on any team rosters yet</div></div></div>';
+
+  const teamIds = teams.map(t => t.team_id);
+  if (!teamIds.length) {
+    upcomingEl.innerHTML = '<div class="card"><div class="empty-state" style="padding:20px 0"><div class="empty-sub">No matches yet</div></div></div>';
+    recordEl.innerHTML = '<div class="empty-sub">No matches played yet</div>';
+    return;
+  }
+
+  const [{ data: asA }, { data: asB }] = await Promise.all([
+    sb.from('league_matches').select('*').in('team_a_id', teamIds),
+    sb.from('league_matches').select('*').in('team_b_id', teamIds),
+  ]);
+  const matchMap = {};
+  [...(asA || []), ...(asB || [])].forEach(m => matchMap[m.id] = m);
+  const matches = Object.values(matchMap).sort((a, b) => (a.week_number || 0) - (b.week_number || 0));
+
+  const allTeamIds = [...new Set(matches.flatMap(m => [m.team_a_id, m.team_b_id]))];
+  const { data: allTeams } = allTeamIds.length ? await sb.from('league_teams').select('id,name').in('id', allTeamIds) : { data: [] };
+  const teamNameMap = {};
+  (allTeams || []).forEach(t => teamNameMap[t.id] = t.name);
+
+  const matchIds = matches.map(m => m.id);
+  const { data: results } = matchIds.length ? await sb.from('court_results').select('match_id').in('match_id', matchIds) : { data: [] };
+  const resultCounts = {};
+  (results || []).forEach(r => resultCounts[r.match_id] = (resultCounts[r.match_id] || 0) + 1);
+
+  const leagueFormat = {};
+  teams.forEach(t => leagueFormat[t.league_id] = t.format);
+  const myTeamIdSet = new Set(teamIds);
+
+  const upcoming = matches.filter(m => (resultCounts[m.id] || 0) < (leagueFormat[m.league_id] === 'SINGLES' ? 3 : 4));
+  upcomingEl.innerHTML = upcoming.length
+    ? upcoming.map(m => {
+        const myTeamId = myTeamIdSet.has(m.team_a_id) ? m.team_a_id : m.team_b_id;
+        const oppId = myTeamId === m.team_a_id ? m.team_b_id : m.team_a_id;
+        const date = myTeamId === m.team_a_id ? m.site_a_date : m.site_b_date;
+        return `<div class="event-card">
+          <div class="event-card-body">
+            <div>
+              <div class="event-card-name">${escQ(teamNameMap[myTeamId] || '—')} vs ${escQ(teamNameMap[oppId] || '—')}</div>
+              <div class="event-card-meta"><span>Week ${m.week_number}</span><span>${fmtDate(date)}</span></div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')
+    : '<div class="card"><div class="empty-state" style="padding:20px 0"><div class="empty-sub">No upcoming matches</div></div></div>';
+
+  const pid = currentUser.player_id;
+  const { data: myCourts } = await sb.from('court_results').select('*')
+    .or(`and(team_a_player1_id.eq.${pid}),and(team_a_player2_id.eq.${pid}),and(team_b_player1_id.eq.${pid}),and(team_b_player2_id.eq.${pid})`);
+  let wins = 0, losses = 0;
+  (myCourts || []).forEach(cr => {
+    const onA = cr.team_a_player1_id === pid || cr.team_a_player2_id === pid;
+    const winner = courtWinner({ teamAType: cr.team_a_entry_type, teamBType: cr.team_b_entry_type, sets: cr.sets });
+    if (!winner) return;
+    if ((winner === 'A') === onA) wins++; else losses++;
+  });
+  recordEl.innerHTML = (wins + losses)
+    ? `<div style="font-size:28px;font-weight:800">${wins}-${losses}</div><div class="form-hint">Court wins–losses across all leagues</div>`
+    : '<div class="empty-sub">No matches played yet</div>';
+}
+
+// ══════════════════════════════════════════════
+// CHANGE MY PIN (self-service — director, coach, captain, player)
+// ══════════════════════════════════════════════
+function openChangePinModal() {
+  ['my-pin-current', 'my-pin-new', 'my-pin-confirm'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('change-pin-error').style.display = 'none';
+  openModal('change-pin-modal');
+}
+
+function myPinRef() {
+  const role = currentUser?.role;
+  if (role === 'director') return { table: 'directors', id: currentUser.director_id, col: 'pin_hash' };
+  if (role === 'coach') return { table: 'league_teams', id: currentUser.team_id, col: 'coach_pin_hash' };
+  if (role === 'captain') return { table: 'league_teams', id: currentUser.team_id, col: 'captain_pin_hash' };
+  if (role === 'player') return { table: 'players', id: currentUser.player_id, col: 'pin_hash' };
+  return null;
+}
+
+async function saveMyPin() {
+  const ref = myPinRef();
+  const errEl = document.getElementById('change-pin-error');
+  errEl.style.display = 'none';
+  if (!ref) return;
+  const cur = document.getElementById('my-pin-current').value.trim();
+  const np = document.getElementById('my-pin-new').value.trim();
+  const cp = document.getElementById('my-pin-confirm').value.trim();
+  if (!cur || !np || !cp) { errEl.textContent = 'All fields required.'; errEl.style.display = 'flex'; return; }
+  if (np !== cp) { errEl.textContent = 'New PINs do not match.'; errEl.style.display = 'flex'; return; }
+  if (!/^\d{4,6}$/.test(np)) { errEl.textContent = 'PIN must be 4-6 digits.'; errEl.style.display = 'flex'; return; }
+  const curHash = await hashPin(cur);
+  const { data: row } = await sb.from(ref.table).select(ref.col).eq('id', ref.id).maybeSingle();
+  if (!row || row[ref.col] !== curHash) { errEl.textContent = 'Current PIN incorrect.'; errEl.style.display = 'flex'; return; }
+  const newHash = await hashPin(np);
+  if (!(await pinIsAvailable(newHash, ref))) { errEl.textContent = 'That PIN is already in use by someone else — pick a different one.'; errEl.style.display = 'flex'; return; }
+  await sb.from(ref.table).update({ [ref.col]: newHash }).eq('id', ref.id);
+  closeModal('change-pin-modal');
+  toast('PIN updated!', 'success');
 }
 
 // ══════════════════════════════════════════════
@@ -5209,8 +5465,23 @@ function openLeague(league) {
   document.getElementById('league-detail-sub').textContent = `${league.format==='SINGLES'?'Singles':'Doubles'} · ${league.session_length_weeks} weeks · ${fmtDate(league.start_date)} – ${fmtDate(league.end_date)}`;
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('league-screen').classList.add('active');
+  applyLeagueRoleGating();
   leagueDetailTab('teams', document.querySelector('#league-screen .event-nav-tab'));
   loadLeagueTeams();
+}
+
+// Coach/Captain land straight on their one league (no Leagues list to go
+// "back" to), so their nav gets a Sign Out instead of Back, admin-only
+// actions (Add Team, Generate Schedule, League Settings) are hidden, and
+// they get a self-service PIN-change button since nobody sets that up for them.
+function applyLeagueRoleGating() {
+  const role = currentUser?.role;
+  const isStaff = role === 'admin' || role === 'director';
+  const backBtn = document.getElementById('league-detail-back-btn');
+  backBtn.textContent = isStaff ? '← Back' : 'Sign Out';
+  backBtn.onclick = isStaff ? closeLeague : logout;
+  document.getElementById('league-nav-settings').style.display = isStaff ? '' : 'none';
+  document.getElementById('league-change-pin-btn').style.display = (role==='director'||role==='coach'||role==='captain') ? 'inline-block' : 'none';
 }
 
 function closeLeague() {
@@ -5220,9 +5491,11 @@ function closeLeague() {
     document.getElementById('admin-screen').classList.add('active');
     loadLeagues('leagues-list');
     loadAdminData();
-  } else {
+  } else if (currentUser?.role === 'director') {
     document.getElementById('director-screen').classList.add('active');
     loadLeagues('dir-leagues-list');
+  } else {
+    logout();
   }
 }
 
@@ -5232,11 +5505,12 @@ function leagueDetailTab(name, btn) {
   ['teams','matches','subs','standings','settings'].forEach(t=>{
     document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
   });
+  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
   const actionBtn = document.getElementById('league-detail-action-btn');
-  if(name==='teams') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ Add Team'; actionBtn.onclick=openTeamModalNew; }
-  else if(name==='matches') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
+  if(name==='teams') { actionBtn.style.display=isStaff?'inline-block':'none'; actionBtn.textContent='+ Add Team'; actionBtn.onclick=openTeamModalNew; }
+  else if(name==='matches') { actionBtn.style.display=isStaff?'inline-block':'none'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
   else { actionBtn.style.display='none'; }
-  if(name==='matches') loadLeagueMatches();
+  if(name==='matches') { loadLeagueMatches(); document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none'; }
   if(name==='subs') loadSubPool();
   if(name==='standings') { loadStandings(); loadRankingSettings(); }
   if(name==='settings') renderLeagueSettings();
@@ -5280,22 +5554,28 @@ async function loadLeagueTeams() {
 
 function renderLeagueTeams() {
   const el = document.getElementById('league-teams-list');
+  const role = currentUser?.role;
+  const isStaff = role === 'admin' || role === 'director';
+  const isTeamRole = role === 'coach' || role === 'captain';
   if(!currentLeagueTeams.length){
-    el.innerHTML=`<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No teams yet</div><div class="empty-sub">${currentLeague.team_count} planned for this league</div><button class="btn btn-primary" onclick="openTeamModalNew()">+ Add Team</button></div></div>`;
+    el.innerHTML=`<div class="card"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No teams yet</div><div class="empty-sub">${currentLeague.team_count} planned for this league</div>${isStaff?'<button class="btn btn-primary" onclick="openTeamModalNew()">+ Add Team</button>':''}</div></div>`;
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Roster</th><th>Actions</th></tr></thead><tbody>
-  ${currentLeagueTeams.map(t=>`<tr>
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Roster</th>${isStaff?'<th>Actions</th>':''}</tr></thead><tbody>
+  ${currentLeagueTeams.map(t=>{
+    const ownTeam = !isTeamRole || t.id === currentUser.team_id;
+    return `<tr>
     <td><strong>${t.name}</strong></td>
     <td>${t.clubs?.name||'—'}</td>
     <td>${t.coach_name}${t.players?.roster_name?` <span style="font-size:11px;color:var(--ink-muted)">(${t.players.roster_name})</span>`:''}</td>
     <td>${t.time_slot_day!=null&&t.time_slot_time?`${DAY_NAMES[t.time_slot_day]} ${fmtTime(t.time_slot_time)}`:'—'}</td>
-    <td><button class="btn btn-sm btn-secondary" onclick="openRosterModal('${t.id}')">Roster (${currentLeagueRosterCounts[t.id]||0})</button></td>
-    <td style="display:flex;gap:6px">
+    <td>${ownTeam?`<button class="btn btn-sm btn-secondary" onclick="openRosterModal('${t.id}')">Roster (${currentLeagueRosterCounts[t.id]||0})</button>`:`${currentLeagueRosterCounts[t.id]||0} players`}</td>
+    ${isStaff?`<td style="display:flex;gap:6px">
       <button class="btn btn-sm btn-ghost" onclick="openTeamModalEdit('${t.id}')">Edit</button>
       <button class="btn btn-sm btn-danger" onclick="deleteLeagueTeam('${t.id}','${escQ(t.name)}')">Delete</button>
-    </td>
-  </tr>`).join('')}
+    </td>`:''}
+  </tr>`;
+  }).join('')}
   </tbody></table>
   <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">${currentLeagueTeams.length} of ${currentLeague.team_count} planned teams</div>`;
 }
@@ -5309,12 +5589,21 @@ let rosterImportRows = [];
 let rosterAllPlayers = [];
 
 async function openRosterModal(teamId) {
+  const role = currentUser?.role;
+  if ((role === 'coach' || role === 'captain') && teamId !== currentUser.team_id) {
+    toast("You can only manage your own team's roster", 'error');
+    return;
+  }
   currentRosterTeamId = teamId;
   rosterImportRows = [];
   document.getElementById('roster-file-input').value = '';
   document.getElementById('roster-import-preview').innerHTML = '';
   const team = currentLeagueTeams.find(t=>t.id===teamId);
   document.getElementById('roster-modal-title').textContent = `${team?.name||'Team'} Roster`;
+  const isStaffOrCoach = role === 'admin' || role === 'director' || role === 'coach';
+  document.getElementById('roster-upload-section').style.display = isStaffOrCoach ? '' : 'none';
+  document.getElementById('roster-addplayer-section').style.display = isStaffOrCoach ? '' : 'none';
+  document.getElementById('roster-reset-captain-pin-btn').style.display = isStaffOrCoach ? 'inline-block' : 'none';
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
   openModal('roster-modal');
@@ -5331,11 +5620,13 @@ async function loadRosterMembers() {
 
 function renderRosterCurrentList() {
   const el = document.getElementById('roster-current-list');
+  const role = currentUser?.role;
+  const canManageRoster = role === 'admin' || role === 'director' || role === 'coach';
   if (!currentRosterMembers.length) {
     el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players on this roster yet</div></div>';
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th><th></th></tr></thead><tbody>
   ${currentRosterMembers.map(m=>`<tr>
     <td>${escQ(m.roster_name)}${m.is_captain?' <span class="badge badge-green">Captain</span>':''}</td>
     <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.email)||'—'}</td>
@@ -5343,10 +5634,38 @@ function renderRosterCurrentList() {
     <td>${m.is_captain
       ? `<button class="btn btn-sm btn-ghost" onclick="clearCaptain('${m.id}')">Remove Captain</button>`
       : `<button class="btn btn-sm btn-secondary" onclick="setCaptain('${m.id}')">Make Captain</button>`}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button></td>
+    <td><button class="btn btn-sm btn-ghost" onclick="resetPlayerPin('${m.player_id}','${escQ(m.roster_name)}')">Reset PIN</button></td>
+    <td>${canManageRoster ? `<button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button>` : ''}</td>
   </tr>`).join('')}
   </tbody></table>
   <div class="form-hint" style="margin-top:10px">One captain at a time — making someone captain automatically removes it from anyone else. Captaincy can be changed anytime during the season.</div>`;
+}
+
+async function resetPlayerPin(playerId, name) {
+  const p = prompt(`New PIN for ${name} (4-6 digits):`);
+  if (!p) return;
+  if (!/^\d{4,6}$/.test(p)) { toast('Invalid PIN', 'error'); return; }
+  const hash = await hashPin(p);
+  if (!(await pinIsAvailable(hash, { table: 'players', id: playerId, col: 'pin_hash' }))) {
+    toast('That PIN is already in use by someone else — pick a different one', 'error');
+    return;
+  }
+  await sb.from('players').update({ pin_hash: hash }).eq('id', playerId);
+  toast(`PIN reset for ${name}.`, 'success');
+}
+
+async function resetCaptainPin() {
+  const team = currentLeagueTeams.find(t => t.id === currentRosterTeamId);
+  const p = prompt(`New Captain PIN for ${team?.name || 'this team'} (4-6 digits):`);
+  if (!p) return;
+  if (!/^\d{4,6}$/.test(p)) { toast('Invalid PIN', 'error'); return; }
+  const hash = await hashPin(p);
+  if (!(await pinIsAvailable(hash, { table: 'league_teams', id: currentRosterTeamId, col: 'captain_pin_hash' }))) {
+    toast('That PIN is already in use by someone else — pick a different one', 'error');
+    return;
+  }
+  await sb.from('league_teams').update({ captain_pin_hash: hash }).eq('id', currentRosterTeamId);
+  toast('Captain PIN reset.', 'success');
 }
 
 async function setCaptain(rosterRowId) {
@@ -5532,7 +5851,7 @@ async function openTeamModalNew() {
   await populateTeamSelects('', '');
   document.getElementById('league-team-modal-title').textContent='New Team';
   document.getElementById('save-league-team-btn').textContent='Add Team';
-  ['team-name','team-coach-name','team-coach-phone','team-coach-email','team-slot-time'].forEach(id=>document.getElementById(id).value='');
+  ['team-name','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('team-slot-day').value='1';
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
@@ -5551,6 +5870,8 @@ async function openTeamModalEdit(id) {
   document.getElementById('team-coach-email').value=t.coach_email||'';
   document.getElementById('team-slot-day').value = t.time_slot_day!=null?String(t.time_slot_day):'1';
   document.getElementById('team-slot-time').value = t.time_slot_time||'';
+  document.getElementById('team-coach-pin').value = '';
+  document.getElementById('team-coach-pin-confirm').value = '';
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
 }
@@ -5564,6 +5885,8 @@ async function saveLeagueTeam() {
   const coachEmail=document.getElementById('team-coach-email').value.trim()||null;
   const slotDay=document.getElementById('team-slot-day').value;
   const slotTime=document.getElementById('team-slot-time').value||null;
+  const coachPin=document.getElementById('team-coach-pin').value.trim();
+  const coachPinConfirm=document.getElementById('team-coach-pin-confirm').value.trim();
   const errEl=document.getElementById('league-team-error');
   errEl.style.display='none';
   if(!name){errEl.textContent='Team name required.';errEl.style.display='flex';return;}
@@ -5575,6 +5898,17 @@ async function saveLeagueTeam() {
     coach_player_id: coachPlayerId, coach_name: coachName, coach_phone: coachPhone, coach_email: coachEmail,
     time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime
   };
+
+  if (coachPin || coachPinConfirm) {
+    if (!/^\d{4,6}$/.test(coachPin)) { errEl.textContent='Coach PIN must be 4-6 digits.'; errEl.style.display='flex'; return; }
+    if (coachPin !== coachPinConfirm) { errEl.textContent='Coach PINs do not match.'; errEl.style.display='flex'; return; }
+    const hash = await hashPin(coachPin);
+    if (!(await pinIsAvailable(hash, editTeamId ? { table:'league_teams', id:editTeamId, col:'coach_pin_hash' } : null))) {
+      errEl.textContent='That PIN is already in use by someone else — pick a different one.'; errEl.style.display='flex'; return;
+    }
+    payload.coach_pin_hash = hash;
+  }
+
   const btn=document.getElementById('save-league-team-btn');
   btn.disabled=true;
   const {error} = editTeamId
@@ -6798,6 +7132,7 @@ async function saveDirector() {
   if(!/^\d+$/.test(pin)){errEl.textContent='PIN must be digits only.';errEl.style.display='flex';return;}
   if(pin!==pinC){errEl.textContent='PINs do not match.';errEl.style.display='flex';return;}
   const hash=await hashPin(pin);
+  if (!(await pinIsAvailable(hash))) { errEl.textContent='That PIN is already in use by someone else — pick a different one.'; errEl.style.display='flex'; return; }
   const {error}=await sb.from('directors').insert({name,club_id:clubId,pin_hash:hash,feature_access:featureAccess,supabase_auth_uid:crypto.randomUUID()});
   if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
   toast(`Director "${name}" created!`,'success');
@@ -6809,6 +7144,7 @@ async function resetDirectorPin(id,name) {
   const p=prompt(`New PIN for ${name} (4-6 digits):`);
   if(!p||!/^\d{4,6}$/.test(p)){toast('Invalid PIN','error');return;}
   const hash=await hashPin(p);
+  if (!(await pinIsAvailable(hash, { table:'directors', id, col:'pin_hash' }))) { toast('That PIN is already in use by someone else — pick a different one','error'); return; }
   await sb.from('directors').update({pin_hash:hash,failed_pin_attempts:0,locked_until:null}).eq('id',id);
   toast(`PIN reset for ${name}.`,'success');
 }
@@ -7551,10 +7887,11 @@ async function changeAdminPin() {
   if(np!==cp){toast('New PINs do not match','error');return;}
   if(!/^\d{4,6}$/.test(np)){toast('PIN must be 4-6 digits','error');return;}
   const ch=await hashPin(cur);
-  const {data}=await sb.from('admin_config').select('pin_hash').maybeSingle();
+  const {data}=await sb.from('admin_config').select('id,pin_hash').maybeSingle();
   if(!data||data.pin_hash!==ch){toast('Current PIN incorrect','error');return;}
   const nh=await hashPin(np);
-  await sb.from('admin_config').update({pin_hash:nh});
+  if (!(await pinIsAvailable(nh, { table:'admin_config', id:data.id, col:'pin_hash' }))) { toast('That PIN is already in use by someone else — pick a different one','error'); return; }
+  await sb.from('admin_config').update({pin_hash:nh}).eq('id',data.id);
   toast('PIN updated!','success');
   ['current-pin','new-pin','confirm-pin'].forEach(id=>document.getElementById(id).value='');
 }
