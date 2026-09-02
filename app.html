@@ -685,6 +685,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <nav class="event-nav">
     <button class="event-nav-tab active" onclick="leagueDetailTab('teams',this)">Teams</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('matches',this)">Matches</button>
+    <button class="event-nav-tab" onclick="leagueDetailTab('standings',this)">Standings</button>
     <button class="event-nav-tab" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
   <div class="content">
@@ -693,6 +694,16 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div id="ltab-matches" style="display:none">
       <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+    <div id="ltab-standings" style="display:none">
+      <div class="section-header"><div><div class="section-title" style="font-size:16px">Team Standings</div><div class="section-sub">Only fully-entered matches count</div></div></div>
+      <div class="card" style="margin-bottom:24px"><div class="card-body" id="league-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+      <div class="card">
+        <div class="card-header">
+          <div><div class="card-title">Player Ranking Point Values</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Rankings aren't built yet — this just holds the point values for when they are.</div></div>
+        </div>
+        <div class="card-body" id="ranking-settings-body"></div>
+      </div>
     </div>
     <div id="ltab-settings" style="display:none">
       <div class="card"><div class="card-body" id="league-settings-body"></div></div>
@@ -5160,7 +5171,7 @@ function closeLeague() {
 function leagueDetailTab(name, btn) {
   document.querySelectorAll('#league-screen .event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['teams','matches','settings'].forEach(t=>{
+  ['teams','matches','standings','settings'].forEach(t=>{
     document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
   });
   const actionBtn = document.getElementById('league-detail-action-btn');
@@ -5168,6 +5179,7 @@ function leagueDetailTab(name, btn) {
   else if(name==='matches') { actionBtn.style.display='inline-block'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
   else { actionBtn.style.display='none'; }
   if(name==='matches') loadLeagueMatches();
+  if(name==='standings') { loadStandings(); loadRankingSettings(); }
   if(name==='settings') renderLeagueSettings();
 }
 
@@ -5914,6 +5926,108 @@ async function saveCourtResult(c) {
   currentMatchResults[c] = data;
   toast(`Court ${c} saved`,'success');
   renderMatchSummary();
+}
+
+// ══════════════════════════════════════════════
+// STANDINGS — derived from league_matches + court_results,
+// reusing the exact same scoring functions as the score-entry screen
+// (courtWinner / matchSummary), never a separately-stored number.
+// ══════════════════════════════════════════════
+async function loadStandings() {
+  const el = document.getElementById('league-standings-body');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const n = courtsForFormat();
+  const [{data:teams}, {data:matches}] = await Promise.all([
+    sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id),
+    sb.from('league_matches').select('*').eq('league_id',currentLeague.id)
+  ]);
+  const matchIds = (matches||[]).map(m=>m.id);
+  const {data:results} = matchIds.length
+    ? await sb.from('court_results').select('*').in('match_id',matchIds)
+    : {data:[]};
+  const resultsByMatch = {};
+  (results||[]).forEach(r=>{ (resultsByMatch[r.match_id] = resultsByMatch[r.match_id]||[]).push(r); });
+
+  const stats = {};
+  (teams||[]).forEach(t=>{ stats[t.id] = {name:t.name, played:0, wins:0, losses:0, courtsFor:0, courtsAgainst:0, gamesFor:0, gamesAgainst:0}; });
+
+  (matches||[]).forEach(m=>{
+    const mResults = resultsByMatch[m.id] || [];
+    if (mResults.length < n) return; // not fully entered yet — excluded from standings
+    if (!stats[m.team_a_id] || !stats[m.team_b_id]) return;
+    const map = {};
+    mResults.forEach(r=>{ map[r.court_number] = {teamAType:r.team_a_entry_type, teamBType:r.team_b_entry_type, sets:r.sets}; });
+    const s = matchSummary(map, n);
+    stats[m.team_a_id].played++; stats[m.team_b_id].played++;
+    stats[m.team_a_id].courtsFor += s.aCourts; stats[m.team_a_id].courtsAgainst += s.bCourts;
+    stats[m.team_b_id].courtsFor += s.bCourts; stats[m.team_b_id].courtsAgainst += s.aCourts;
+    stats[m.team_a_id].gamesFor += s.aGames; stats[m.team_a_id].gamesAgainst += s.bGames;
+    stats[m.team_b_id].gamesFor += s.bGames; stats[m.team_b_id].gamesAgainst += s.aGames;
+    if (s.winner==='A') { stats[m.team_a_id].wins++; stats[m.team_b_id].losses++; }
+    else if (s.winner==='B') { stats[m.team_b_id].wins++; stats[m.team_a_id].losses++; }
+  });
+
+  renderStandings(Object.values(stats));
+}
+
+function renderStandings(rows) {
+  const el = document.getElementById('league-standings-body');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">No standings yet</div><div class="empty-sub">Complete a match to see teams appear here</div></div>';
+    return;
+  }
+  rows.sort((a,b)=> b.wins-a.wins || (b.gamesFor-b.gamesAgainst)-(a.gamesFor-a.gamesAgainst));
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Played</th><th>W</th><th>L</th><th>Courts</th><th>Games</th></tr></thead><tbody>
+  ${rows.map(r=>`<tr>
+    <td><strong>${escQ(r.name)}</strong></td>
+    <td>${r.played}</td>
+    <td>${r.wins}</td>
+    <td>${r.losses}</td>
+    <td>${r.courtsFor}–${r.courtsAgainst}</td>
+    <td>${r.gamesFor}–${r.gamesAgainst}</td>
+  </tr>`).join('')}
+  </tbody></table>
+  <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">Sorted by wins, then game differential. Only fully-entered matches count.</div>`;
+}
+
+// ══════════════════════════════════════════════
+// RANKING SETTINGS — placeholder point values only.
+// No ranking computation or player-facing board yet; this just gives
+// a place to start deciding numbers, stored in the existing app_settings
+// key/value table (same pattern as auto-lookup/lookup-states settings).
+// ══════════════════════════════════════════════
+const RANKING_SETTING_KEYS = [1,2,3,4].flatMap(c=>[`ranking_court${c}_win`,`ranking_court${c}_loss`]);
+
+async function loadRankingSettings() {
+  const {data} = await sb.from('app_settings').select('key,value').in('key',RANKING_SETTING_KEYS);
+  const values = {};
+  (data||[]).forEach(row=>{ values[row.key] = row.value; });
+  renderRankingSettings(values);
+}
+
+function renderRankingSettings(values) {
+  const el = document.getElementById('ranking-settings-body');
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Court</th><th>Win value</th><th>Loss value</th></tr></thead><tbody>
+  ${[1,2,3,4].map(c=>`<tr>
+    <td>Court ${c}</td>
+    <td><input class="form-input" type="number" step="0.1" id="ranking-court${c}-win" value="${values[`ranking_court${c}_win`]||''}" placeholder="e.g. ${(5-c).toFixed(1)}"></td>
+    <td><input class="form-input" type="number" step="0.1" id="ranking-court${c}-loss" value="${values[`ranking_court${c}_loss`]||''}" placeholder="e.g. ${(-(c)).toFixed(1)}"></td>
+  </tr>`).join('')}
+  </tbody></table>
+  <button class="btn btn-primary" style="margin-top:14px" onclick="saveRankingSettings()">Save Point Values</button>
+  <div class="form-hint" style="margin-top:10px">A win on Court 1 should be worth more than a win on a lower court, and a loss on Court 1 should cost less than a loss on a lower court — these values aren't used anywhere yet.</div>`;
+}
+
+async function saveRankingSettings() {
+  const writes = [];
+  [1,2,3,4].forEach(c=>{
+    ['win','loss'].forEach(kind=>{
+      const val = document.getElementById(`ranking-court${c}-${kind}`).value;
+      writes.push(sb.from('app_settings').upsert({key:`ranking_court${c}_${kind}`, value: val}));
+    });
+  });
+  await Promise.all(writes);
+  toast('Point values saved','success');
 }
 
 async function loadPlayers(containerId, filterMode) {
