@@ -802,6 +802,13 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="form-group"><label class="form-label">Club Name <span class="req">*</span></label><input class="form-input" id="club-name" placeholder="e.g. Lakeside Tennis Club"></div>
       <div class="form-group"><label class="form-label">Tagline</label><input class="form-input" id="club-tagline" placeholder="Short description"></div>
       <div class="form-group"><label class="form-label">Club Motto</label><input class="form-input" id="club-motto" placeholder="Optional — shown on TV display between rounds"></div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+          <input type="checkbox" id="club-is-private" style="width:16px;height:16px;accent-color:var(--court)">
+          Private club
+        </label>
+        <div class="form-hint">Marks this club as needing restricted visibility rules from other clubs — not enforced anywhere yet, just a flag to come back to.</div>
+      </div>
       <div style="border-top:1px solid var(--border);margin:20px 0;padding-top:20px">
         <div style="font-size:14px;font-weight:700;margin-bottom:16px">🎨 Brand Colors</div>
         <div class="form-row">
@@ -4989,7 +4996,7 @@ async function loadClubs() {
   if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🏛️</div><div class="empty-title">No clubs yet</div><button class="btn btn-primary" onclick="openModal(\'club-modal\')">+ New Club</button></div>';return;}
   el.innerHTML=`<table class="data-table"><thead><tr><th>Club</th><th>Colors</th><th>Font</th><th>Actions</th></tr></thead><tbody>
   ${data.map(c=>`<tr>
-    <td><div style="display:flex;align-items:center;gap:10px"><div style="width:28px;height:28px;border-radius:6px;background:${c.primary_color||'#1B5E20'};flex-shrink:0"></div><div><div style="font-weight:600">${c.name}</div>${c.tagline?`<div style="font-size:12px;color:var(--muted)">${c.tagline}</div>`:''}</div></div></td>
+    <td><div style="display:flex;align-items:center;gap:10px"><div style="width:28px;height:28px;border-radius:6px;background:${c.primary_color||'#1B5E20'};flex-shrink:0"></div><div><div style="font-weight:600">${c.name}${c.is_private?' <span class="badge badge-red">Private</span>':''}</div>${c.tagline?`<div style="font-size:12px;color:var(--muted)">${c.tagline}</div>`:''}</div></div></td>
     <td><code style="font-size:11px">${c.primary_color||'—'}</code></td>
     <td style="font-size:13px">${c.font_style||'MODERN'}</td>
     <td><button class="btn btn-sm btn-ghost" onclick="editClub('${c.id}')">Edit</button></td>
@@ -5293,9 +5300,9 @@ async function openRosterModal(teamId) {
 }
 
 async function loadRosterMembers() {
-  const {data} = await sb.from('league_team_players').select('id,player_id,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
+  const {data} = await sb.from('league_team_players').select('id,player_id,is_captain,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
   currentRosterMembers = (data||[]).map(r=>({
-    id: r.id, player_id: r.player_id,
+    id: r.id, player_id: r.player_id, is_captain: !!r.is_captain,
     roster_name: r.players?.roster_name || '—', email: r.players?.email || '', phone: r.players?.phone || ''
   })).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
   renderRosterCurrentList();
@@ -5307,14 +5314,30 @@ function renderRosterCurrentList() {
     el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players on this roster yet</div></div>';
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th></th></tr></thead><tbody>
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th></tr></thead><tbody>
   ${currentRosterMembers.map(m=>`<tr>
-    <td>${escQ(m.roster_name)}</td>
+    <td>${escQ(m.roster_name)}${m.is_captain?' <span class="badge badge-green">Captain</span>':''}</td>
     <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.email)||'—'}</td>
     <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.phone)||'—'}</td>
+    <td>${m.is_captain
+      ? `<button class="btn btn-sm btn-ghost" onclick="clearCaptain('${m.id}')">Remove Captain</button>`
+      : `<button class="btn btn-sm btn-secondary" onclick="setCaptain('${m.id}')">Make Captain</button>`}</td>
     <td><button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button></td>
   </tr>`).join('')}
-  </tbody></table>`;
+  </tbody></table>
+  <div class="form-hint" style="margin-top:10px">One captain at a time — making someone captain automatically removes it from anyone else. Captaincy can be changed anytime during the season.</div>`;
+}
+
+async function setCaptain(rosterRowId) {
+  await sb.from('league_team_players').update({is_captain:false}).eq('team_id',currentRosterTeamId);
+  await sb.from('league_team_players').update({is_captain:true}).eq('id',rosterRowId);
+  await loadRosterMembers();
+  toast('Captain updated','success');
+}
+
+async function clearCaptain(rosterRowId) {
+  await sb.from('league_team_players').update({is_captain:false}).eq('id',rosterRowId);
+  await loadRosterMembers();
 }
 
 async function populateRosterAddPlayerSelect() {
@@ -6458,6 +6481,7 @@ async function saveClub() {
   const btn=document.getElementById('save-club-btn');
   btn.disabled=true; btn.textContent='Saving…';
   const payload={name,tagline:document.getElementById('club-tagline').value.trim()||null,motto:document.getElementById('club-motto').value.trim()||null,
+    is_private:document.getElementById('club-is-private').checked,
     primary_color:document.getElementById('club-primary-hex').value||'#1B5E20',secondary_color:document.getElementById('club-secondary-hex').value||'#4CAF50',
     accent_color:document.getElementById('club-accent-hex').value||'#F57F17',background_style:document.getElementById('club-bg-style').value,
     logo_position:document.getElementById('club-logo-pos').value,logo_opacity:parseInt(document.getElementById('club-opacity').value),font_style:document.getElementById('club-font').value};
@@ -6475,6 +6499,7 @@ async function editClub(id) {
   document.getElementById('club-name').value=data.name||'';
   document.getElementById('club-tagline').value=data.tagline||'';
   document.getElementById('club-motto').value=data.motto||'';
+  document.getElementById('club-is-private').checked=!!data.is_private;
   document.getElementById('club-primary-hex').value=data.primary_color||'#1B5E20';
   document.getElementById('club-primary').value=data.primary_color||'#1B5E20';
   document.getElementById('club-secondary-hex').value=data.secondary_color||'#4CAF50';
