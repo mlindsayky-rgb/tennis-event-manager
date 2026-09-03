@@ -1042,8 +1042,23 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <div class="modal">
     <div class="modal-header"><div class="modal-title" id="league-team-modal-title">New Team</div><button class="modal-close" onclick="closeModal('league-team-modal')">×</button></div>
     <div class="modal-body">
-      <div class="form-group"><label class="form-label">Team Name <span class="req">*</span></label><input class="form-input" id="team-name" placeholder="e.g. Oakwood A"></div>
+      <div class="form-group"><label class="form-label">Team Name <span class="req">*</span></label><input class="form-input" id="team-name" placeholder="e.g. Oakwood A" oninput="renderAvatarPreview()"></div>
       <div class="form-group"><label class="form-label">Home Club <span class="req">*</span></label><select class="form-select" id="team-club"><option value="">Select club…</option></select></div>
+      <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Team Avatar</div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+          <div id="team-avatar-preview"></div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <label class="btn btn-sm btn-secondary" style="cursor:pointer;width:fit-content;margin:0">
+              Upload Image
+              <input type="file" id="team-avatar-file" accept="image/*" style="display:none" onchange="handleTeamAvatarFile(this)">
+            </label>
+            <button class="btn btn-sm btn-ghost" type="button" id="team-avatar-remove-btn" onclick="removeTeamAvatarImage()" style="display:none">Remove Image</button>
+          </div>
+        </div>
+        <div id="team-avatar-swatches" style="display:flex;gap:8px"></div>
+        <div class="form-hint" style="margin-top:8px">No image? Pick a color, or leave it — every team gets a distinct default automatically.</div>
+      </div>
       <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
         <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Coach</div>
         <div class="form-group">
@@ -5621,7 +5636,7 @@ function renderLeagueTeams() {
   ${currentLeagueTeams.map(t=>{
     const ownTeam = !isTeamRole || t.id === currentUser.team_id;
     return `<tr>
-    <td><strong>${t.name}</strong></td>
+    <td><div style="display:flex;align-items:center;gap:10px">${teamAvatarHtml(t,28)}<strong>${t.name}</strong></div></td>
     <td>${t.clubs?.name||'—'}</td>
     <td>${t.coach_name}${t.players?.roster_name?` <span style="font-size:11px;color:var(--ink-muted)">(${t.players.roster_name})</span>`:''}</td>
     <td>${t.time_slot_day!=null&&t.time_slot_time?`${DAY_NAMES[t.time_slot_day]} ${fmtTime(t.time_slot_time)}`:'—'}</td>
@@ -6087,6 +6102,92 @@ function autofillCoachFromPlayer(playerId) {
   if(opt) document.getElementById('team-coach-name').value = opt.textContent;
 }
 
+// ══════════════════════════════════════════════
+// TEAM AVATARS — small round image, or a colored initials circle drawn
+// from the app's own palette when nothing's uploaded
+// ══════════════════════════════════════════════
+const AVATAR_PALETTE = ['#1A5C2A','#0F1F3D','#D4870A','#C0392B','#1D4ED8','#236B32','#71717A'];
+
+function defaultAvatarColor(team) {
+  const str = team?.id || team?.name || '';
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+}
+
+function teamInitials(name) {
+  return (name || '').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+}
+
+function teamAvatarHtml(team, size) {
+  size = size || 32;
+  if (team?.avatar_url) {
+    return `<img src="${team.avatar_url}" style="width:${size}px;height:${size}px;border-radius:50%;object-fit:cover;flex-shrink:0;box-shadow:0 0 0 1px rgba(0,0,0,.08)" alt="">`;
+  }
+  const color = team?.avatar_color || defaultAvatarColor(team);
+  const fontSize = Math.round(size * 0.4);
+  return `<span style="width:${size}px;height:${size}px;border-radius:50%;background:${color};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:${fontSize}px;flex-shrink:0;font-family:var(--font-body)">${escQ(teamInitials(team?.name))}</span>`;
+}
+
+// Center-crops and downsizes an uploaded image client-side to a small square
+// JPEG data URL — keeps team avatars genuinely small with no file-storage setup.
+function resizeImageToDataUrl(file, size) {
+  size = size || 128;
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size; canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.width, img.height);
+        const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let pendingAvatarUrl = null;
+let pendingAvatarColor = null;
+
+function renderAvatarPreview() {
+  const name = document.getElementById('team-name').value || 'New Team';
+  const preview = { id: editTeamId || 'preview', name, avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor };
+  document.getElementById('team-avatar-preview').innerHTML = teamAvatarHtml(preview, 72);
+  document.getElementById('team-avatar-remove-btn').style.display = pendingAvatarUrl ? 'inline-block' : 'none';
+  renderAvatarSwatches();
+}
+
+function renderAvatarSwatches() {
+  const el = document.getElementById('team-avatar-swatches');
+  el.innerHTML = AVATAR_PALETTE.map(c => `<button type="button" onclick="pickTeamAvatarColor('${c}')" title="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};border:2px solid ${pendingAvatarColor===c?'var(--ink)':'transparent'};cursor:pointer;padding:0"></button>`).join('');
+}
+
+async function handleTeamAvatarFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  pendingAvatarUrl = await resizeImageToDataUrl(file, 128);
+  renderAvatarPreview();
+}
+
+function removeTeamAvatarImage() {
+  pendingAvatarUrl = null;
+  document.getElementById('team-avatar-file').value = '';
+  renderAvatarPreview();
+}
+
+function pickTeamAvatarColor(color) {
+  pendingAvatarColor = color;
+  renderAvatarPreview();
+}
+
 async function openTeamModalNew() {
   editTeamId = null;
   await populateTeamSelects('', '');
@@ -6094,6 +6195,9 @@ async function openTeamModalNew() {
   document.getElementById('save-league-team-btn').textContent='Add Team';
   ['team-name','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('team-slot-day').value='1';
+  document.getElementById('team-avatar-file').value='';
+  pendingAvatarUrl = null; pendingAvatarColor = null;
+  renderAvatarPreview();
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
 }
@@ -6113,6 +6217,9 @@ async function openTeamModalEdit(id) {
   document.getElementById('team-slot-time').value = t.time_slot_time||'';
   document.getElementById('team-coach-pin').value = '';
   document.getElementById('team-coach-pin-confirm').value = '';
+  document.getElementById('team-avatar-file').value='';
+  pendingAvatarUrl = t.avatar_url || null; pendingAvatarColor = t.avatar_color || null;
+  renderAvatarPreview();
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
 }
@@ -6137,7 +6244,8 @@ async function saveLeagueTeam() {
   const payload = {
     league_id: currentLeague.id, name, club_id: clubId,
     coach_player_id: coachPlayerId, coach_name: coachName, coach_phone: coachPhone, coach_email: coachEmail,
-    time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime
+    time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime,
+    avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor
   };
 
   if (coachPin || coachPinConfirm) {
@@ -6508,7 +6616,7 @@ async function openMatchById(id) {
   courtDrafts = {};
   (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
 
-  document.getElementById('match-header-name').textContent = `${teamA.name} vs ${teamB.name}`;
+  document.getElementById('match-header-name').innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamA,22)}${escQ(teamA.name)}</span> <span style="opacity:.7">vs</span> <span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamB,22)}${escQ(teamB.name)}</span>`;
   document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${teamA.name}: ${fmtDate(match.site_a_date)} · ${teamB.name}: ${fmtDate(match.site_b_date)}`;
   const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
   document.getElementById('match-edit-date-btn').style.display = isStaff ? 'inline-block' : 'none';
