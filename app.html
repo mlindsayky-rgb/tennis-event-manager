@@ -719,6 +719,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="event-nav-tab" id="league-nav-settings" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
   <div class="content">
+    <div class="card" id="league-up-next-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg,var(--navy) 0%,var(--court) 100%);color:#fff">
+      <div class="card-body" id="league-up-next-body"></div>
+    </div>
     <div id="ltab-teams">
       <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
@@ -778,6 +781,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
   </header>
   <div class="content">
+    <div class="card" id="player-up-next-card" style="display:none;margin-bottom:20px;background:linear-gradient(135deg,var(--navy) 0%,var(--court) 100%);color:#fff">
+      <div class="card-body" id="player-up-next-body"></div>
+    </div>
     <div class="section-header"><div><div class="section-title">My Teams</div></div></div>
     <div id="player-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     <div class="section-header" style="margin-top:24px"><div><div class="section-title">Upcoming Matches</div></div></div>
@@ -2082,10 +2088,17 @@ async function loadPlayerData() {
 
   const teamIds = teams.map(t => t.team_id);
   if (!teamIds.length) {
+    document.getElementById('player-up-next-card').style.display = 'none';
     upcomingEl.innerHTML = '<div class="card"><div class="empty-state" style="padding:20px 0"><div class="empty-sub">No matches yet</div></div></div>';
     recordEl.innerHTML = '<div class="empty-sub">No matches played yet</div>';
     return;
   }
+
+  // Up Next — nearest thing across every team this player is on, not per-team.
+  const upNextOptions = await Promise.all(teamIds.map(computeUpNext));
+  const withDate = upNextOptions.filter(u => u.type === 'match' || u.type === 'practice').sort((a, b) => a.date.localeCompare(b.date));
+  const upNext = withDate[0] || (upNextOptions.some(u => u.type === 'session_over') ? { type: 'session_over' } : { type: 'none' });
+  renderUpNextCard('player-up-next-card', 'player-up-next-body', upNext);
 
   const [{ data: asA }, { data: asB }] = await Promise.all([
     sb.from('league_matches').select('*').in('team_a_id', teamIds),
@@ -5896,6 +5909,11 @@ function applyLeagueRoleGating() {
   backBtn.onclick = isStaff ? closeLeague : logout;
   document.getElementById('league-nav-settings').style.display = isStaff ? '' : 'none';
   document.getElementById('league-change-pin-btn').style.display = (role==='director'||role==='coach'||role==='captain') ? 'inline-block' : 'none';
+  if (role === 'coach' || role === 'captain') {
+    computeUpNext(currentUser.team_id).then(upNext => renderUpNextCard('league-up-next-card', 'league-up-next-body', upNext));
+  } else {
+    document.getElementById('league-up-next-card').style.display = 'none';
+  }
 }
 
 function closeLeague() {
@@ -6655,6 +6673,66 @@ function fmtTime(t) {
   const period = h>=12?'PM':'AM';
   const h12 = h%12===0?12:h%12;
   return `${h12}:${String(m).padStart(2,'0')} ${period}`;
+}
+
+// ══════════════════════════════════════════════
+// UP NEXT — one team's chronologically nearest scheduled thing, for the
+// landing-page card. A real match always wins if one's on the books;
+// otherwise, while the session's still running, falls back to the team's
+// regular weekly time slot (there's no separate "practice" record in the
+// schema — it's just that week's slot with no opponent assigned yet).
+// ══════════════════════════════════════════════
+async function computeUpNext(teamId) {
+  const { data: team } = await sb.from('league_teams').select('*,clubs(name)').eq('id', teamId).maybeSingle();
+  if (!team) return { type: 'none' };
+  const { data: league } = await sb.from('leagues').select('*').eq('id', team.league_id).maybeSingle();
+  if (!league) return { type: 'none' };
+  const today = toISODate(new Date());
+
+  const [{ data: asA }, { data: asB }] = await Promise.all([
+    sb.from('league_matches').select('*').eq('team_a_id', teamId).gte('site_a_date', today),
+    sb.from('league_matches').select('*').eq('team_b_id', teamId).gte('site_b_date', today),
+  ]);
+  const upcoming = [
+    ...(asA || []).map(m => ({ match: m, date: m.site_a_date, oppId: m.team_b_id })),
+    ...(asB || []).map(m => ({ match: m, date: m.site_b_date, oppId: m.team_a_id })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+
+  if (upcoming.length) {
+    const next = upcoming[0];
+    const { data: opp } = await sb.from('league_teams').select('name').eq('id', next.oppId).maybeSingle();
+    return {
+      type: 'match', date: next.date, time: team.time_slot_time, club: team.clubs?.name || '—',
+      opponent: opp?.name || '—',
+    };
+  }
+
+  if (today <= league.end_date && team.time_slot_day != null && team.time_slot_time) {
+    const d = new Date(today + 'T00:00:00');
+    let diff = team.time_slot_day - d.getDay();
+    if (diff < 0) diff += 7;
+    const nextDate = new Date(d);
+    nextDate.setDate(d.getDate() + diff);
+    return { type: 'practice', date: toISODate(nextDate), time: team.time_slot_time, club: team.clubs?.name || '—' };
+  }
+
+  return { type: 'session_over' };
+}
+
+function renderUpNextCard(cardId, bodyId, upNext) {
+  const card = document.getElementById(cardId);
+  const body = document.getElementById(bodyId);
+  if (!upNext || upNext.type === 'none') { card.style.display = 'none'; return; }
+  card.style.display = '';
+  if (upNext.type === 'session_over') {
+    body.innerHTML = `<div style="font-size:11px;font-weight:700;letter-spacing:.05em;opacity:.75;text-transform:uppercase">Up Next</div>
+      <div style="font-size:16px;font-weight:700;margin-top:6px">🏁 End of session — sign up for the next one!</div>`;
+    return;
+  }
+  const isMatch = upNext.type === 'match';
+  body.innerHTML = `<div style="font-size:11px;font-weight:700;letter-spacing:.05em;opacity:.75;text-transform:uppercase">Up Next</div>
+    <div style="font-size:18px;font-weight:700;margin-top:6px">${isMatch ? '🎾 vs ' + escQ(upNext.opponent) : '🏃 Practice'}</div>
+    <div style="font-size:13px;opacity:.85;margin-top:2px">${fmtDate(upNext.date)} at ${fmtTime(upNext.time)} · ${escQ(upNext.club)}</div>`;
 }
 
 // ══════════════════════════════════════════════
