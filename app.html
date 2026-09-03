@@ -6848,7 +6848,7 @@ async function removeSubPoolEntry(id) {
 
 // ── Match-level claiming (score entry screen) ──
 async function loadMatchSubPool() {
-  const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name)')
+  const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name,phone)')
     .eq('league_id',currentLeague.id).eq('week_number',currentMatch.week_number);
   matchSubPool = data||[];
   updateEffectiveRostersWithSubs();
@@ -6889,7 +6889,7 @@ function renderMatchSubPanel() {
 
   const claimsHtml = claims => claims.length
     ? claims.map(c=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px">
-        <span>${escQ(c.players?.roster_name||'—')}</span>
+        <span>${escQ(c.players?.roster_name||'—')}${c.players?.phone?` — <a href="sms:${escQ(c.players.phone)}" style="color:var(--court)">${escQ(c.players.phone)}</a>`:''}</span>
         <button class="btn btn-sm btn-ghost" onclick="releaseSubClaim('${c.id}')">Release</button>
       </div>`).join('')
     : '<div class="form-hint">No subs claimed yet</div>';
