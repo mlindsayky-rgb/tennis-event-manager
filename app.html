@@ -544,6 +544,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" onclick="adminTab('players',this)">Players</button>
     <button class="nav-tab" onclick="adminTab('events',this)">Events</button>
     <button class="nav-tab" onclick="adminTab('leagues',this)">Leagues</button>
+    <button class="nav-tab" onclick="adminTab('directory',this)">Player Directory</button>
     <button class="nav-tab" onclick="adminTab('settings',this)">Settings</button>
   </nav>
   <div class="content">
@@ -585,6 +586,19 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <input class="form-input" type="text" placeholder="Search players by name…" oninput="searchPlayers(this.value,'players-list')" style="max-width:360px">
       </div>
       <div class="card"><div id="players-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+    </div>
+    <div id="tab-directory" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Player Directory</div><div class="section-sub">Everyone who's ever played in a league — for recruiting from your own past pool</div></div>
+        <button class="btn btn-secondary" onclick="exportPlayerDirectory()">↓ Export</button>
+      </div>
+      <div style="margin-bottom:16px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-muted);cursor:pointer;width:fit-content">
+          <input type="checkbox" id="directory-inactive-only" onchange="renderPlayerDirectory()">
+          Show Inactive only
+        </label>
+      </div>
+      <div class="card"><div id="player-directory-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
     <div id="tab-events" style="display:none">
       <div class="section-header">
@@ -1092,6 +1106,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <select class="form-select" id="roster-add-player" style="flex:1"><option value="">Search players…</option></select>
           <button class="btn btn-secondary" type="button" onclick="addPlayerToRoster()">+ Add</button>
         </div>
+        <button class="btn btn-sm btn-ghost" type="button" style="margin-top:10px" onclick="openCarryoverModal()">Carry Over Roster From…</button>
       </div>
       <div style="border-top:1px solid var(--border);margin:16px 0;padding-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -1103,6 +1118,25 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div class="modal-footer">
       <button class="btn btn-primary" onclick="closeModal('roster-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- CARRY OVER ROSTER MODAL -->
+<div class="modal-overlay" id="carryover-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">Carry Over Roster</div><button class="modal-close" onclick="closeModal('carryover-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Carry over from which prior team?</label>
+        <select class="form-select" id="carryover-source-team" onchange="loadCarryoverSourceRoster()"><option value="">Select a prior team…</option></select>
+      </div>
+      <div id="carryover-checklist" style="margin-top:12px"></div>
+      <div id="carryover-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('carryover-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCarryover()">Carry Over</button>
     </div>
   </div>
 </div>
@@ -5150,13 +5184,14 @@ let adminAllEvents = [], adminEventFilter = 'all';
 function adminTab(name,btn) {
   document.querySelectorAll('#admin-screen .nav-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
-  ['overview','clubs','directors','players','events','leagues','settings'].forEach(t=>{
+  ['overview','clubs','directors','players','directory','events','leagues','settings'].forEach(t=>{
     const el = document.getElementById(`tab-${t}`);
     if(el) el.style.display = t===name?'block':'none';
   });
   if(name==='clubs') loadClubs();
   if(name==='directors') loadDirectors();
   if(name==='players') loadPlayers('players-list');
+  if(name==='directory') loadPlayerDirectory();
   if(name==='events') loadAdminEvents();
   if(name==='leagues') loadLeagues();
   if(name==='settings') {
@@ -5631,9 +5666,9 @@ async function openRosterModal(teamId) {
 }
 
 async function loadRosterMembers() {
-  const {data} = await sb.from('league_team_players').select('id,player_id,is_captain,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
+  const {data} = await sb.from('league_team_players').select('id,player_id,is_captain,status,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
   currentRosterMembers = (data||[]).map(r=>({
-    id: r.id, player_id: r.player_id, is_captain: !!r.is_captain,
+    id: r.id, player_id: r.player_id, is_captain: !!r.is_captain, status: r.status || 'confirmed',
     roster_name: r.players?.roster_name || '—', email: r.players?.email || '', phone: r.players?.phone || ''
   })).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
   renderRosterCurrentList();
@@ -5647,15 +5682,17 @@ function renderRosterCurrentList() {
     el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players on this roster yet</div></div>';
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th><th></th></tr></thead><tbody>
+  const unverifiedCount = currentRosterMembers.filter(m => m.status === 'unverified').length;
+  el.innerHTML = `${unverifiedCount ? `<div class="alert alert-warn">${unverifiedCount} unverified — carried over from a prior season, not yet confirmed for this one. Confirm each as you hear back, or release anyone who isn't continuing.</div>` : ''}
+  <table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th><th></th></tr></thead><tbody>
   ${currentRosterMembers.map(m=>`<tr>
-    <td>${escQ(m.roster_name)}${m.is_captain?' <span class="badge badge-green">Captain</span>':''}</td>
+    <td>${escQ(m.roster_name)}${m.is_captain?' <span class="badge badge-green">Captain</span>':''}${m.status==='unverified'?' <span class="badge badge-gold">Unverified</span>':''}</td>
     <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.email)||'—'}</td>
     <td style="font-size:12px;color:var(--ink-muted)">${escQ(m.phone)||'—'}</td>
     <td>${m.is_captain
       ? `<button class="btn btn-sm btn-ghost" onclick="clearCaptain('${m.id}')">Remove Captain</button>`
       : `<button class="btn btn-sm btn-secondary" onclick="setCaptain('${m.id}')">Make Captain</button>`}</td>
-    <td><button class="btn btn-sm btn-ghost" onclick="resetPlayerPin('${m.player_id}','${escQ(m.roster_name)}')">Reset PIN</button></td>
+    <td>${m.status==='unverified'?`<button class="btn btn-sm btn-secondary" onclick="confirmPlayerRoster('${m.id}')">Confirm</button>`:''} <button class="btn btn-sm btn-ghost" onclick="resetPlayerPin('${m.player_id}','${escQ(m.roster_name)}')">Reset PIN</button></td>
     <td>${canManageRoster ? `<button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button>` : ''}</td>
   </tr>`).join('')}
   </tbody></table>
@@ -5689,6 +5726,62 @@ async function resetCaptainPin() {
   toast('Captain PIN reset.', 'success');
 }
 
+// Carry Over Roster — pulls a prior team's roster onto this (new-season)
+// team as Unverified, and releases anyone left unchecked from the old team,
+// snapshotting them at that moment for the Master Player List.
+let carryoverSourceRoster = [];
+
+async function openCarryoverModal() {
+  const { data: teams } = await sb.from('league_teams').select('id,name,leagues(name,end_date)').neq('id', currentRosterTeamId);
+  const sorted = (teams || []).slice().sort((a, b) => new Date(b.leagues?.end_date || 0) - new Date(a.leagues?.end_date || 0));
+  const sel = document.getElementById('carryover-source-team');
+  sel.innerHTML = '<option value="">Select a prior team…</option>' + sorted
+    .map(t => `<option value="${t.id}">${escQ(t.name)} — ${escQ(t.leagues?.name || '')}${t.leagues?.end_date ? ` (ended ${fmtDate(t.leagues.end_date)})` : ''}</option>`).join('');
+  document.getElementById('carryover-checklist').innerHTML = '<div class="form-hint">Select a team above to load its roster.</div>';
+  document.getElementById('carryover-error').style.display = 'none';
+  carryoverSourceRoster = [];
+  openModal('carryover-modal');
+}
+
+async function loadCarryoverSourceRoster() {
+  const sourceTeamId = document.getElementById('carryover-source-team').value;
+  const el = document.getElementById('carryover-checklist');
+  if (!sourceTeamId) { el.innerHTML = '<div class="form-hint">Select a team above to load its roster.</div>'; carryoverSourceRoster = []; return; }
+  const { data } = await sb.from('league_team_players').select('id,player_id,players(roster_name)').eq('team_id', sourceTeamId);
+  carryoverSourceRoster = (data || []).map(r => ({ roster_row_id: r.id, player_id: r.player_id, name: r.players?.roster_name || '—' })).sort((a, b) => a.name.localeCompare(b.name));
+  if (!carryoverSourceRoster.length) { el.innerHTML = '<div class="empty-sub">That team has no roster.</div>'; return; }
+  el.innerHTML = carryoverSourceRoster.map(p => `
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0">
+      <input type="checkbox" checked data-player-id="${p.player_id}" data-roster-row-id="${p.roster_row_id}" class="carryover-stay-check">
+      <span>${escQ(p.name)}</span>
+    </label>`).join('') + '<div class="form-hint" style="margin-top:8px">Checked = Stay (carried over as Unverified onto the new team). Unchecked = Release (removed from the old team and marked Inactive).</div>';
+}
+
+async function submitCarryover() {
+  const sourceTeamId = document.getElementById('carryover-source-team').value;
+  const errEl = document.getElementById('carryover-error');
+  errEl.style.display = 'none';
+  if (!sourceTeamId) { errEl.textContent = 'Select a prior team first.'; errEl.style.display = 'flex'; return; }
+  const checks = Array.from(document.querySelectorAll('.carryover-stay-check'));
+  let carried = 0, released = 0;
+  for (const chk of checks) {
+    const playerId = chk.dataset.playerId;
+    if (chk.checked) {
+      const { error } = await sb.from('league_team_players').insert({ team_id: currentRosterTeamId, player_id: playerId, status: 'unverified' });
+      if (!error) carried++;
+    } else {
+      await snapshotPlayerFromTeam(playerId, sourceTeamId);
+      await sb.from('league_team_players').delete().eq('id', chk.dataset.rosterRowId);
+      released++;
+    }
+  }
+  closeModal('carryover-modal');
+  toast(`Carried over ${carried}, released ${released}`, 'success');
+  await loadRosterMembers();
+  await populateRosterAddPlayerSelect();
+  refreshRosterCountBadge();
+}
+
 async function setCaptain(rosterRowId) {
   await sb.from('league_team_players').update({is_captain:false}).eq('team_id',currentRosterTeamId);
   await sb.from('league_team_players').update({is_captain:true}).eq('id',rosterRowId);
@@ -5710,12 +5803,38 @@ async function populateRosterAddPlayerSelect() {
     .map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
 }
 
+// Captures last coach/captain/session-end onto the player record at the
+// moment they're removed from a roster — the only point where this data
+// would otherwise be lost for good, so the Master Player List can still
+// show it once the player has no roster rows left at all.
+async function snapshotPlayerFromTeam(playerId, teamId) {
+  const { data: team } = await sb.from('league_teams').select('coach_name,league_id').eq('id', teamId).single();
+  if (!team) return;
+  const [{ data: league }, { data: captainRow }] = await Promise.all([
+    sb.from('leagues').select('end_date').eq('id', team.league_id).maybeSingle(),
+    sb.from('league_team_players').select('players(roster_name)').eq('team_id', teamId).eq('is_captain', true).maybeSingle(),
+  ]);
+  await sb.from('players').update({
+    last_coach_name: team.coach_name || null,
+    last_captain_name: captainRow?.players?.roster_name || null,
+    last_session_end_date: league?.end_date || null,
+  }).eq('id', playerId);
+}
+
+// Being newly rostered means a fresh start — any old "last coach/captain"
+// snapshot from a prior stint is discarded, per the Master List rule that
+// a player who's Current again shows no history pile-up.
+async function clearPlayerSnapshot(playerId) {
+  await sb.from('players').update({ last_coach_name: null, last_captain_name: null, last_session_end_date: null }).eq('id', playerId);
+}
+
 async function addPlayerToRoster() {
   const sel = document.getElementById('roster-add-player');
   const playerId = sel.value;
   if (!playerId) return;
   const {error} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await clearPlayerSnapshot(playerId);
   toast('Player added to roster','success');
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
@@ -5723,10 +5842,109 @@ async function addPlayerToRoster() {
 }
 
 async function removeFromRoster(rosterRowId) {
+  const member = currentRosterMembers.find(m => m.id === rosterRowId);
+  if (member) await snapshotPlayerFromTeam(member.player_id, currentRosterTeamId);
   await sb.from('league_team_players').delete().eq('id',rosterRowId);
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
   refreshRosterCountBadge();
+}
+
+async function confirmPlayerRoster(rosterRowId) {
+  await sb.from('league_team_players').update({ status: 'confirmed' }).eq('id', rosterRowId);
+  await loadRosterMembers();
+  toast('Confirmed for the roster','success');
+}
+
+// ══════════════════════════════════════════════
+// PLAYER DIRECTORY — recruiting master list (Section 8)
+// ══════════════════════════════════════════════
+let playerDirectoryRows = [];
+
+async function loadPlayerDirectory() {
+  const el = document.getElementById('player-directory-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+
+  const [{ data: rosterRows }, { data: allPlayers }] = await Promise.all([
+    sb.from('league_team_players').select('player_id,status,team_id,league_teams(coach_name,leagues(name,start_date,end_date))'),
+    sb.from('players').select('id,roster_name,email,phone,last_coach_name,last_captain_name,last_session_end_date'),
+  ]);
+  const playerMap = {}; (allPlayers || []).forEach(p => playerMap[p.id] = p);
+  const today = toISODate(new Date());
+
+  const byPlayer = {};
+  (rosterRows || []).forEach(r => { (byPlayer[r.player_id] = byPlayer[r.player_id] || []).push(r); });
+
+  const rows = [];
+  Object.keys(byPlayer).forEach(pid => {
+    const p = playerMap[pid];
+    if (!p) return;
+    const rosterEntries = byPlayer[pid];
+    const isCurrent = rosterEntries.some(r => {
+      const l = r.league_teams?.leagues;
+      return l && l.start_date <= today && l.end_date >= today;
+    });
+    if (isCurrent) {
+      rows.push({ id: pid, name: p.roster_name, email: p.email, phone: p.phone, status: 'Current', lastCoach: '', lastCaptain: '', lastPlayed: '' });
+    } else {
+      const mostRecent = rosterEntries.slice().sort((a, b) => new Date(b.league_teams?.leagues?.end_date || 0) - new Date(a.league_teams?.leagues?.end_date || 0))[0];
+      rows.push({
+        id: pid, name: p.roster_name, email: p.email, phone: p.phone, status: 'Inactive',
+        lastCoach: p.last_coach_name || mostRecent?.league_teams?.coach_name || '',
+        lastCaptain: p.last_captain_name || '',
+        lastPlayed: p.last_session_end_date || mostRecent?.league_teams?.leagues?.end_date || '',
+      });
+    }
+  });
+
+  // Players fully released from every roster still show up via their snapshot alone.
+  (allPlayers || []).forEach(p => {
+    if (byPlayer[p.id]) return;
+    if (p.last_coach_name || p.last_captain_name || p.last_session_end_date) {
+      rows.push({
+        id: p.id, name: p.roster_name, email: p.email, phone: p.phone, status: 'Inactive',
+        lastCoach: p.last_coach_name || '', lastCaptain: p.last_captain_name || '', lastPlayed: p.last_session_end_date || '',
+      });
+    }
+  });
+
+  playerDirectoryRows = rows.sort((a, b) => (a.status === b.status ? a.name.localeCompare(b.name) : a.status === 'Inactive' ? -1 : 1));
+  renderPlayerDirectory();
+}
+
+function renderPlayerDirectory() {
+  const el = document.getElementById('player-directory-list');
+  const inactiveOnly = document.getElementById('directory-inactive-only').checked;
+  const rows = inactiveOnly ? playerDirectoryRows.filter(r => r.status === 'Inactive') : playerDirectoryRows;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">Nobody matches yet</div></div>';
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Last Coach</th><th>Last Captain</th><th>Last Played</th></tr></thead><tbody>
+  ${rows.map(r => `<tr>
+    <td>${escQ(r.name)}</td>
+    <td style="font-size:12px;color:var(--ink-muted)">${escQ(r.email) || '—'}</td>
+    <td style="font-size:12px;color:var(--ink-muted)">${escQ(r.phone) || '—'}</td>
+    <td><span class="badge ${r.status === 'Current' ? 'badge-green' : 'badge-gray'}">${r.status}</span></td>
+    <td>${escQ(r.lastCoach) || '—'}</td>
+    <td>${escQ(r.lastCaptain) || '—'}</td>
+    <td>${r.lastPlayed ? fmtDate(r.lastPlayed) : '—'}</td>
+  </tr>`).join('')}
+  </tbody></table>`;
+}
+
+function exportPlayerDirectory() {
+  const inactiveOnly = document.getElementById('directory-inactive-only').checked;
+  const rows = inactiveOnly ? playerDirectoryRows.filter(r => r.status === 'Inactive') : playerDirectoryRows;
+  if (!rows.length) { toast('Nothing to export', 'error'); return; }
+  const sheetRows = rows.map(r => ({
+    Name: r.name, Email: r.email || '', Phone: r.phone || '', Status: r.status,
+    'Last Coach': r.lastCoach || '', 'Last Captain': r.lastCaptain || '', 'Last Played': r.lastPlayed ? fmtDate(r.lastPlayed) : '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(sheetRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Player Directory');
+  XLSX.writeFile(wb, `player-directory-${inactiveOnly ? 'inactive-' : ''}${toISODate(new Date())}.xlsx`);
 }
 
 function refreshRosterCountBadge() {
@@ -5836,7 +6054,9 @@ async function confirmRosterImport() {
     const {error: rosterErr} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
     if (rosterErr && !/duplicate/i.test(rosterErr.message||'')) {
       toast('Error adding '+r.fullName+' to roster: '+rosterErr.message,'error');
+      continue;
     }
+    await clearPlayerSnapshot(playerId);
   }
   toast('Roster updated!','success');
   rosterImportRows = [];
