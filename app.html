@@ -124,6 +124,12 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   font-weight: 500;
 }
 .header-btn:hover { background: rgba(255,255,255,.22); }
+.message-badge {
+  display: none; position: absolute; top: -5px; right: -5px; background: var(--clay);
+  color: #fff; border-radius: 50%; min-width: 16px; height: 16px; font-size: 10px;
+  font-weight: 700; align-items: center; justify-content: center; padding: 0 3px;
+  line-height: 1; border: 1.5px solid var(--navy);
+}
 
 /* ── NAV ── */
 .nav {
@@ -139,7 +145,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   white-space: nowrap; transition: all .15s;
   position: relative; top: 1px; letter-spacing: -.1px;
 }
-.nav-tab.active { color: var(--court); border-bottom-color: var(--court); }
+.nav-tab.active { color: var(--brand-accent, var(--court)); border-bottom-color: var(--brand-accent, var(--court)); }
 .nav-tab:hover:not(.active) { color: var(--ink); }
 
 /* ── CONTENT ── */
@@ -373,7 +379,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 .event-nav { background: var(--white); border-bottom: 1px solid var(--border); display: flex; padding: 0 20px; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .event-nav::-webkit-scrollbar { display: none; }
 .event-nav-tab { padding: 13px 16px; font-size: 13px; font-weight: 600; color: var(--ink-muted); border: none; background: none; cursor: pointer; border-bottom: 2.5px solid transparent; white-space: nowrap; transition: all .15s; position: relative; top: 1px; font-family: var(--font-body); letter-spacing: -.1px; }
-.event-nav-tab.active { color: var(--court); border-bottom-color: var(--court); }
+.event-nav-tab.active { color: var(--brand-accent, var(--court)); border-bottom-color: var(--brand-accent, var(--court)); }
 .event-nav-tab:hover:not(.active) { color: var(--ink); }
 
 /* ── TEAM BUILDER ── */
@@ -535,7 +541,11 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub">Admin Panel</div>
       </div>
     </div>
-    <button class="header-btn" onclick="logout()">Sign Out</button>
+    <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
+      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
+      <button class="header-btn" onclick="logout()">Sign Out</button>
+    </div>
   </header>
   <nav class="nav">
     <button class="nav-tab active" onclick="adminTab('overview',this)">Overview</button>
@@ -695,6 +705,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       </div>
     </div>
     <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
+      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
       <button class="header-btn" id="league-change-pin-btn" onclick="openChangePinModal()" style="display:none">Change My PIN</button>
       <button class="header-btn" id="league-detail-action-btn" onclick="openTeamModalNew()">+ Add Team</button>
     </div>
@@ -759,6 +771,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       </div>
     </div>
     <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
+      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
       <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
       <button class="header-btn" onclick="logout()">Sign Out</button>
     </div>
@@ -786,6 +800,54 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('change-pin-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveMyPin()">Update PIN</button>
+    </div>
+  </div>
+</div>
+
+<!-- MESSAGES MODAL (inbox + composer, shared across roles) -->
+<div class="modal-overlay" id="messages-modal">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header"><div class="modal-title">✉️ Messages</div><button class="modal-close" onclick="closeModal('messages-modal')">×</button></div>
+    <div class="modal-body">
+      <div id="messages-inbox-view">
+        <div id="messages-compose-btn-wrap" style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn btn-sm btn-primary" onclick="openMessageComposer()">+ New Message</button>
+        </div>
+        <div id="messages-inbox-list"></div>
+      </div>
+      <div id="messages-compose-view" style="display:none">
+        <div class="form-group">
+          <label class="form-label">Send to</label>
+          <select class="form-select" id="msg-target-type" onchange="renderMessageTargetFields()"></select>
+        </div>
+        <div id="msg-target-fields"></div>
+        <div class="form-group"><label class="form-label">Message</label><textarea class="form-input" id="msg-body" rows="4" placeholder="What's going on?"></textarea></div>
+        <div id="msg-compose-error" class="alert alert-error" style="display:none"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="msg-footer-back" onclick="backToInbox()" style="display:none">← Back</button>
+      <button class="btn btn-ghost" onclick="closeModal('messages-modal')">Close</button>
+      <button class="btn btn-primary" id="msg-footer-send" onclick="submitComposedMessage()" style="display:none">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- RULES OF PLAY MODAL -->
+<div class="modal-overlay" id="rules-modal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header"><div class="modal-title">🎾 Rules of Play</div><button class="modal-close" onclick="closeModal('rules-modal')">×</button></div>
+    <div class="modal-body">
+      <div id="rules-view-body" style="white-space:pre-wrap;font-size:14px;line-height:1.6"></div>
+      <div id="rules-edit-body" style="display:none">
+        <textarea class="form-input" id="rules-edit-textarea" rows="10" placeholder="Paste the league's rules here…"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="rules-edit-btn" onclick="toggleRulesEdit(true)" style="display:none">Edit</button>
+      <button class="btn btn-ghost" id="rules-cancel-btn" onclick="toggleRulesEdit(false)" style="display:none">Cancel</button>
+      <button class="btn btn-primary" id="rules-save-btn" onclick="saveRulesOfPlay()" style="display:none">Save</button>
+      <button class="btn btn-primary" id="rules-close-btn" onclick="closeModal('rules-modal')">Close</button>
     </div>
   </div>
 </div>
@@ -840,6 +902,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       </div>
     </div>
     <div style="display:flex;gap:8px">
+      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
+      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
       <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
       <button class="header-btn" onclick="logout()">Sign Out</button>
     </div>
@@ -1882,6 +1946,7 @@ async function attemptLogin() {
     const firstTab = currentUser.access.includes('events') ? 'events' : currentUser.access.includes('leagues') ? 'leagues' : 'players';
     dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
     if (firstTab==='events') loadDirectorEvents();
+    initMessageBadge();
     pinLocked = false;
     return;
   }
@@ -1897,6 +1962,7 @@ async function attemptLogin() {
     pinBuf=''; renderDots();
     pinLocked = false;
     openLeagueById(coachTeam.league_id);
+    initMessageBadge();
     return;
   }
 
@@ -1914,6 +1980,7 @@ async function attemptLogin() {
     pinBuf=''; renderDots();
     pinLocked = false;
     openLeagueById(captainTeam.league_id);
+    initMessageBadge();
     return;
   }
 
@@ -1924,6 +1991,7 @@ async function attemptLogin() {
     pinBuf=''; renderDots();
     pinLocked = false;
     openPlayerScreen();
+    initMessageBadge();
     return;
   }
 
@@ -1934,7 +2002,21 @@ async function attemptLogin() {
 
 function applyBranding(club) {
   if (!club?.primary_color) return;
-  document.querySelectorAll('.app-header').forEach(h => h.style.background = club.primary_color);
+  document.querySelectorAll('.app-header').forEach(h => {
+    if (h.dataset.originalBg === undefined) h.dataset.originalBg = h.style.background || '';
+    h.style.background = club.primary_color;
+  });
+  document.documentElement.style.setProperty('--brand-accent', club.accent_color || club.secondary_color || club.primary_color);
+}
+
+// Restores each header's pre-branding background (captured the first time
+// branding was ever applied) so signing out of a branded session doesn't
+// leak its colors into whoever logs in next.
+function clearBranding() {
+  document.querySelectorAll('.app-header').forEach(h => {
+    if (h.dataset.originalBg !== undefined) h.style.background = h.dataset.originalBg;
+  });
+  document.documentElement.style.removeProperty('--brand-accent');
 }
 
 async function hashPin(pin) {
@@ -2109,7 +2191,268 @@ function showScreen(id) {
 function logout() {
   currentUser=null; pinBuf=''; renderDots();
   document.getElementById('pin-status').textContent='';
+  clearBranding();
   showScreen('pin-screen');
+}
+
+// ══════════════════════════════════════════════
+// MESSAGES — in-app inbox (no external provider needed)
+// ══════════════════════════════════════════════
+
+// Every audience type resolves to a flat list of {kind, ref_id} recipients,
+// snapshotted into message_recipients at send time so a message's audience
+// stays historically accurate even if rosters change later.
+async function resolveMessageRecipients(payload) {
+  const recipients = [];
+  async function addTeam(teamId) {
+    recipients.push({ kind: 'team_coach', ref_id: teamId });
+    recipients.push({ kind: 'team_captain', ref_id: teamId });
+    const { data: rosterRows } = await sb.from('league_team_players').select('player_id').eq('team_id', teamId);
+    (rosterRows || []).forEach(r => recipients.push({ kind: 'player', ref_id: r.player_id }));
+  }
+
+  if (payload.target_type === 'all') {
+    const [{ data: directors }, { data: teams }] = await Promise.all([
+      sb.from('directors').select('id').eq('is_active', true),
+      sb.from('league_teams').select('id'),
+    ]);
+    (directors || []).forEach(d => recipients.push({ kind: 'director', ref_id: d.id }));
+    for (const t of teams || []) await addTeam(t.id);
+  } else if (payload.target_type === 'league') {
+    const { data: teams } = await sb.from('league_teams').select('id').in('league_id', payload.league_ids);
+    for (const t of teams || []) await addTeam(t.id);
+  } else if (payload.target_type === 'club_day') {
+    // Whoever has a match AT this club on this date — home team and
+    // visiting team alike, since a facility issue hits everyone standing
+    // in that gym regardless of whose club it is.
+    const { data: clubTeams } = await sb.from('league_teams').select('id').eq('club_id', payload.club_id);
+    const clubTeamIds = (clubTeams || []).map(t => t.id);
+    if (clubTeamIds.length) {
+      const [{ data: asA }, { data: asB }] = await Promise.all([
+        sb.from('league_matches').select('team_a_id,team_b_id').in('team_a_id', clubTeamIds).eq('site_a_date', payload.target_date),
+        sb.from('league_matches').select('team_a_id,team_b_id').in('team_b_id', clubTeamIds).eq('site_b_date', payload.target_date),
+      ]);
+      const matchTeamIds = new Set();
+      [...(asA || []), ...(asB || [])].forEach(m => { matchTeamIds.add(m.team_a_id); matchTeamIds.add(m.team_b_id); });
+      for (const tid of matchTeamIds) await addTeam(tid);
+    }
+  } else if (payload.target_type === 'team') {
+    await addTeam(payload.team_id);
+  }
+
+  const seen = new Set();
+  return recipients.filter(r => { const k = r.kind + ':' + r.ref_id; if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+async function sendMessage(payload) {
+  const senderName = currentUser.director_name || currentUser.person_name || 'Admin';
+  const { data: msg, error } = await sb.from('messages').insert({
+    sender_role: currentUser.role, sender_name: senderName,
+    target_type: payload.target_type, league_ids: payload.league_ids || null,
+    club_id: payload.club_id || null, target_date: payload.target_date || null,
+    team_id: payload.team_id || null, body: payload.body,
+  }).select().single();
+  if (error) { toast('Error: ' + error.message, 'error'); return false; }
+  const recipients = await resolveMessageRecipients(payload);
+  if (recipients.length) {
+    await sb.from('message_recipients').insert(recipients.map(r => ({ message_id: msg.id, recipient_kind: r.kind, recipient_ref_id: r.ref_id })));
+  }
+  toast(`Sent to ${recipients.length} recipient${recipients.length === 1 ? '' : 's'}`, 'success');
+  return true;
+}
+
+function myRecipientKey() {
+  const role = currentUser?.role;
+  if (role === 'director') return { kind: 'director', ref_id: currentUser.director_id };
+  if (role === 'coach') return { kind: 'team_coach', ref_id: currentUser.team_id };
+  if (role === 'captain') return { kind: 'team_captain', ref_id: currentUser.team_id };
+  if (role === 'player') return { kind: 'player', ref_id: currentUser.player_id };
+  return null;
+}
+
+async function loadMyMessages() {
+  const key = myRecipientKey();
+  if (!key) return [];
+  const { data } = await sb.from('message_recipients').select('*,messages(*)')
+    .eq('recipient_kind', key.kind).eq('recipient_ref_id', key.ref_id);
+  return (data || []).sort((a, b) => new Date(b.messages?.created_at || 0) - new Date(a.messages?.created_at || 0));
+}
+
+let messagesCache = [];
+
+// Called once right after login so the badge is already accurate the
+// moment someone lands on their screen — no need to open the inbox first.
+async function initMessageBadge() {
+  messagesCache = await loadMyMessages();
+  updateMessageBadge();
+}
+
+function updateMessageBadge() {
+  const unread = messagesCache.filter(r => !r.read_at).length;
+  document.querySelectorAll('.message-badge').forEach(b => {
+    b.textContent = unread > 9 ? '9+' : String(unread);
+    b.style.display = unread ? 'inline-flex' : 'none';
+  });
+}
+
+async function openMessagesModal() {
+  await initMessageBadge();
+  showMessagesInboxView();
+  renderMessagesInbox();
+  openModal('messages-modal');
+}
+
+function showMessagesInboxView() {
+  document.getElementById('messages-inbox-view').style.display = '';
+  document.getElementById('messages-compose-view').style.display = 'none';
+  document.getElementById('msg-footer-back').style.display = 'none';
+  document.getElementById('msg-footer-send').style.display = 'none';
+}
+
+function backToInbox() {
+  showMessagesInboxView();
+  renderMessagesInbox();
+}
+
+function renderMessagesInbox() {
+  const el = document.getElementById('messages-inbox-list');
+  const canCompose = ['admin', 'director', 'coach', 'captain'].includes(currentUser?.role);
+  document.getElementById('messages-compose-btn-wrap').style.display = canCompose ? '' : 'none';
+  if (!messagesCache.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No messages yet</div></div>';
+    return;
+  }
+  el.innerHTML = messagesCache.map(r => {
+    const body = r.messages?.body || '';
+    const expanded = !!r._expanded;
+    const preview = body.length > 80 ? body.slice(0, 80) + '…' : body;
+    return `<div style="padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" onclick="toggleMessageDetail('${r.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <strong style="font-size:13px">${escQ(r.messages?.sender_name || '—')}</strong>
+        <span style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          ${!r.read_at ? '<span class="badge badge-red">New</span>' : ''}
+          <span style="font-size:11px;color:var(--ink-ghost)">${fmtDate(r.messages?.created_at)}</span>
+        </span>
+      </div>
+      <div style="font-size:13px;color:${expanded ? 'var(--ink)' : 'var(--ink-muted)'};margin-top:4px;white-space:pre-wrap">${escQ(expanded ? body : preview)}</div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleMessageDetail(recipientRowId) {
+  const r = messagesCache.find(x => x.id === recipientRowId);
+  if (!r) return;
+  r._expanded = !r._expanded;
+  if (r._expanded && !r.read_at) {
+    await sb.from('message_recipients').update({ read_at: new Date().toISOString() }).eq('id', recipientRowId);
+    r.read_at = new Date().toISOString();
+    updateMessageBadge();
+  }
+  renderMessagesInbox();
+}
+
+function openMessageComposer() {
+  document.getElementById('messages-inbox-view').style.display = 'none';
+  document.getElementById('messages-compose-view').style.display = '';
+  document.getElementById('msg-footer-back').style.display = 'inline-block';
+  document.getElementById('msg-footer-send').style.display = 'inline-block';
+  document.getElementById('msg-body').value = '';
+  document.getElementById('msg-compose-error').style.display = 'none';
+  renderMessageTargetTypeOptions();
+  renderMessageTargetFields();
+}
+
+function renderMessageTargetTypeOptions() {
+  const role = currentUser?.role;
+  const options = [];
+  if (role === 'admin' || role === 'director') options.push(['all', 'Everyone'], ['league', 'Specific League(s)']);
+  if (['admin', 'director', 'coach', 'captain'].includes(role)) options.push(['club_day', 'Club on a Specific Day']);
+  if (role === 'coach' || role === 'captain') options.push(['team', 'My Team']);
+  document.getElementById('msg-target-type').innerHTML = options.map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+}
+
+async function renderMessageTargetFields() {
+  const type = document.getElementById('msg-target-type').value;
+  const el = document.getElementById('msg-target-fields');
+  if (type === 'all') {
+    el.innerHTML = '<div class="form-hint">Goes to every director, coach, captain, and player across every league.</div>';
+  } else if (type === 'league') {
+    const { data: leagues } = await sb.from('leagues').select('id,name').order('name');
+    el.innerHTML = `<div class="form-group"><label class="form-label">League(s)</label>
+      <select class="form-select" id="msg-league-ids" multiple size="4">
+        ${(leagues || []).map(l => `<option value="${l.id}">${escQ(l.name)}</option>`).join('')}
+      </select></div>`;
+  } else if (type === 'club_day') {
+    const { data: clubs } = await sb.from('clubs').select('id,name').order('name');
+    el.innerHTML = `<div class="form-row">
+      <div class="form-group"><label class="form-label">Club</label><select class="form-select" id="msg-club-id"><option value="">Select club…</option>${(clubs || []).map(c => `<option value="${c.id}">${escQ(c.name)}</option>`).join('')}</select></div>
+      <div class="form-group"><label class="form-label">Date</label><input class="form-input" type="date" id="msg-target-date"></div>
+    </div>
+    <div class="form-hint">Notifies both teams playing at that club on that date — home and visiting.</div>`;
+  } else if (type === 'team') {
+    el.innerHTML = '<div class="form-hint">Goes to your team\'s coach, captain, and full roster.</div>';
+  } else {
+    el.innerHTML = '';
+  }
+}
+
+async function submitComposedMessage() {
+  const errEl = document.getElementById('msg-compose-error');
+  errEl.style.display = 'none';
+  const type = document.getElementById('msg-target-type').value;
+  const body = document.getElementById('msg-body').value.trim();
+  if (!type) { errEl.textContent = 'You don\'t have permission to send a message.'; errEl.style.display = 'flex'; return; }
+  if (!body) { errEl.textContent = "Message can't be empty."; errEl.style.display = 'flex'; return; }
+  const payload = { target_type: type, body };
+  if (type === 'league') {
+    const ids = Array.from(document.getElementById('msg-league-ids').selectedOptions).map(o => o.value);
+    if (!ids.length) { errEl.textContent = 'Select at least one league.'; errEl.style.display = 'flex'; return; }
+    payload.league_ids = ids;
+  } else if (type === 'club_day') {
+    const clubId = document.getElementById('msg-club-id').value;
+    const date = document.getElementById('msg-target-date').value;
+    if (!clubId || !date) { errEl.textContent = 'Select a club and a date.'; errEl.style.display = 'flex'; return; }
+    payload.club_id = clubId; payload.target_date = date;
+  } else if (type === 'team') {
+    payload.team_id = currentUser.team_id;
+  }
+  const btn = document.getElementById('msg-footer-send');
+  btn.disabled = true;
+  const ok = await sendMessage(payload);
+  btn.disabled = false;
+  if (ok) closeModal('messages-modal');
+}
+
+// ══════════════════════════════════════════════
+// RULES OF PLAY
+// ══════════════════════════════════════════════
+async function openRulesModal() {
+  const { data } = await sb.from('app_settings').select('value').eq('key', 'rules_of_play').maybeSingle();
+  const text = data?.value || '';
+  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
+  document.getElementById('rules-view-body').textContent = text || (isStaff ? "Nothing added yet — click Edit to add your league's rules." : 'No rules have been posted yet.');
+  document.getElementById('rules-edit-textarea').value = text;
+  document.getElementById('rules-edit-btn').style.display = isStaff ? 'inline-block' : 'none';
+  toggleRulesEdit(false);
+  openModal('rules-modal');
+}
+
+function toggleRulesEdit(editing) {
+  document.getElementById('rules-view-body').style.display = editing ? 'none' : '';
+  document.getElementById('rules-edit-body').style.display = editing ? '' : 'none';
+  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
+  document.getElementById('rules-edit-btn').style.display = (!editing && isStaff) ? 'inline-block' : 'none';
+  document.getElementById('rules-cancel-btn').style.display = editing ? 'inline-block' : 'none';
+  document.getElementById('rules-save-btn').style.display = editing ? 'inline-block' : 'none';
+  document.getElementById('rules-close-btn').style.display = editing ? 'none' : 'inline-block';
+}
+
+async function saveRulesOfPlay() {
+  const text = document.getElementById('rules-edit-textarea').value;
+  await sb.from('app_settings').upsert({ key: 'rules_of_play', value: text });
+  toast('Rules of Play updated!', 'success');
+  document.getElementById('rules-view-body').textContent = text || 'Nothing added yet.';
+  toggleRulesEdit(false);
 }
 
 
