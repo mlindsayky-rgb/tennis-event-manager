@@ -1181,7 +1181,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="form-group">
           <label class="form-label">Upload Roster (.xlsx or .csv)</label>
           <input class="form-input" type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" onchange="handleRosterFile(this)">
-          <div class="form-hint">Columns: First Name, Last Name, Email, Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
+          <div class="form-hint">Name can be one column ("Name") or two ("First Name" / "Last Name") — either works. Plus Email and Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
         </div>
         <div id="roster-import-preview"></div>
       </div>
@@ -6350,9 +6350,13 @@ async function handleRosterFile(input) {
   const normEmail = e => (e||'').trim().toLowerCase();
 
   rosterImportRows = norm.map(r => {
+    // Accept either shape: separate First/Last columns, or a single
+    // combined-name column (Name, Full Name, Player, ...) — whichever the
+    // uploaded sheet actually has.
     const firstName = r['first name']||r['firstname']||r['first']||'';
     const lastName = r['last name']||r['lastname']||r['last']||'';
-    const fullName = `${firstName} ${lastName}`.trim();
+    const combinedName = r['name']||r['full name']||r['fullname']||r['player name']||r['player']||r['roster name']||'';
+    const fullName = (firstName || lastName) ? `${firstName} ${lastName}`.trim() : combinedName.trim();
     const email = r['email']||'';
     const phone = r['phone']||r['phone number']||'';
     const emailN = normEmail(email), phoneN = normPhone(phone);
@@ -6368,7 +6372,7 @@ async function handleRosterFile(input) {
       matched = rosterAllPlayers.find(p=>p.roster_name.toLowerCase()===fullName.toLowerCase());
       if (matched) matchType = 'name';
     }
-    return { firstName, lastName, fullName, email, phone, matchedPlayerId: matched?matched.id:null, matchType, gender:'' };
+    return { fullName, email, phone, matchedPlayerId: matched?matched.id:null, matchType, gender:'' };
   }).filter(r => r.fullName);
 
   renderRosterImportPreview();
