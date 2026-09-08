@@ -2774,8 +2774,6 @@ async function addSubPlayer() {
     subPlayerId = existingPlayer.id;
   } else {
     const {data:newPlayer,error:pErr} = await sb.from('players').insert({
-      first_name:'SUB',
-      last_name:teamName,
       roster_name:subName,
       gender:'MALE',
     }).select().single();
@@ -2809,14 +2807,8 @@ async function activateSub(epId){
 
   // Update player name if provided
   if(subName.trim()) {
-    const parts = subName.trim().split(' ');
-    const fn = parts[0];
-    const ln = parts.slice(1).join(' ') || teamName;
-    const rosterName = subName.trim();
     await sb.from('players').update({
-      first_name: fn,
-      last_name: ln,
-      roster_name: rosterName
+      roster_name: subName.trim()
     }).eq('id', ep.player_id);
   }
 
@@ -3208,8 +3200,6 @@ async function lockTeams(){
         subPlayerId = existingSub.id;
       } else {
         const {data:newSub} = await sb.from('players').insert({
-          first_name: 'SUB',
-          last_name: t.name,
           roster_name: subName,
           gender: 'MALE', // neutral default, director can change
         }).select().single();
@@ -5087,7 +5077,7 @@ async function handleImportFile(input) {
     const clubCols = keys.filter(k => (clubs||[]).some(c=>k.includes(c.name.toLowerCase().split(' ')[0].toLowerCase())));
 
     // Fetch all existing players for duplicate check
-    const {data:existingPlayers} = await sb.from('players').select('id,first_name,last_name,roster_name');
+    const {data:existingPlayers} = await sb.from('players').select('id,roster_name');
 
     // Parse rows
     const parsed = norm.map((r,i) => {
@@ -5104,17 +5094,16 @@ async function handleImportFile(input) {
         if(ckey) clubAffils[c.id] = r[ckey]==='1'||r[ckey].toLowerCase()==='yes'||r[ckey].toLowerCase()==='x';
       });
 
-      // Duplicate check - exact match
-      const exactMatch = (existingPlayers||[]).find(p =>
-        p.roster_name?.toLowerCase() === fullName.toLowerCase() ||
-        (p.first_name?.toLowerCase()===firstName.toLowerCase() && p.last_name?.toLowerCase()===lastName.toLowerCase())
-      );
+      // Duplicate check - exact match (roster_name is the only name field that
+      // actually exists on players — first/last are split from it as needed)
+      const exactMatch = (existingPlayers||[]).find(p => p.roster_name?.toLowerCase() === fullName.toLowerCase());
 
       // Fuzzy match (share first name + similar last name)
       const fuzzyMatches = exactMatch ? [] : (existingPlayers||[]).filter(p => {
         if(!firstName || !lastName) return false;
-        const pFirst = (p.first_name||'').toLowerCase();
-        const pLast = (p.last_name||'').toLowerCase();
+        const pParts = (p.roster_name||'').toLowerCase().split(' ');
+        const pFirst = pParts[0] || '';
+        const pLast = pParts.slice(1).join(' ') || '';
         return pFirst===firstName.toLowerCase() && pLast.slice(0,3)===lastName.toLowerCase().slice(0,3) && pLast!==lastName.toLowerCase();
       });
 
@@ -5280,18 +5269,8 @@ async function confirmImport() {
 
   for(const r of toImport) {
     try {
-      // Split full name if no first/last
-      let fn = r.firstName, ln = r.lastName;
-      if(!fn && r.fullName) {
-        const parts = r.fullName.trim().split(/\s+/);
-        fn = parts[0];
-        ln = parts.slice(1).join(' ');
-      }
-
       // Create player
       const {data:player, error:pErr} = await sb.from('players').insert({
-        first_name: fn,
-        last_name: ln,
         roster_name: r.fullName,
         gender: r.gender||'MALE',
       }).select().single();
@@ -6432,7 +6411,7 @@ async function confirmRosterImport() {
     if (!playerId) {
       // player_type defaults to 'AD' — Leagues is adult-only for now (Junior League is a future phase per the doc)
       const {data:newPlayer, error} = await sb.from('players').insert({
-        first_name: r.firstName, last_name: r.lastName, roster_name: r.fullName,
+        roster_name: r.fullName,
         gender: r.gender, player_type: 'AD',
         email: r.email || null, phone: r.phone || null
       }).select().single();
@@ -7767,7 +7746,7 @@ async function loadPlayers(containerId, filterMode) {
   // Load clubs and player club memberships
   const {data:clubs} = await sb.from('clubs').select('id,name').order('name');
   const {data:playerClubs} = data?.length ? await sb.from('player_clubs')
-    .select('player_id,club_id,is_primary')
+    .select('player_id,club_id')
     .in('player_id', data.map(p=>p.id)) : {data:[]};
   const pcMap = {}; // playerId -> [club_ids]
   (playerClubs||[]).forEach(pc=>{
