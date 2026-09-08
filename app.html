@@ -6035,7 +6035,6 @@ async function openRosterModal(teamId) {
   const isStaffOrCoach = role === 'admin' || role === 'director' || role === 'coach';
   document.getElementById('roster-upload-section').style.display = isStaffOrCoach ? '' : 'none';
   document.getElementById('roster-addplayer-section').style.display = isStaffOrCoach ? '' : 'none';
-  document.getElementById('roster-reset-captain-pin-btn').style.display = isStaffOrCoach ? 'inline-block' : 'none';
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
   openModal('roster-modal');
@@ -6054,11 +6053,17 @@ function renderRosterCurrentList() {
   const el = document.getElementById('roster-current-list');
   const role = currentUser?.role;
   const canManageRoster = role === 'admin' || role === 'director' || role === 'coach';
+  const isStaffOrCoach = role === 'admin' || role === 'director' || role === 'coach';
+  const hasCaptain = currentRosterMembers.some(m => m.is_captain);
+  document.getElementById('roster-reset-captain-pin-btn').style.display = (isStaffOrCoach && hasCaptain) ? 'inline-block' : 'none';
   if (!currentRosterMembers.length) {
     el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players on this roster yet</div></div>';
     return;
   }
   const unverifiedCount = currentRosterMembers.filter(m => m.status === 'unverified').length;
+  const captainHint = hasCaptain
+    ? 'One captain at a time — making someone captain automatically removes it from anyone else. Captaincy can be changed anytime during the season.'
+    : "Captain is optional — no one's currently assigned, so the coach manages lineups, subs, and availability for this team until someone is made captain.";
   el.innerHTML = `${unverifiedCount ? `<div class="alert alert-warn">${unverifiedCount} unverified — carried over from a prior season, not yet confirmed for this one. Confirm each as you hear back, or release anyone who isn't continuing.</div>` : ''}
   <table class="data-table"><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Captain</th><th></th><th></th></tr></thead><tbody>
   ${currentRosterMembers.map(m=>`<tr>
@@ -6072,7 +6077,7 @@ function renderRosterCurrentList() {
     <td>${canManageRoster ? `<button class="btn btn-sm btn-ghost" onclick="removeFromRoster('${m.id}')">Remove</button>` : ''}</td>
   </tr>`).join('')}
   </tbody></table>
-  <div class="form-hint" style="margin-top:10px">One captain at a time — making someone captain automatically removes it from anyone else. Captaincy can be changed anytime during the season.</div>`;
+  <div class="form-hint" style="margin-top:10px">${captainHint}</div>`;
 }
 
 async function resetPlayerPin(playerId, name) {
@@ -6158,16 +6163,23 @@ async function submitCarryover() {
   refreshRosterCountBadge();
 }
 
+// Captain is optional — a team can run with no captain at all, coach handles
+// everything in that case. The captain PIN is cleared whenever the flag
+// moves or is removed, so a former captain's old PIN can never keep working
+// after they're no longer the one holding the role.
 async function setCaptain(rosterRowId) {
   await sb.from('league_team_players').update({is_captain:false}).eq('team_id',currentRosterTeamId);
   await sb.from('league_team_players').update({is_captain:true}).eq('id',rosterRowId);
+  await sb.from('league_teams').update({captain_pin_hash:null}).eq('id',currentRosterTeamId);
   await loadRosterMembers();
-  toast('Captain updated','success');
+  toast('Captain updated — set a Captain PIN for them when ready','success');
 }
 
 async function clearCaptain(rosterRowId) {
   await sb.from('league_team_players').update({is_captain:false}).eq('id',rosterRowId);
+  await sb.from('league_teams').update({captain_pin_hash:null}).eq('id',currentRosterTeamId);
   await loadRosterMembers();
+  toast('Captain removed — coach manages lineups and subs until a new one is set','success');
 }
 
 async function populateRosterAddPlayerSelect() {
