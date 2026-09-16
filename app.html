@@ -7106,11 +7106,17 @@ function closeMatch() {
 
 // Roster players (if any are on file for this team) are listed first so the
 // common case needs no searching; every active player stays reachable below
-// for subs, who by definition aren't on the roster.
-function playerOptionsHtml(selectedId, roster) {
+// for subs, who by definition aren't on the roster. usedElsewhere flags
+// players already picked for this same side on a DIFFERENT court in this
+// match — a real double-booking that's easy to miss filling courts in fast.
+function playerOptionsHtml(selectedId, roster, usedElsewhere) {
   const rosterIds = new Set((roster||[]).map(p=>p.id));
   const others = matchAllPlayers.filter(p=>!rosterIds.has(p.id));
-  const opt = p => `<option value="${p.id}" ${p.id===selectedId?'selected':''}>${escQ(p.roster_name)}</option>`;
+  const used = usedElsewhere || new Set();
+  const opt = p => {
+    const isDup = used.has(p.id);
+    return `<option value="${p.id}" ${p.id===selectedId?'selected':''}${isDup?' style="color:#C0392B;font-weight:700"':''}>${isDup?'⚠ ':''}${escQ(p.roster_name)}</option>`;
+  };
   let html = '<option value="">Select player…</option>';
   if (roster && roster.length) {
     html += roster.map(opt).join('');
@@ -7121,13 +7127,30 @@ function playerOptionsHtml(selectedId, roster) {
   return html;
 }
 
+// Which players are already selected for this side on a different court in
+// this same match (excludeCourt), so the picker can flag a double-booking.
+function duplicatePlayerIdsForSide(excludeCourt, side) {
+  const n = courtsForFormat();
+  const used = new Set();
+  for (let c = 1; c <= n; c++) {
+    if (c === excludeCourt) continue;
+    const d = courtDrafts[c];
+    if (!d) continue;
+    const ids = side === 'a' ? [d.teamAP1, d.teamAP2] : [d.teamBP1, d.teamBP2];
+    ids.filter(Boolean).forEach(id => used.add(id));
+  }
+  return used;
+}
+
 function renderMatchScreen() {
   const n = courtsForFormat();
   const isDoubles = currentLeague.format==='DOUBLES';
   const list = document.getElementById('match-courts-list');
+  // Every court's draft must exist before any court renders, so duplicate-
+  // player detection can see selections on courts not yet reached below.
+  for (let c=1; c<=n; c++) initCourtDraft(c);
   let html = '';
   for (let c=1; c<=n; c++) {
-    initCourtDraft(c);
     const atTeamA = (currentMatch.site_a_courts||[]).includes(c);
     const siteLabel = atTeamA
       ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
@@ -7139,8 +7162,8 @@ function renderMatchScreen() {
         <div class="form-row">
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)}</div>
-            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA)}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA)}</select>`:''}
+            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA, duplicatePlayerIdsForSide(c,'a'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA, duplicatePlayerIdsForSide(c,'a'))}</select>`:''}
             <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
               <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
@@ -7149,8 +7172,8 @@ function renderMatchScreen() {
           </div>
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)}</div>
-            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB)}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB)}</select>`:''}
+            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB, duplicatePlayerIdsForSide(c,'b'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB, duplicatePlayerIdsForSide(c,'b'))}</select>`:''}
             <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
               <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
@@ -7186,10 +7209,19 @@ function initCourtDraft(c) {
   };
 }
 
+const PLAYER_DRAFT_FIELDS = ['teamAP1','teamAP2','teamBP1','teamBP2'];
+
 function updateDraftField(c, field, value) {
+  if (PLAYER_DRAFT_FIELDS.includes(field) && value) {
+    const side = field.startsWith('teamA') ? 'a' : 'b';
+    if (duplicatePlayerIdsForSide(c, side).has(value)) {
+      alert('This player is playing on another court, do you need her as an emergency sub?');
+    }
+  }
   courtDrafts[c][field] = value;
   updateCourtWinnerDisplay(c);
   renderMatchSummary();
+  if (PLAYER_DRAFT_FIELDS.includes(field)) refreshCourtPlayerOptions();
 }
 
 function renderSetRows(c) {
@@ -7426,9 +7458,10 @@ function refreshCourtPlayerOptions() {
     slots.forEach(key=>{
       const sel = document.getElementById(`court-${c}-${key}`);
       if (!sel) return;
-      const roster = key[0]==='a' ? matchRosterA : matchRosterB;
+      const side = key[0];
+      const roster = side==='a' ? matchRosterA : matchRosterB;
       const current = sel.value;
-      sel.innerHTML = playerOptionsHtml(current, roster);
+      sel.innerHTML = playerOptionsHtml(current, roster, duplicatePlayerIdsForSide(c, side));
     });
   }
 }
