@@ -124,6 +124,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   font-weight: 500;
 }
 .header-btn:hover { background: rgba(255,255,255,.22); }
+.header-icon-btn {
+  background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2);
+  color: white; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px;
+  font-size: 16px; cursor: pointer; transition: background .15s;
+  display: inline-flex; align-items: center; justify-content: center; position: relative;
+}
+.header-icon-btn:hover { background: rgba(255,255,255,.22); }
+.header-btn-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .message-badge {
   display: none; position: absolute; top: -5px; right: -5px; background: var(--clay);
   color: #fff; border-radius: 50%; min-width: 16px; height: 16px; font-size: 10px;
@@ -541,9 +549,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub">Admin Panel</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
-      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
+    <div class="header-btn-row">
+      <button class="header-icon-btn" onclick="openRulesModal()" title="Rules of Play">📋</button>
+      <button class="header-icon-btn" onclick="openMessagesModal()" title="Messages">✉️<span class="message-badge">0</span></button>
       <button class="header-btn" onclick="logout()">Sign Out</button>
     </div>
   </header>
@@ -704,10 +712,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub" id="league-detail-sub">—</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
-      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
-      <button class="header-btn" id="league-change-pin-btn" onclick="openChangePinModal()" style="display:none">Change My PIN</button>
+    <div class="header-btn-row">
+      <button class="header-icon-btn" onclick="openRulesModal()" title="Rules of Play">📋</button>
+      <button class="header-icon-btn" onclick="openMessagesModal()" title="Messages">✉️<span class="message-badge">0</span></button>
+      <button class="header-icon-btn" id="league-change-pin-btn" onclick="openChangePinModal()" title="Change My PIN" style="display:none">🔑</button>
       <button class="header-btn" id="league-detail-action-btn" onclick="openTeamModalNew()">+ Add Team</button>
     </div>
   </header>
@@ -773,10 +781,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub">Player</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
-      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
-      <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
+    <div class="header-btn-row">
+      <button class="header-icon-btn" onclick="openRulesModal()" title="Rules of Play">📋</button>
+      <button class="header-icon-btn" onclick="openMessagesModal()" title="Messages">✉️<span class="message-badge">0</span></button>
+      <button class="header-icon-btn" onclick="openChangePinModal()" title="Change My PIN">🔑</button>
       <button class="header-btn" onclick="logout()">Sign Out</button>
     </div>
   </header>
@@ -835,6 +843,22 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <button class="btn btn-ghost" id="msg-footer-back" onclick="backToInbox()" style="display:none">← Back</button>
       <button class="btn btn-ghost" onclick="closeModal('messages-modal')">Close</button>
       <button class="btn btn-primary" id="msg-footer-send" onclick="submitComposedMessage()" style="display:none">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN PIN CONFIRM MODAL (gates destructive actions like Delete League) -->
+<div class="modal-overlay" id="admin-pin-confirm-modal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header"><div class="modal-title">Admin PIN Required</div><button class="modal-close" onclick="closeAdminPinConfirm()">×</button></div>
+    <div class="modal-body">
+      <div id="admin-pin-confirm-desc" style="margin-bottom:14px;font-size:14px;color:var(--muted)"></div>
+      <div class="form-group"><label class="form-label">Admin PIN</label><input class="form-input" id="admin-pin-confirm-input" type="password" maxlength="6" autocomplete="off"></div>
+      <div id="admin-pin-confirm-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAdminPinConfirm()">Cancel</button>
+      <button class="btn btn-danger" onclick="submitAdminPinConfirm()">Confirm</button>
     </div>
   </div>
 </div>
@@ -907,10 +931,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="app-header-sub" id="dir-name">Director</div>
       </div>
     </div>
-    <div style="display:flex;gap:8px">
-      <button class="header-btn" onclick="openRulesModal()">Rules of Play</button>
-      <button class="header-btn" style="position:relative" onclick="openMessagesModal()">✉️<span class="message-badge">0</span></button>
-      <button class="header-btn" onclick="openChangePinModal()">Change My PIN</button>
+    <div class="header-btn-row">
+      <button class="header-icon-btn" onclick="openRulesModal()" title="Rules of Play">📋</button>
+      <button class="header-icon-btn" onclick="openMessagesModal()" title="Messages">✉️<span class="message-badge">0</span></button>
+      <button class="header-icon-btn" onclick="openChangePinModal()" title="Change My PIN">🔑</button>
       <button class="header-btn" onclick="logout()">Sign Out</button>
     </div>
   </header>
@@ -2303,7 +2327,7 @@ async function initMessageBadge() {
 function updateMessageBadge() {
   const unread = messagesCache.filter(r => !r.read_at).length;
   document.querySelectorAll('.message-badge').forEach(b => {
-    b.textContent = unread > 9 ? '9+' : String(unread);
+    b.textContent = '!';
     b.style.display = unread ? 'inline-flex' : 'none';
   });
 }
@@ -5648,6 +5672,35 @@ function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')}));
 
+let pendingAdminPinAction = null;
+function requireAdminPinFor(description, action) {
+  pendingAdminPinAction = action;
+  document.getElementById('admin-pin-confirm-desc').textContent = description;
+  document.getElementById('admin-pin-confirm-input').value = '';
+  document.getElementById('admin-pin-confirm-error').style.display = 'none';
+  openModal('admin-pin-confirm-modal');
+}
+function closeAdminPinConfirm() {
+  pendingAdminPinAction = null;
+  closeModal('admin-pin-confirm-modal');
+}
+async function submitAdminPinConfirm() {
+  const pin = document.getElementById('admin-pin-confirm-input').value.trim();
+  const errEl = document.getElementById('admin-pin-confirm-error');
+  if (!pin) { errEl.textContent = 'Enter the admin PIN'; errEl.style.display = 'block'; return; }
+  const hash = await hashPin(pin);
+  const { data } = await sb.from('admin_config').select('pin_hash').maybeSingle();
+  if (!data || data.pin_hash !== hash) {
+    errEl.textContent = 'Incorrect admin PIN';
+    errEl.style.display = 'block';
+    return;
+  }
+  const action = pendingAdminPinAction;
+  pendingAdminPinAction = null;
+  closeModal('admin-pin-confirm-modal');
+  if (action) await action();
+}
+
 // ══════════════════════════════════════════════
 // ADMIN DATA
 // ══════════════════════════════════════════════
@@ -5853,10 +5906,11 @@ async function saveLeague() {
 }
 
 async function deleteLeague(id, name) {
-  if(!confirm(`Permanently delete "${name}"? This also deletes all its teams.`)) return;
-  await sb.from('leagues').delete().eq('id',id);
-  toast(`"${name}" deleted`,'success');
-  closeLeague();
+  requireAdminPinFor(`Permanently delete "${name}"? This also deletes all its teams.`, async () => {
+    await sb.from('leagues').delete().eq('id',id);
+    toast(`"${name}" deleted`,'success');
+    closeLeague();
+  });
 }
 
 function openLeagueById(id) {
