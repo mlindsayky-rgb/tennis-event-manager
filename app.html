@@ -7142,6 +7142,18 @@ function duplicatePlayerIdsForSide(excludeCourt, side) {
   return used;
 }
 
+// Full "used elsewhere" set for one specific picker: cross-court duplicates
+// (same side, a different court) PLUS whoever's already in the OTHER slot
+// of this same court's doubles pair — a player can't partner themselves.
+function usedPlayerIdsForSlot(c, field) {
+  const side = field.startsWith('teamA') ? 'a' : 'b';
+  const used = duplicatePlayerIdsForSide(c, side);
+  const partnerField = field.endsWith('P1') ? field.replace('P1','P2') : field.replace('P2','P1');
+  const partnerVal = courtDrafts[c] && courtDrafts[c][partnerField];
+  if (partnerVal) used.add(partnerVal);
+  return used;
+}
+
 function renderMatchScreen() {
   const n = courtsForFormat();
   const isDoubles = currentLeague.format==='DOUBLES';
@@ -7162,8 +7174,8 @@ function renderMatchScreen() {
         <div class="form-row">
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)}</div>
-            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA, duplicatePlayerIdsForSide(c,'a'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA, duplicatePlayerIdsForSide(c,'a'))}</select>`:''}
+            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA, usedPlayerIdsForSlot(c,'teamAP1'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA, usedPlayerIdsForSlot(c,'teamAP2'))}</select>`:''}
             <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
               <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
@@ -7172,8 +7184,8 @@ function renderMatchScreen() {
           </div>
           <div>
             <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)}</div>
-            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB, duplicatePlayerIdsForSide(c,'b'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB, duplicatePlayerIdsForSide(c,'b'))}</select>`:''}
+            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB, usedPlayerIdsForSlot(c,'teamBP1'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB, usedPlayerIdsForSlot(c,'teamBP2'))}</select>`:''}
             <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
               <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
@@ -7214,6 +7226,22 @@ const PLAYER_DRAFT_FIELDS = ['teamAP1','teamAP2','teamBP1','teamBP2'];
 function updateDraftField(c, field, value) {
   if (PLAYER_DRAFT_FIELDS.includes(field) && value) {
     const side = field.startsWith('teamA') ? 'a' : 'b';
+
+    // A player can't be their own doubles partner — this is never valid, so
+    // block it outright rather than just warning, and revert the picker.
+    const partnerField = field.endsWith('P1') ? field.replace('P1','P2') : field.replace('P2','P1');
+    if (courtDrafts[c][partnerField] === value) {
+      alert("A player can't be their own doubles partner — pick someone else for this court.");
+      const key = side + '-' + (field.endsWith('P1') ? 'p1' : 'p2');
+      const sel = document.getElementById(`court-${c}-${key}`);
+      if (sel) sel.value = '';
+      courtDrafts[c][field] = '';
+      updateCourtWinnerDisplay(c);
+      renderMatchSummary();
+      refreshCourtPlayerOptions();
+      return;
+    }
+
     if (duplicatePlayerIdsForSide(c, side).has(value)) {
       alert('This player is playing on another court, do you need her as an emergency sub?');
     }
@@ -7450,6 +7478,8 @@ function updateEffectiveRostersWithSubs() {
   matchRosterB = dedupe([...matchRosterBBase, ...claimedFor(currentMatchTeamB.id)]);
 }
 
+const SLOT_KEY_TO_FIELD = {'a-p1':'teamAP1','a-p2':'teamAP2','b-p1':'teamBP1','b-p2':'teamBP2'};
+
 function refreshCourtPlayerOptions() {
   const n = courtsForFormat();
   const isDoubles = currentLeague.format==='DOUBLES';
@@ -7461,7 +7491,7 @@ function refreshCourtPlayerOptions() {
       const side = key[0];
       const roster = side==='a' ? matchRosterA : matchRosterB;
       const current = sel.value;
-      sel.innerHTML = playerOptionsHtml(current, roster, duplicatePlayerIdsForSide(c, side));
+      sel.innerHTML = playerOptionsHtml(current, roster, usedPlayerIdsForSlot(c, SLOT_KEY_TO_FIELD[key]));
     });
   }
 }
