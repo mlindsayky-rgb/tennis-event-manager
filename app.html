@@ -5049,7 +5049,7 @@ async function handleImportFile(input) {
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data, {type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+    const rows = parseSheetWithSmartHeader(ws);
 
     if(!rows.length) {
       document.getElementById('import-modal-body').innerHTML =
@@ -6319,6 +6319,35 @@ function refreshRosterCountBadge() {
   renderLeagueTeams();
 }
 
+// Some exported rosters carry a few title/metadata rows (e.g. "Match Time",
+// "Location", a blank spacer) above the real header row rather than starting
+// with it — scan for the row that actually looks like a header instead of
+// always assuming row 1, so those sheets import their real data instead of
+// silently producing zero usable rows.
+function findHeaderRowIndex(rawRows) {
+  const nameKeywords = ['first name','firstname','first','last name','lastname','last','name','full name','fullname','player name','player','roster name'];
+  const scanLimit = Math.min(rawRows.length, 15);
+  for (let i = 0; i < scanLimit; i++) {
+    const cells = (rawRows[i] || []).map(c => String(c ?? '').trim().toLowerCase());
+    if (cells.some(c => nameKeywords.includes(c))) return i;
+  }
+  return 0;
+}
+
+function parseSheetWithSmartHeader(ws) {
+  const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  if (!raw.length) return [];
+  const headerIdx = findHeaderRowIndex(raw);
+  const headers = raw[headerIdx].map(h => String(h ?? '').trim());
+  return raw.slice(headerIdx + 1)
+    .filter(row => row.some(c => String(c ?? '').trim() !== ''))
+    .map(row => {
+      const obj = {};
+      headers.forEach((h, i) => { if (h) obj[h] = row[i] ?? ''; });
+      return obj;
+    });
+}
+
 async function handleRosterFile(input) {
   const file = input.files[0];
   if (!file) return;
@@ -6330,7 +6359,7 @@ async function handleRosterFile(input) {
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data, {type:'array'});
     const ws = wb.Sheets[wb.SheetNames[0]];
-    rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+    rows = parseSheetWithSmartHeader(ws);
   } catch (e) {
     previewEl.innerHTML = '<div class="alert alert-error">Could not read that file. Please upload a .xlsx or .csv.</div>';
     return;
@@ -8576,7 +8605,7 @@ document.getElementById('xlsx-file-input').addEventListener('change', async func
     try {
       const wb = XLSX.read(evt.target.result, {type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
+      const rows = parseSheetWithSmartHeader(sheet);
       if(!rows.length) throw new Error('No rows found in spreadsheet');
 
       // Detect columns
