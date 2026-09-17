@@ -7460,15 +7460,27 @@ async function saveCourtResult(c) {
 // ══════════════════════════════════════════════
 
 // ── League-level pool management (Subs tab) ──
+// Only players rostered on a team within THIS league can be offered as a
+// sub here — borrowing is meant to stay inside one active league together,
+// not pull in someone unrelated from across the whole player directory.
 async function loadSubPool() {
   const el = document.getElementById('sub-pool-list');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
-  const [{data:players}, {data:pool}] = await Promise.all([
-    sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name'),
+  const { data: teams } = await sb.from('league_teams').select('id').eq('league_id', currentLeague.id);
+  const teamIds = (teams || []).map(t => t.id);
+  const [{ data: rosterRows }, { data: pool }] = await Promise.all([
+    teamIds.length
+      ? sb.from('league_team_players').select('player_id,players(id,roster_name,is_active)').in('team_id', teamIds)
+      : Promise.resolve({ data: [] }),
     sb.from('league_sub_pool').select('*,players(roster_name),league_teams(name)').eq('league_id',currentLeague.id).order('week_number')
   ]);
+  const seen = new Set();
+  const players = (rosterRows || [])
+    .map(r => r.players)
+    .filter(p => p && p.is_active && !seen.has(p.id) && seen.add(p.id))
+    .sort((a, b) => a.roster_name.localeCompare(b.roster_name));
   const sel = document.getElementById('sub-pool-add-player');
-  sel.innerHTML = '<option value="">Select player…</option>' + (players||[]).map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
+  sel.innerHTML = '<option value="">Select player…</option>' + players.map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
   renderSubPoolList(pool||[]);
 }
 
