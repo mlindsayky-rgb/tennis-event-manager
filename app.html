@@ -5833,7 +5833,7 @@ function openNewLeagueModal() {
   ['league-name','league-start-date','league-end-date','league-team-count'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('league-format').value='SINGLES';
   document.getElementById('league-session-length').value='5';
-  document.getElementById('league-alternate-practice-weeks').checked=false;
+  document.getElementById('league-alternate-practice-weeks').checked=true;
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
   openModal('league-modal');
