@@ -1109,6 +1109,13 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
       </div>
       <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="2" max="16" placeholder="e.g. 4"><div class="form-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="league-alternate-practice-weeks">
+          <span class="form-label" style="margin:0">Alternate practice &amp; match weeks</span>
+        </label>
+        <div class="form-hint">Week 1 is practice, week 2 is a match, and so on — practice weeks don't get a match or lineup, teams just meet at their own locked time and location.</div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date"></div>
         <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"></div>
@@ -5826,6 +5833,7 @@ function openNewLeagueModal() {
   ['league-name','league-start-date','league-end-date','league-team-count'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('league-format').value='SINGLES';
   document.getElementById('league-session-length').value='5';
+  document.getElementById('league-alternate-practice-weeks').checked=false;
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
   openModal('league-modal');
@@ -5844,6 +5852,7 @@ async function editLeague(id) {
   document.getElementById('league-team-count').value=l.team_count;
   document.getElementById('league-start-date').value=l.start_date;
   document.getElementById('league-end-date').value=l.end_date;
+  document.getElementById('league-alternate-practice-weeks').checked=!!l.alternate_practice_weeks;
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
   openModal('league-modal');
@@ -5887,9 +5896,11 @@ async function saveLeague() {
   if(!startDate||!endDate){errEl.textContent='Start and end dates are required.';errEl.style.display='flex';return;}
   if(endDate<startDate){errEl.textContent='End date must be after start date.';errEl.style.display='flex';return;}
 
+  const alternatePracticeWeeks = document.getElementById('league-alternate-practice-weeks').checked;
   const payload = {
     name, format, session_length_weeks: sessionLength, team_count: teamCount,
-    start_date: startDate, end_date: endDate, dates_off: leagueDatesOffDraft
+    start_date: startDate, end_date: endDate, dates_off: leagueDatesOffDraft,
+    alternate_practice_weeks: alternatePracticeWeeks
   };
   const btn = document.getElementById('save-league-btn');
   btn.disabled=true;
@@ -5993,6 +6004,7 @@ function renderLeagueSettings() {
         <tr><td style="font-weight:600">Start Date</td><td>${fmtDate(l.start_date)}</td></tr>
         <tr><td style="font-weight:600">End Date</td><td>${fmtDate(l.end_date)}</td></tr>
         <tr><td style="font-weight:600">Dates Off</td><td>${(l.dates_off||[]).length?l.dates_off.map(d=>fmtDate(d)).join(', '):'None'}</td></tr>
+        <tr><td style="font-weight:600">Schedule Pattern</td><td>${l.alternate_practice_weeks?'Alternating practice &amp; match weeks':'Match every week'}</td></tr>
       </tbody>
     </table>
     <div style="display:flex;gap:10px;margin-top:20px">
@@ -6771,18 +6783,35 @@ async function computeUpNext(teamId) {
     sb.from('league_matches').select('*').eq('team_a_id', teamId).gte('site_a_date', today),
     sb.from('league_matches').select('*').eq('team_b_id', teamId).gte('site_b_date', today),
   ]);
-  const upcoming = [
-    ...(asA || []).map(m => ({ match: m, date: m.site_a_date, oppId: m.team_b_id })),
-    ...(asB || []).map(m => ({ match: m, date: m.site_b_date, oppId: m.team_a_id })),
-  ].sort((a, b) => a.date.localeCompare(b.date));
+  const candidates = [
+    ...(asA || []).map(m => ({ type: 'match', date: m.site_a_date, oppId: m.team_b_id })),
+    ...(asB || []).map(m => ({ type: 'match', date: m.site_b_date, oppId: m.team_a_id })),
+  ];
 
-  if (upcoming.length) {
-    const next = upcoming[0];
-    const { data: opp } = await sb.from('league_teams').select('name').eq('id', next.oppId).maybeSingle();
-    return {
-      type: 'match', date: next.date, time: team.time_slot_time, club: team.clubs?.name || '—',
-      opponent: opp?.name || '—',
-    };
+  // Alternating leagues have no match row for a practice week, so without this
+  // a practice week would get skipped straight to next week's match. Give each
+  // upcoming practice week its own candidate date and let soonest-date win.
+  if (league.alternate_practice_weeks && team.time_slot_day != null) {
+    seasonWeekDates(league)
+      .filter(w => !isMatchWeek(league, w.weekNumber))
+      .forEach(w => {
+        const date = toISODate(dateForTeamInWeek(w.weekStart, team.time_slot_day));
+        if (date >= today) candidates.push({ type: 'practice', date });
+      });
+  }
+
+  candidates.sort((a, b) => a.date.localeCompare(b.date));
+
+  if (candidates.length) {
+    const next = candidates[0];
+    if (next.type === 'match') {
+      const { data: opp } = await sb.from('league_teams').select('name').eq('id', next.oppId).maybeSingle();
+      return {
+        type: 'match', date: next.date, time: team.time_slot_time, club: team.clubs?.name || '—',
+        opponent: opp?.name || '—',
+      };
+    }
+    return { type: 'practice', date: next.date, time: team.time_slot_time, club: team.clubs?.name || '—' };
   }
 
   if (today <= league.end_date && team.time_slot_day != null && team.time_slot_time) {
@@ -6834,6 +6863,12 @@ function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
 // always within the same 7-day window, so it lands at a fixed weekly cadence.
 function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+// When a league alternates practice and match weeks, week 1 is practice,
+// week 2 is a match, and so on — odd weeks never get a league_matches row.
+function isMatchWeek(league, weekNumber) {
+  return !league.alternate_practice_weeks || weekNumber % 2 === 0;
 }
 
 function seasonWeekDates(league) {
@@ -6904,14 +6939,14 @@ async function generateFullSchedule() {
   const n = courtsForFormat();
   const rounds = generateRoundRobinPairs(teams.map(t=>t.id));
   const cycleLen = rounds.length;
-  const weeks = seasonWeekDates(currentLeague);
+  const matchWeeks = seasonWeekDates(currentLeague).filter(w => isMatchWeek(currentLeague, w.weekNumber));
   const datesOff = currentLeague.dates_off || [];
   const meetingCounts = {};
   const newMatches = [];
   let conflictCount = 0;
 
-  weeks.forEach(({weekNumber, weekStart})=>{
-    const pairs = rounds[(weekNumber-1) % cycleLen];
+  matchWeeks.forEach(({weekNumber, weekStart}, matchIndex)=>{
+    const pairs = rounds[matchIndex % cycleLen];
     pairs.forEach(([teamAId, teamBId])=>{
       const teamA = teamsById[teamAId], teamB = teamsById[teamBId];
       const key = [teamAId,teamBId].sort().join('|');
@@ -6933,7 +6968,9 @@ async function generateFullSchedule() {
   if (!newMatches.length) { toast('Nothing to generate','error'); return; }
   const {error} = await sb.from('league_matches').insert(newMatches);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast(`Generated ${newMatches.length} matches across ${currentLeague.session_length_weeks} weeks!`,'success');
+  toast(currentLeague.alternate_practice_weeks
+    ? `Generated ${newMatches.length} matches across ${matchWeeks.length} match weeks (of ${currentLeague.session_length_weeks} total, alternating with practice)!`
+    : `Generated ${newMatches.length} matches across ${currentLeague.session_length_weeks} weeks!`, 'success');
   if (conflictCount) toast(`${conflictCount} match(es) fall on a scheduled day off — flagged in the list, review and adjust manually`,'default');
   loadLeagueMatches();
 }
@@ -6963,7 +7000,7 @@ function renderLeagueMatches(matches, teams, resultCounts) {
   const n = courtsForFormat();
   const datesOff = currentLeague.dates_off || [];
   const teamName = id => teams.find(t=>t.id===id)?.name || '—';
-  el.innerHTML = matches.map(m=>{
+  const matchCard = m => {
     const entered = resultCounts[m.id]||0;
     const complete = entered>=n;
     const onDayOff = datesOff.includes(m.site_a_date) || datesOff.includes(m.site_b_date);
@@ -6981,7 +7018,32 @@ function renderLeagueMatches(matches, teams, resultCounts) {
         </div>
       </div>
     </div>`;
-  }).join('');
+  };
+
+  if (!currentLeague.alternate_practice_weeks) {
+    el.innerHTML = matches.map(matchCard).join('');
+    return;
+  }
+
+  // Alternating leagues interleave a non-clickable "Practice Week" divider
+  // for every week that isn't a match week, so the season reads top-to-bottom.
+  const practiceCard = weekNumber => `<div class="event-card" style="cursor:default">
+      <div class="event-card-accent" style="background:var(--ink-muted)"></div>
+      <div class="event-card-body">
+        <div>
+          <div class="event-card-name">🏃 Practice Week</div>
+          <div class="event-card-meta"><span>Week ${weekNumber}</span><span>Teams meet at their own locked time &amp; location — no lineup needed</span></div>
+        </div>
+      </div>
+    </div>`;
+  const matchesByWeek = {};
+  matches.forEach(m => { (matchesByWeek[m.week_number] = matchesByWeek[m.week_number]||[]).push(m); });
+  const pieces = [];
+  for (let w=1; w<=currentLeague.session_length_weeks; w++) {
+    if (matchesByWeek[w]) matchesByWeek[w].forEach(m => pieces.push(matchCard(m)));
+    else if (!isMatchWeek(currentLeague, w)) pieces.push(practiceCard(w));
+  }
+  el.innerHTML = pieces.join('');
 }
 
 async function openNewMatchModal() {
