@@ -739,6 +739,23 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div id="ltab-subs" style="display:none">
       <div class="section-header">
+        <div><div class="section-title" style="font-size:16px">Interested Subs</div><div class="section-sub">People not on any team roster who want to be considered as a sub for this league — not the full player directory</div></div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-body">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="interested-sub-name" placeholder="Full name"></div>
+            <div class="form-group"><label class="form-label">Gender</label>
+              <select class="form-select" id="interested-sub-gender"><option value="">Select…</option><option value="MALE">Male</option><option value="FEMALE">Female</option></select>
+            </div>
+            <div class="form-group"><label class="form-label">Phone (optional)</label><input class="form-input" id="interested-sub-phone" placeholder="555-123-4567"></div>
+          </div>
+          <button class="btn btn-primary" onclick="addInterestedSub()">+ Add Interested Sub</button>
+        </div>
+      </div>
+      <div id="interested-subs-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+
+      <div class="section-header" style="margin-top:28px">
         <div><div class="section-title" style="font-size:16px">Sub Pool</div><div class="section-sub">Players available to borrow across teams, by week — a team's own extra roster players don't need to be added here</div></div>
       </div>
       <div class="card" style="margin-bottom:20px">
@@ -5987,7 +6004,7 @@ function leagueDetailTab(name, btn) {
   else if(name==='matches') { actionBtn.style.display=isStaff?'inline-block':'none'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
   else { actionBtn.style.display='none'; }
   if(name==='matches') { loadLeagueMatches(); document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none'; }
-  if(name==='subs') loadSubPool();
+  if(name==='subs') { loadInterestedSubs(); loadSubPool(); }
   if(name==='standings') { loadStandings(); loadRankingSettings(); }
   if(name==='settings') renderLeagueSettings();
 }
@@ -7521,32 +7538,100 @@ async function saveCourtResult(c) {
 // else. This pool is specifically for "we're short and need to borrow."
 // ══════════════════════════════════════════════
 
+// ── Interested Subs (Subs tab) ──
+// People who want to sub for THIS league but aren't on any of its rosters —
+// a short, curated list, not the whole player directory. Entering a name
+// either reuses an existing players row (confirmed on an exact match) or
+// creates a new one, then flags it for this league via league_interested_subs.
+async function loadInterestedSubs() {
+  const el = document.getElementById('interested-subs-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const { data } = await sb.from('league_interested_subs').select('*,players(roster_name,phone)').eq('league_id', currentLeague.id);
+  renderInterestedSubsList(data||[]);
+}
+
+function renderInterestedSubsList(rows) {
+  const el = document.getElementById('interested-subs-list');
+  if (!rows.length) {
+    el.innerHTML = '<div class="card"><div class="empty-state"><div class="empty-icon">🙋</div><div class="empty-title">No interested subs yet</div><div class="empty-sub">Add someone above who wants to sub for this league but isn\'t on a team</div></div></div>';
+    return;
+  }
+  el.innerHTML = `<div class="card"><div class="card-body">
+    <table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th></th></tr></thead><tbody>
+    ${rows.map(r=>`<tr>
+      <td>${escQ(r.players?.roster_name||'—')} <span class="badge badge-blue" style="margin-left:6px">Interested</span></td>
+      <td>${escQ(r.players?.phone||'—')}</td>
+      <td><button class="btn btn-sm btn-ghost" onclick="removeInterestedSub('${r.id}')">Remove</button></td>
+    </tr>`).join('')}
+    </tbody></table>
+  </div></div>`;
+}
+
+async function addInterestedSub() {
+  const name = document.getElementById('interested-sub-name').value.trim();
+  const gender = document.getElementById('interested-sub-gender').value;
+  const phone = document.getElementById('interested-sub-phone').value.trim() || null;
+  if (!name) { toast('Enter a name','error'); return; }
+  if (!gender) { toast('Select a gender','error'); return; }
+
+  let playerId = null;
+  const { data: existing } = await sb.from('players').select('id,roster_name,phone').ilike('roster_name', name).maybeSingle();
+  if (existing) {
+    const useExisting = confirm(`A player named "${existing.roster_name}" already exists — use that record?\n\nOK = use existing · Cancel = add as a separate new person`);
+    if (useExisting) {
+      playerId = existing.id;
+      if (phone && !existing.phone) await sb.from('players').update({ phone }).eq('id', existing.id);
+    }
+  }
+  if (!playerId) {
+    const { data: created, error } = await sb.from('players').insert({ roster_name: name, gender, player_type: 'AD', phone }).select().single();
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    playerId = created.id;
+  }
+
+  const { error: linkErr } = await sb.from('league_interested_subs').insert({ league_id: currentLeague.id, player_id: playerId });
+  if (linkErr) { toast(/duplicate/i.test(linkErr.message) ? `${name} is already marked interested for this league` : 'Error: '+linkErr.message,'error'); return; }
+
+  toast(`${name} added as an interested sub`,'success');
+  document.getElementById('interested-sub-name').value='';
+  document.getElementById('interested-sub-gender').value='';
+  document.getElementById('interested-sub-phone').value='';
+  loadInterestedSubs();
+  loadSubPool();
+}
+
+async function removeInterestedSub(id) {
+  await sb.from('league_interested_subs').delete().eq('id', id);
+  loadInterestedSubs();
+  loadSubPool();
+}
+
 // ── League-level pool management (Subs tab) ──
-// Only players rostered on a team within THIS league can be offered as a
-// sub here — borrowing is meant to stay inside one active league together,
-// not pull in someone unrelated from across the whole player directory.
+// Eligible players are either rostered on a team within THIS league, or
+// explicitly flagged as an interested sub for it — never the whole player
+// directory, and never a team from some other league.
 async function loadSubPool() {
   const el = document.getElementById('sub-pool-list');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const { data: teams } = await sb.from('league_teams').select('id').eq('league_id', currentLeague.id);
   const teamIds = (teams || []).map(t => t.id);
-  const [{ data: rosterRows }, { data: pool }] = await Promise.all([
+  const [{ data: rosterRows }, { data: interestedRows }, { data: pool }] = await Promise.all([
     teamIds.length
       ? sb.from('league_team_players').select('player_id,players(id,roster_name,is_active)').in('team_id', teamIds)
       : Promise.resolve({ data: [] }),
+    sb.from('league_interested_subs').select('player_id,players(id,roster_name,is_active)').eq('league_id', currentLeague.id),
     sb.from('league_sub_pool').select('*,players(roster_name),league_teams(name)').eq('league_id',currentLeague.id).order('week_number')
   ]);
-  const seen = new Set();
-  const players = (rosterRows || [])
-    .map(r => r.players)
-    .filter(p => p && p.is_active && !seen.has(p.id) && seen.add(p.id))
-    .sort((a, b) => a.roster_name.localeCompare(b.roster_name));
+  const rosterPlayers = (rosterRows || []).map(r => r.players).filter(p => p && p.is_active);
+  const rosterIds = new Set(rosterPlayers.map(p => p.id));
+  const interestedPlayers = (interestedRows || []).map(r => r.players).filter(p => p && p.is_active && !rosterIds.has(p.id));
+  const players = [...rosterPlayers, ...interestedPlayers].sort((a, b) => a.roster_name.localeCompare(b.roster_name));
   const sel = document.getElementById('sub-pool-add-player');
-  sel.innerHTML = '<option value="">Select player…</option>' + players.map(p=>`<option value="${p.id}">${escQ(p.roster_name)}</option>`).join('');
-  renderSubPoolList(pool||[]);
+  sel.innerHTML = '<option value="">Select player…</option>' + players.map(p=>`<option value="${p.id}">${escQ(p.roster_name)}${rosterIds.has(p.id) ? '' : ' — Interested Sub'}</option>`).join('');
+  renderSubPoolList(pool||[], rosterIds);
 }
 
-function renderSubPoolList(pool) {
+function renderSubPoolList(pool, rosterIds) {
   const el = document.getElementById('sub-pool-list');
   if (!pool.length) {
     el.innerHTML = '<div class="card"><div class="empty-state"><div class="empty-icon">🙋</div><div class="empty-title">No one in the pool yet</div><div class="empty-sub">Add a player above for whichever week they can fill in</div></div></div>';
@@ -7560,7 +7645,7 @@ function renderSubPoolList(pool) {
       <div class="card-body">
         <table class="data-table"><thead><tr><th>Player</th><th>Status</th><th></th></tr></thead><tbody>
         ${byWeek[week].map(p=>`<tr>
-          <td>${escQ(p.players?.roster_name||'—')}</td>
+          <td>${escQ(p.players?.roster_name||'—')} ${rosterIds && !rosterIds.has(p.player_id) ? '<span class="badge badge-blue">Interested</span>' : ''}</td>
           <td>${p.claimed_by_team_id ? `<span class="badge badge-blue">Claimed by ${escQ(p.league_teams?.name||'—')}</span>` : '<span class="badge badge-green">Available</span>'}</td>
           <td><button class="btn btn-sm btn-ghost" onclick="removeSubPoolEntry('${p.id}')">Remove</button></td>
         </tr>`).join('')}
