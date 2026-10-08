@@ -774,10 +774,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="card" style="margin-bottom:24px"><div class="card-body" id="league-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
       <div class="card">
         <div class="card-header">
-          <div><div class="card-title">Player Rankings</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Ranked by average points per match. A win earns points; a loss earns none. Beating a stronger opponent (top or middle third of the league by win rate) earns a bonus, and Court 1/2 wins get a small bump.</div></div>
+          <div><div class="card-title">Player Rankings</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Ranked by win % (ties broken by % of games won). Every active player in the league is listed, even with no matches yet — team doesn't matter, and court number doesn't carry any weight.</div></div>
         </div>
         <div class="card-body">
-          <div id="ranking-settings-body"></div>
+          <div class="form-group" style="max-width:260px"><label class="form-label">Show</label><select class="form-select" id="rankings-team-filter" onchange="renderRankingsBoard()"><option value="">All Teams</option></select></div>
           <div id="rankings-board-body" style="margin-top:16px"></div>
         </div>
       </div>
@@ -6023,7 +6023,7 @@ function leagueDetailTab(name, btn) {
   else { actionBtn.style.display='none'; }
   if(name==='matches') { loadLeagueMatches(); document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none'; }
   if(name==='subs') { loadInterestedSubs(); loadSubPool(); }
-  if(name==='standings') { loadStandings(); loadRankingSettings(); }
+  if(name==='standings') { loadStandings(); loadRankings(); }
   if(name==='settings') renderLeagueSettings();
 }
 
@@ -7967,180 +7967,100 @@ function renderStandings(rows) {
 }
 
 // ══════════════════════════════════════════════
-// RANKING SETTINGS — placeholder point values only.
-// No ranking computation or player-facing board yet; this just gives
-// a place to start deciding numbers, stored in the existing app_settings
-// key/value table (same pattern as auto-lookup/lookup-states settings).
+// PLAYER RANKINGS — derived entirely from court_results, nothing stored.
+// Win-only: no opponent-tier bonus, no court-number weight. A player's rank
+// is win % (wins ÷ matches), ties broken by % of games won across every set
+// they played (own games ÷ total games, regardless of who won that set).
+// Every active player on any team in the league is listed, even with zero
+// matches — they sort to the bottom tied on 0% win rate, then alphabetically.
+// Team doesn't affect scoring at all; it's shown only for the filter below.
 // ══════════════════════════════════════════════
-const RANKING_SETTING_KEYS = ['ranking_base_win','ranking_top_bonus','ranking_mid_bonus','ranking_court12_bump'];
+let lastRankingsData = [];
 
-async function loadRankingSettings() {
-  const {data} = await sb.from('app_settings').select('key,value').in('key',RANKING_SETTING_KEYS);
-  const values = {};
-  (data||[]).forEach(row=>{ values[row.key] = row.value; });
-  renderRankingSettings(values);
-  const rankingsResult = await computeLeagueRankings(values);
-  renderRankingsBoard(rankingsResult);
+async function loadRankings() {
+  lastRankingsData = await computeLeagueRankings();
+  const sel = document.getElementById('rankings-team-filter');
+  sel.innerHTML = '<option value="">All Teams</option>' + currentLeagueTeams.map(t => `<option value="${t.id}">${escQ(t.name)}</option>`).join('');
+  renderRankingsBoard();
 }
 
-function renderRankingSettings(values) {
-  const el = document.getElementById('ranking-settings-body');
-  const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
-  if (!isStaff) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:10px">Point Values</div>
-  <div class="form-row">
-    <div class="form-group"><label class="form-label">Base Win</label><input class="form-input" type="number" step="0.1" id="ranking-base-win" value="${values.ranking_base_win||''}" placeholder="e.g. 1"></div>
-    <div class="form-group"><label class="form-label">Court 1/2 Bump</label><input class="form-input" type="number" step="0.1" id="ranking-court12-bump" value="${values.ranking_court12_bump||''}" placeholder="e.g. 0.5"></div>
-  </div>
-  <div class="form-row">
-    <div class="form-group"><label class="form-label">Top-Third Opponent Bonus</label><input class="form-input" type="number" step="0.1" id="ranking-top-bonus" value="${values.ranking_top_bonus||''}" placeholder="e.g. 2"></div>
-    <div class="form-group"><label class="form-label">Middle-Third Opponent Bonus</label><input class="form-input" type="number" step="0.1" id="ranking-mid-bonus" value="${values.ranking_mid_bonus||''}" placeholder="e.g. 1"></div>
-  </div>
-  <button class="btn btn-primary" onclick="saveRankingSettings()">Save Point Values</button>
-  <div class="form-hint" style="margin-top:10px">Every win earns Base Win points, plus a bonus for beating someone in the league's top or middle third by win rate (doubles uses the opposing pair's combined average), plus the Court 1/2 bump if that's where it happened. Losses always earn zero.</div>
-  <div style="border-top:1px solid var(--border);margin:16px 0"></div>`;
-}
-
-async function saveRankingSettings() {
-  const map = {
-    ranking_base_win: document.getElementById('ranking-base-win').value,
-    ranking_top_bonus: document.getElementById('ranking-top-bonus').value,
-    ranking_mid_bonus: document.getElementById('ranking-mid-bonus').value,
-    ranking_court12_bump: document.getElementById('ranking-court12-bump').value,
-  };
-  await Promise.all(Object.entries(map).map(([key,value])=>sb.from('app_settings').upsert({key,value})));
-  toast('Point values saved','success');
-  loadRankingSettings();
-}
-
-// Player Rankings — derived entirely from court_results, nothing stored.
-// Pass 1 tallies each player's win rate (used only to bucket opponent
-// strength); pass 2 scores every win using that bucket, the court-12 bump,
-// and Base Win, with losses always worth zero (so totals can't go negative).
-// Doubles buckets a pair by the average win rate of its two players.
-async function computeLeagueRankings(values) {
-  const baseWin = parseFloat(values.ranking_base_win) || 0;
-  const topBonus = parseFloat(values.ranking_top_bonus) || 0;
-  const midBonus = parseFloat(values.ranking_mid_bonus) || 0;
-  const courtBump = parseFloat(values.ranking_court12_bump) || 0;
-
+async function computeLeagueRankings() {
   const teamIds = currentLeagueTeams.map(t => t.id);
-  if (!teamIds.length) return { ranked: [], record: [] };
-  const { data: matches } = await sb.from('league_matches').select('id').eq('league_id', currentLeague.id);
+  if (!teamIds.length) return [];
+
+  const [{ data: rosterRows }, { data: matches }] = await Promise.all([
+    sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds),
+    sb.from('league_matches').select('id').eq('league_id', currentLeague.id),
+  ]);
   const matchIds = (matches || []).map(m => m.id);
-  if (!matchIds.length) return { ranked: [], record: [] };
-  const { data: results } = await sb.from('court_results').select('*').in('match_id', matchIds);
+  const { data: results } = matchIds.length ? await sb.from('court_results').select('*').in('match_id', matchIds) : { data: [] };
   const rows = results || [];
 
   function courtSides(cr) {
     const winner = courtWinner({ teamAType: cr.team_a_entry_type, teamBType: cr.team_b_entry_type, sets: cr.sets });
     if (!winner) return null;
+    const { a: aGames, b: bGames } = courtGames({ sets: cr.sets });
     const aIds = [cr.team_a_player1_id, cr.team_a_player2_id].filter(Boolean);
     const bIds = [cr.team_b_player1_id, cr.team_b_player2_id].filter(Boolean);
-    return { winIds: winner === 'A' ? aIds : bIds, loseIds: winner === 'A' ? bIds : aIds };
+    return winner === 'A'
+      ? { winIds: aIds, loseIds: bIds, winGames: aGames, loseGames: bGames }
+      : { winIds: bIds, loseIds: aIds, winGames: bGames, loseGames: aGames };
   }
 
-  // Pass 1: win rate per player, used only to bucket opponent strength
-  const tally = {};
+  // Seed every rostered player at zero, then tally real results on top.
+  const stats = {};
+  const teamOf = {};
+  (rosterRows || []).forEach(r => {
+    if (!(r.player_id in teamOf)) teamOf[r.player_id] = r.team_id;
+    stats[r.player_id] = stats[r.player_id] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+  });
   rows.forEach(cr => {
     const sides = courtSides(cr);
     if (!sides) return;
-    sides.winIds.forEach(pid => { tally[pid] = tally[pid] || { wins: 0, losses: 0 }; tally[pid].wins++; });
-    sides.loseIds.forEach(pid => { tally[pid] = tally[pid] || { wins: 0, losses: 0 }; tally[pid].losses++; });
-  });
-  const winPct = {};
-  Object.keys(tally).forEach(pid => { const t = tally[pid]; const n = t.wins + t.losses; winPct[pid] = n ? t.wins / n : 0; });
-  const sortedPct = Object.values(winPct).sort((a, b) => a - b);
-  const n = sortedPct.length;
-  const bottomCutoff = n ? sortedPct[Math.floor(n / 3)] : 0;
-  const topCutoff = n ? sortedPct[Math.floor((2 * n) / 3)] : 0;
-  const tierFor = pct => pct >= topCutoff ? 'top' : pct <= bottomCutoff ? 'bottom' : 'mid';
-
-  // Pass 2: score every court result
-  const score = {};
-  rows.forEach(cr => {
-    const sides = courtSides(cr);
-    if (!sides) return;
-    const oppPct = sides.loseIds.length ? sides.loseIds.reduce((s, pid) => s + (winPct[pid] || 0), 0) / sides.loseIds.length : 0;
-    const tier = tierFor(oppPct);
-    const tierBonus = tier === 'top' ? topBonus : tier === 'mid' ? midBonus : 0;
-    const courtBonus = (cr.court_number === 1 || cr.court_number === 2) ? courtBump : 0;
-    const winPoints = baseWin + tierBonus + courtBonus;
-    sides.winIds.forEach(pid => { score[pid] = score[pid] || { total: 0, matches: 0 }; score[pid].total += winPoints; score[pid].matches++; });
-    sides.loseIds.forEach(pid => { score[pid] = score[pid] || { total: 0, matches: 0 }; score[pid].matches++; });
+    const total = sides.winGames + sides.loseGames;
+    sides.winIds.forEach(pid => {
+      const s = stats[pid] = stats[pid] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+      s.wins++; s.gamesWon += sides.winGames; s.gamesTotal += total;
+    });
+    sides.loseIds.forEach(pid => {
+      const s = stats[pid] = stats[pid] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+      s.losses++; s.gamesWon += sides.loseGames; s.gamesTotal += total;
+    });
   });
 
-  const playerIds = Object.keys(score);
-  if (!playerIds.length) return { ranked: [], record: [] };
-  const [{ data: players }, { data: rosterRows }] = await Promise.all([
-    sb.from('players').select('id,roster_name').in('id', playerIds),
-    sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds),
-  ]);
+  const playerIds = Object.keys(stats);
+  if (!playerIds.length) return [];
+  const { data: players } = await sb.from('players').select('id,roster_name').in('id', playerIds);
   const nameMap = {}; (players || []).forEach(p => nameMap[p.id] = p.roster_name);
-  const teamOfPlayer = {}; (rosterRows || []).forEach(r => { if (!(r.player_id in teamOfPlayer)) teamOfPlayer[r.player_id] = r.team_id; });
   const teamNameMap = {}; currentLeagueTeams.forEach(t => teamNameMap[t.id] = t.name);
-  const teamNameFor = pid => teamOfPlayer[pid] ? (teamNameMap[teamOfPlayer[pid]] || '—') : 'Sub';
 
-  const ranked = playerIds.map(pid => {
-    const s = score[pid];
+  return playerIds.map(pid => {
+    const s = stats[pid];
+    const matches = s.wins + s.losses;
     return {
       player_id: pid,
       name: nameMap[pid] || '—',
-      team_name: teamNameFor(pid),
-      matches: s.matches,
-      total: s.total,
-      average: s.matches ? s.total / s.matches : 0,
+      team_id: teamOf[pid] || null,
+      team_name: teamOf[pid] ? (teamNameMap[teamOf[pid]] || '—') : 'Sub',
+      wins: s.wins, losses: s.losses, matches,
+      winPct: matches ? s.wins / matches : 0,
+      gamesPct: s.gamesTotal ? s.gamesWon / s.gamesTotal : 0,
     };
-  }).filter(r => r.matches >= 2).sort((a, b) => b.average - a.average);
-
-  // Win-loss record — what Captains see instead of the points-based board,
-  // and available to everyone as the plain factual record behind the ranking.
-  const record = playerIds.map(pid => {
-    const t = tally[pid] || { wins: 0, losses: 0 };
-    return {
-      player_id: pid,
-      name: nameMap[pid] || '—',
-      team_name: teamNameFor(pid),
-      wins: t.wins,
-      losses: t.losses,
-      matches: t.wins + t.losses,
-    };
-  }).sort((a, b) => (b.wins / (b.matches || 1)) - (a.wins / (a.matches || 1)));
-
-  return { ranked, record };
+  }).sort((a, b) => b.winPct - a.winPct || b.gamesPct - a.gamesPct || a.name.localeCompare(b.name));
 }
 
-function renderRankingsBoard({ ranked, record }) {
+function renderRankingsBoard() {
   const el = document.getElementById('rankings-board-body');
-  const role = currentUser?.role;
-  if (role === 'captain') {
-    if (!record.length) {
-      el.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-sub">No matches played yet</div></div>';
-      return;
-    }
-    el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Matches</th></tr></thead><tbody>
-      ${record.map((r, i) => `<tr><td>${i + 1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.matches}</td></tr>`).join('')}
-      </tbody></table>`;
+  const teamFilter = document.getElementById('rankings-team-filter').value;
+  const rows = teamFilter ? lastRankingsData.filter(r => r.team_id === teamFilter) : lastRankingsData;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-sub">No players on this league yet</div></div>';
     return;
   }
-  if (!ranked.length) {
-    el.innerHTML = '<div class="empty-state" style="padding:16px 0"><div class="empty-sub">Nobody has played 2+ matches yet</div></div>';
-    return;
-  }
-  const rowHtml = (r, rank) => `<tr><td>${rank}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.matches}</td><td>${r.total.toFixed(1)}</td><td>${r.average.toFixed(2)}</td></tr>`;
-  let rows = ranked, ownRow = null, ownRank = null;
-  if (role === 'player') {
-    const idx = ranked.findIndex(r => r.player_id === currentUser.player_id);
-    if (idx >= 0) { ownRow = ranked[idx]; ownRank = idx + 1; }
-    rows = ranked.slice(0, 10);
-  }
-  let html = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Matches</th><th>Total</th><th>Average</th></tr></thead><tbody>
-    ${rows.map((r, i) => rowHtml(r, i + 1)).join('')}`;
-  if (role === 'player' && ownRank && ownRank > 10) {
-    html += `<tr><td colspan="6" style="text-align:center;color:var(--ink-muted)">⋯</td></tr>${rowHtml(ownRow, ownRank)}`;
-  }
-  html += '</tbody></table>';
-  el.innerHTML = html;
+  const pct = n => `${Math.round(n * 100)}%`;
+  el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Matches</th><th>Win %</th><th>Games %</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.matches}</td><td>${pct(r.winPct)}</td><td>${pct(r.gamesPct)}</td></tr>`).join('')}
+    </tbody></table>`;
 }
 
 async function loadPlayers(containerId, filterMode) {
