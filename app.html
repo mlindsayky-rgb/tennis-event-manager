@@ -6803,8 +6803,24 @@ async function cascadeTeamTimeSlotChange(teamId) {
 }
 
 async function deleteLeagueTeam(id, name) {
-  if(!confirm(`Remove team "${name}" from this league?`)) return;
-  await sb.from('league_teams').delete().eq('id',id);
+  // league_matches.team_a_id/team_b_id have no cascade, so a team that's
+  // already played is foreign-key-blocked from deleting — warn clearly and
+  // clean those matches (and messages aimed at this team) up first, rather
+  // than silently failing and telling the coach it worked anyway.
+  const { data: matches } = await sb.from('league_matches').select('id').or(`team_a_id.eq.${id},team_b_id.eq.${id}`);
+  const matchCount = matches?.length || 0;
+  const warning = matchCount
+    ? `"${name}" has already played ${matchCount} match${matchCount===1?'':'es'}. Deleting this team will also permanently delete those matches and their scores. Continue?`
+    : `Remove team "${name}" from this league?`;
+  if(!confirm(warning)) return;
+
+  if (matchCount) {
+    await sb.from('league_matches').delete().in('id', matches.map(m=>m.id));
+  }
+  await sb.from('messages').update({ team_id: null }).eq('team_id', id);
+
+  const { error } = await sb.from('league_teams').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   toast(`"${name}" removed`,'success');
   loadLeagueTeams();
 }
