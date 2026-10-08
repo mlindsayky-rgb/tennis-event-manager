@@ -397,16 +397,24 @@
   </div>
 </div>
 
-<script type="module">
+<script>
+(async function boot() {
   // ── SUPABASE ─────────────────────────────────────────
   const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
   const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
 
-  const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
-  const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+  let mod;
+  try {
+    mod = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
+  } catch (e1) {
+    console.log('jsDelivr failed, trying esm.sh fallback:', e1.message);
+    mod = await import('https://esm.sh/@supabase/supabase-js@2.39.3');
+  }
+  const sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY);
 
   // ── STATE ─────────────────────────────────────────────
   let activeEventId = null;
+  let activeLeagueId = null, activeTeamId = null, activeWeekOverride = null;
   let refreshTimer = null;
   const REFRESH_INTERVAL = 15000; // 15 seconds
 
@@ -423,12 +431,24 @@
   setInterval(updateClock, 10000);
 
   // ── INIT ─────────────────────────────────────────────
+  // Which mode a TV shows is decided entirely by its URL, set once per
+  // physical screen (or shared as a link for someone to check on their
+  // phone) — tv.html?event=<id> for the old single-event scoreboard,
+  // tv.html?league=<id>&team=<id> for league play. No on-screen mode
+  // switcher; with no params at all it falls back to the event picker,
+  // unchanged from before league play existed.
   async function init() {
-    // Check URL param for event ID
     const params = new URLSearchParams(window.location.search);
     const eid = params.get('event');
+    const lid = params.get('league');
 
-    if(eid) {
+    if (lid) {
+      activeLeagueId = lid;
+      activeTeamId = params.get('team');
+      activeWeekOverride = params.get('week') ? parseInt(params.get('week')) : null;
+      if (!activeTeamId) { await showTeamPicker(lid); return; }
+      startLeagueRefresh();
+    } else if (eid) {
       activeEventId = eid;
       startRefresh();
     } else {
@@ -477,6 +497,224 @@
       picker.classList.remove('show');
       startRefresh();
     };
+  }
+
+  // ── LEAGUE PLAY ───────────────────────────────────────
+  // A TV sits at one physical club, so league mode is scoped to one team's
+  // hosted courts — whichever team's matches/practices happen at this
+  // location. If the URL only names the league, ask which team once; the
+  // picked team is meant to go straight into that TV's bookmarked URL.
+  async function showTeamPicker(leagueId) {
+    const { data: league } = await sb.from('leagues').select('name').eq('id', leagueId).maybeSingle();
+    const { data: teams } = await sb.from('league_teams').select('id,name,clubs(name)').eq('league_id', leagueId);
+    if (!teams?.length) {
+      document.getElementById('loading').innerHTML = '<div class="empty-msg">No teams in this league yet</div>';
+      return;
+    }
+    document.getElementById('event-name').textContent = league?.name || 'League Play';
+    document.getElementById('round-label').textContent = 'Which team\'s courts is this TV showing?';
+    const picker = document.getElementById('event-picker');
+    const list = document.getElementById('picker-events');
+    list.innerHTML = teams.map(t => `
+      <div class="picker-event" onclick="selectTeam('${t.id}')">
+        ${t.name}
+        <div class="ev-status">${t.clubs?.name || ''}</div>
+      </div>
+    `).join('');
+    picker.classList.add('show');
+    window.selectTeam = (id) => {
+      activeTeamId = id;
+      picker.classList.remove('show');
+      startLeagueRefresh();
+    };
+  }
+
+  function startLeagueRefresh() {
+    loadLeagueScoreboard();
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(loadLeagueScoreboard, REFRESH_INTERVAL);
+  }
+
+  function seasonWeekDates(league) {
+    const start = new Date(league.start_date + 'T00:00:00');
+    const weeks = [];
+    for (let w=1; w<=league.session_length_weeks; w++) {
+      const d = new Date(start); d.setDate(d.getDate() + (w-1)*7);
+      weeks.push({ weekNumber: w, weekStart: d });
+    }
+    return weeks;
+  }
+  function isMatchWeek(league, weekNumber) { return !league.alternate_practice_weeks || weekNumber % 2 === 0; }
+  function currentWeekNumber(league) {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const start = new Date(league.start_date + 'T00:00:00');
+    const diffDays = Math.floor((today - start) / 86400000);
+    let week = Math.floor(diffDays / 7) + 1;
+    if (week < 1) week = 1;
+    if (week > league.session_length_weeks) week = league.session_length_weeks;
+    return week;
+  }
+  function setWinner(s) {
+    if (!s.is_complete) return null;
+    const a = Number(s.team_a_games)||0, b = Number(s.team_b_games)||0;
+    return a>b ? 'A' : b>a ? 'B' : null;
+  }
+  function scoreCourt(cr) {
+    let aSets=0, bSets=0, aGames=0, bGames=0;
+    (cr.sets||[]).forEach(s => {
+      aGames += Number(s.team_a_games)||0; bGames += Number(s.team_b_games)||0;
+      const w = setWinner(s); if (w==='A') aSets++; else if (w==='B') bSets++;
+    });
+    let winner = null;
+    if (aSets !== bSets) winner = aSets>bSets?'A':'B';
+    else if (aGames !== bGames) winner = aGames>bGames?'A':'B';
+    return { winner, aGames, bGames };
+  }
+
+  async function loadLeagueScoreboard() {
+    const dot = document.getElementById('refresh-dot');
+    dot.style.background = '#fff';
+    setTimeout(() => dot.style.background = '#22C55E', 500);
+
+    const { data: league } = await sb.from('leagues').select('*').eq('id', activeLeagueId).maybeSingle();
+    if (!league) { showEmpty('League not found'); return; }
+    const { data: team } = await sb.from('league_teams').select('*,clubs(name)').eq('id', activeTeamId).maybeSingle();
+    if (!team) { showEmpty('Team not found'); return; }
+
+    document.getElementById('event-name').textContent = team.name;
+    document.getElementById('club-name').textContent = team.clubs?.name || league.name;
+
+    const week = activeWeekOverride || currentWeekNumber(league);
+
+    if (!isMatchWeek(league, week)) {
+      document.getElementById('round-label').textContent = `Week ${week} of ${league.session_length_weeks}`;
+      showEmpty('🏃 Practice Week');
+      return;
+    }
+
+    const { data: matches } = await sb.from('league_matches').select('*').eq('league_id', activeLeagueId).eq('week_number', week)
+      .or(`team_a_id.eq.${activeTeamId},team_b_id.eq.${activeTeamId}`);
+    const match = (matches||[])[0];
+    if (!match) { document.getElementById('round-label').textContent = `Week ${week} of ${league.session_length_weeks}`; showEmpty('No match this week'); return; }
+
+    const isHostA = match.team_a_id === activeTeamId;
+    const oppId = isHostA ? match.team_b_id : match.team_a_id;
+    const { data: opponent } = oppId ? await sb.from('league_teams').select('id,name,avatar_color').eq('id', oppId).maybeSingle() : { data: null };
+
+    // Which court numbers physically belong to this team's site this week —
+    // site_a_courts for the team_a host, the complement for team_b, or (an
+    // individual/mixer-mode match with no team_b) every court belongs here.
+    const totalCourts = league.format === 'DOUBLES' ? 4 : 3;
+    const allCourtNums = Array.from({ length: totalCourts }, (_, i) => i + 1);
+    const siteACourts = new Set(match.site_a_courts || []);
+    const hostCourtNums = !match.team_b_id ? new Set(allCourtNums)
+      : isHostA ? siteACourts
+      : new Set(allCourtNums.filter(c => !siteACourts.has(c)));
+
+    const { data: results } = await sb.from('court_results').select('*').eq('match_id', match.id);
+    const courts = (results||[])
+      .filter(r => hostCourtNums.has(r.court_number))
+      .sort((a,b)=>a.court_number-b.court_number);
+
+    const playerIds = [...new Set(courts.flatMap(r => [r.team_a_player1_id, r.team_a_player2_id, r.team_b_player1_id, r.team_b_player2_id].filter(Boolean)))];
+    const { data: players } = playerIds.length ? await sb.from('players').select('id,roster_name').in('id', playerIds) : { data: [] };
+    const nc = {}; (players||[]).forEach(p => nc[p.id] = p.roster_name);
+
+    document.getElementById('round-label').textContent =
+      `Week ${week} of ${league.session_length_weeks}${opponent ? ' · vs ' + opponent.name : ''} · ${courts.length} Courts`;
+
+    renderLeagueScoreboard(team, opponent, isHostA, courts, nc, match.team_b_id == null);
+
+    const now = new Date();
+    let rh = now.getHours(); const ram = rh>=12?'PM':'AM'; rh = rh%12||12;
+    const rm = now.getMinutes().toString().padStart(2,'0');
+    document.getElementById('refresh-text').textContent = `Updated ${rh}:${rm} ${ram} · tap to refresh`;
+  }
+
+  function renderLeagueScoreboard(team, opponent, isHostA, courts, nc, isIndividualMode) {
+    const colorA = team.avatar_color || '#E53E3E';
+    const colorB = opponent?.avatar_color || '#3182CE';
+
+    let totalA = 0, totalB = 0;
+    courts.forEach(cr => {
+      const { aGames, bGames } = scoreCourt(cr);
+      const hostIsA = isHostA; // host's own games always line up with team_a/team_b per how court_results stores them
+      totalA += hostIsA ? aGames : bGames;
+      totalB += hostIsA ? bGames : aGames;
+    });
+
+    document.getElementById('team-a-name').textContent = team.name;
+    document.getElementById('team-a-name').style.color = colorA;
+    document.getElementById('team-a-score').textContent = totalA;
+    document.getElementById('team-a-score').style.color = totalA >= totalB ? colorA : 'rgba(255,255,255,.4)';
+    document.getElementById('team-a-block').style.background = colorA + '12';
+
+    document.getElementById('team-b-name').textContent = isIndividualMode ? 'All Comers' : (opponent?.name || 'TBD');
+    document.getElementById('team-b-name').style.color = colorB;
+    document.getElementById('team-b-score').textContent = totalB;
+    document.getElementById('team-b-score').style.color = totalB >= totalA ? colorB : 'rgba(255,255,255,.4)';
+    document.getElementById('team-b-block').style.background = colorB + '12';
+
+    const container = document.getElementById('courts-container');
+    if (!courts.length) { showEmpty('No courts yet'); return; }
+
+    const courtCount = courts.length;
+    const sizing = {
+      playerFont: courtCount <= 2 ? 'clamp(18px,2.8vw,36px)' : courtCount <= 3 ? 'clamp(16px,2.2vw,30px)' : courtCount <= 4 ? 'clamp(14px,1.8vw,26px)' : courtCount <= 5 ? 'clamp(12px,1.5vw,22px)' : 'clamp(11px,1.3vw,18px)',
+      scoreFont: courtCount <= 2 ? 'clamp(36px,6vw,88px)' : courtCount <= 3 ? 'clamp(30px,5vw,72px)' : courtCount <= 4 ? 'clamp(26px,4.2vw,64px)' : courtCount <= 5 ? 'clamp(22px,3.5vw,54px)' : 'clamp(18px,3vw,46px)',
+      padding: courtCount <= 2 ? '0 32px' : courtCount <= 4 ? '0 24px' : '0 16px',
+      courtLabel: courtCount <= 2 ? '14px' : courtCount <= 4 ? '12px' : '10px',
+    };
+
+    container.innerHTML = courts.map(cr => {
+      const hostIsA = isHostA;
+      const leftP1 = hostIsA ? cr.team_a_player1_id : cr.team_b_player1_id;
+      const leftP2 = hostIsA ? cr.team_a_player2_id : cr.team_b_player2_id;
+      const rightP1 = hostIsA ? cr.team_b_player1_id : cr.team_a_player1_id;
+      const rightP2 = hostIsA ? cr.team_b_player2_id : cr.team_a_player2_id;
+      const { winner, aGames, bGames } = scoreCourt(cr);
+      const leftGames = hostIsA ? aGames : bGames;
+      const rightGames = hostIsA ? bGames : aGames;
+      const hasScore = (cr.sets||[]).length > 0;
+      const leftWon = hasScore && leftGames > rightGames;
+      const rightWon = hasScore && rightGames > leftGames;
+      const isPlaying = !hasScore;
+      const isDone = !isPlaying;
+      const rowOpacity = isDone ? '.85' : '1';
+
+      const scoreDisplay = isPlaying
+        ? `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
+            <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.25);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${cr.court_number}</div>
+            <div style="font-size:10px;color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:600;text-transform:uppercase;letter-spacing:.5px">playing</div>
+           </div>`
+        : `<div style="display:flex;flex-direction:column;align-items:center;gap:4px;width:100%">
+            <div style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);font-family:var(--font-body);font-weight:700;text-transform:uppercase;letter-spacing:.5px">C${cr.court_number}</div>
+            <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-display);font-style:italic;width:100%">
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${leftWon?colorA:'rgba(255,255,255,.35)'}">${leftGames}</span>
+              <span style="font-size:${sizing.courtLabel};color:rgba(255,255,255,.2);flex-shrink:0">–</span>
+              <span style="font-size:${sizing.scoreFont};font-weight:900;line-height:1;color:${rightWon?colorB:'rgba(255,255,255,.35)'}">${rightGames}</span>
+            </div>
+           </div>`;
+
+      return `
+      <div class="court-grid" style="border-left:4px solid ${colorA};border-right:4px solid ${colorB};opacity:${rowOpacity}">
+        <div class="court-team team-a" style="padding:${sizing.padding}">
+          <div class="court-players" style="text-align:right">
+            <div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP1, nc)}</div>
+            ${leftP2?`<div class="player-name ${isDone&&!leftWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(leftP2, nc)}</div>`:''}
+          </div>
+        </div>
+        <div class="court-center">${scoreDisplay}</div>
+        <div class="court-team team-b" style="padding:${sizing.padding}">
+          <div class="court-players">
+            <div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP1, nc)}</div>
+            ${rightP2?`<div class="player-name ${isDone&&!rightWon?'dim':''}" style="font-size:${sizing.playerFont}">${shortName(rightP2, nc)}</div>`:''}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    document.getElementById('sitout-bar').style.display = 'none';
   }
 
   // ── REFRESH LOOP ─────────────────────────────────────
@@ -783,6 +1021,7 @@
 
   // ── START ────────────────────────────────────────────
   init();
+})();
 </script>
 </body>
 </html>
