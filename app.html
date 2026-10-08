@@ -770,8 +770,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div id="sub-pool-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-standings" style="display:none">
-      <div class="section-header"><div><div class="section-title" style="font-size:16px">Team Standings</div><div class="section-sub">Only fully-entered matches count</div></div></div>
-      <div class="card" style="margin-bottom:24px"><div class="card-body" id="league-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+      <div id="team-standings-section">
+        <div class="section-header"><div><div class="section-title" style="font-size:16px">Team Standings</div><div class="section-sub">Only fully-entered matches count</div></div></div>
+        <div class="card" style="margin-bottom:24px"><div class="card-body" id="league-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+      </div>
       <div class="card">
         <div class="card-header">
           <div><div class="card-title">Player Rankings</div><div class="card-sub" style="font-size:12px;color:var(--ink-muted)">Ranked by win % (ties broken by % of games won). Every active player in the league is listed, even with no matches yet — team doesn't matter, and court number doesn't carry any weight.</div></div>
@@ -1143,7 +1145,15 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <select class="form-select" id="league-session-length" onchange="suggestLeagueEndDate()"><option value="5">5 weeks</option><option value="10">10 weeks</option></select>
         </div>
       </div>
-      <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="2" max="16" placeholder="e.g. 4"><div class="form-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
+      <div class="form-group">
+        <label class="form-label">League Type <span class="req">*</span></label>
+        <select class="form-select" id="league-mode" onchange="onLeagueModeChange()">
+          <option value="team">Team vs Team</option>
+          <option value="individual">Mixer — everyone plays everyone, ranked individually</option>
+        </select>
+        <div class="form-hint" id="league-mode-hint">Round-robin matches between teams; team doesn't matter — standings track individual players.</div>
+      </div>
+      <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="1" max="16" placeholder="e.g. 4"><div class="form-hint" id="league-team-count-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
       <div class="form-group">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="league-alternate-practice-weeks">
@@ -1178,7 +1188,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <div class="modal">
     <div class="modal-header"><div class="modal-title" id="league-team-modal-title">New Team</div><button class="modal-close" onclick="closeModal('league-team-modal')">×</button></div>
     <div class="modal-body">
-      <div class="form-group"><label class="form-label">Team Name <span class="req">*</span></label><input class="form-input" id="team-name" placeholder="e.g. Oakwood A" oninput="renderAvatarPreview()"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Team Name <span class="req">*</span></label><input class="form-input" id="team-name" placeholder="e.g. Oakwood A" oninput="renderAvatarPreview()"></div>
+        <div class="form-group"><label class="form-label">Abbreviation</label><input class="form-input" id="team-abbreviation" placeholder="e.g. OA" maxlength="6"><div class="form-hint">Shown after a player's name in Mixer lineups so it's clear which team they're from.</div></div>
+      </div>
       <div class="form-group"><label class="form-label">Home Club <span class="req">*</span></label><select class="form-select" id="team-club"><option value="">Select club…</option></select></div>
       <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
         <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Team Avatar</div>
@@ -1218,8 +1231,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
             </select>
           </div>
           <div class="form-group"><label class="form-label">Time <span class="req">*</span></label><input class="form-input" id="team-slot-time" type="time"></div>
+          <div class="form-group"><label class="form-label">Courts</label><input class="form-input" id="team-court-count" type="number" min="1" max="12"></div>
         </div>
-        <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time.</div>
+        <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time. Courts defaults to the league format's usual count, but can be set lower if the roster is still filling in, or higher for a Mixer league with more players than courts.</div>
       </div>
       <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
         <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Coach Login PIN</div>
@@ -1299,14 +1313,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-body">
       <div class="form-row">
         <div class="form-group"><label class="form-label">Team A <span class="req">*</span></label><select class="form-select" id="match-team-a" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
-        <div class="form-group"><label class="form-label">Team B <span class="req">*</span></label><select class="form-select" id="match-team-b" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
+        <div class="form-group" id="match-team-b-group"><label class="form-label">Team B <span class="req">*</span></label><select class="form-select" id="match-team-b" onchange="renderCourtSplitPicker()"><option value="">Select…</option></select></div>
       </div>
       <div class="form-group"><label class="form-label">Week <span class="req">*</span></label><input class="form-input" id="match-week" type="number" min="1" onchange="renderCourtSplitPicker()"><div class="form-hint" id="match-week-hint"></div></div>
       <div id="match-site-dates"></div>
       <div class="form-group">
-        <label class="form-label">Court Site Split</label>
-        <div id="match-court-split"><div class="form-hint">Select both teams and a week to set the court split.</div></div>
-        <div class="form-hint">Which team's site hosts each court. Suggested split alternates automatically based on how many times these two teams have already met this league.</div>
+        <label class="form-label">Courts</label>
+        <div id="match-court-split"><div class="form-hint">Select the team(s) and a week to see which courts are used.</div></div>
+        <div class="form-hint">Each team plays on exactly as many courts as it was set up with.</div>
       </div>
       <div id="new-match-error" class="alert alert-error" style="display:none"></div>
     </div>
@@ -5860,6 +5874,17 @@ function renderLeaguesList(leagues, counts, containerId) {
   }).join('');
 }
 
+function onLeagueModeChange() {
+  const isMixer = document.getElementById('league-mode').value === 'individual';
+  document.getElementById('league-mode-hint').textContent = isMixer
+    ? 'Every court every match week gets filled from everyone across every team — no byes, no team standings. Team is just who manages the roster; rankings are entirely individual.'
+    : 'Round-robin matches between teams; team doesn\'t matter — standings track individual players.';
+  document.getElementById('league-team-count').min = isMixer ? '1' : '2';
+  document.getElementById('league-team-count-hint').textContent = isMixer
+    ? 'A Mixer league can run with just one team — it still needs a coach to manage the roster.'
+    : "Sets the league's planned structure — teams can be added up to (or beyond) this count.";
+}
+
 function openNewLeagueModal() {
   editLeagueId = null;
   leagueDatesOffDraft = [];
@@ -5868,7 +5893,9 @@ function openNewLeagueModal() {
   ['league-name','league-start-date','league-end-date','league-team-count'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('league-format').value='SINGLES';
   document.getElementById('league-session-length').value='5';
+  document.getElementById('league-mode').value='team';
   document.getElementById('league-alternate-practice-weeks').checked=true;
+  onLeagueModeChange();
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
   openModal('league-modal');
@@ -5884,10 +5911,12 @@ async function editLeague(id) {
   document.getElementById('league-name').value=l.name;
   document.getElementById('league-format').value=l.format;
   document.getElementById('league-session-length').value=String(l.session_length_weeks);
+  document.getElementById('league-mode').value=l.league_mode||'team';
   document.getElementById('league-team-count').value=l.team_count;
   document.getElementById('league-start-date').value=l.start_date;
   document.getElementById('league-end-date').value=l.end_date;
   document.getElementById('league-alternate-practice-weeks').checked=!!l.alternate_practice_weeks;
+  onLeagueModeChange();
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
   openModal('league-modal');
@@ -5938,19 +5967,21 @@ async function saveLeague() {
   const name = document.getElementById('league-name').value.trim();
   const format = document.getElementById('league-format').value;
   const sessionLength = parseInt(document.getElementById('league-session-length').value);
+  const leagueMode = document.getElementById('league-mode').value;
   const teamCount = parseInt(document.getElementById('league-team-count').value);
   const startDate = document.getElementById('league-start-date').value;
   const endDate = document.getElementById('league-end-date').value;
   const errEl = document.getElementById('league-error');
   errEl.style.display='none';
   if(!name){errEl.textContent='League name required.';errEl.style.display='flex';return;}
-  if(!teamCount||teamCount<2){errEl.textContent='Number of teams must be at least 2.';errEl.style.display='flex';return;}
+  const minTeams = leagueMode === 'individual' ? 1 : 2;
+  if(!teamCount||teamCount<minTeams){errEl.textContent=`Number of teams must be at least ${minTeams}.`;errEl.style.display='flex';return;}
   if(!startDate||!endDate){errEl.textContent='Start and end dates are required.';errEl.style.display='flex';return;}
   if(endDate<startDate){errEl.textContent='End date must be after start date.';errEl.style.display='flex';return;}
 
   const alternatePracticeWeeks = document.getElementById('league-alternate-practice-weeks').checked;
   const payload = {
-    name, format, session_length_weeks: sessionLength, team_count: teamCount,
+    name, format, session_length_weeks: sessionLength, team_count: teamCount, league_mode: leagueMode,
     start_date: startDate, end_date: endDate, dates_off: leagueDatesOffDraft,
     alternate_practice_weeks: alternatePracticeWeeks
   };
@@ -6040,7 +6071,12 @@ function leagueDetailTab(name, btn) {
   else { actionBtn.style.display='none'; }
   if(name==='matches') { loadLeagueMatches(); document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none'; }
   if(name==='subs') { loadInterestedSubs(); loadSubPool(); }
-  if(name==='standings') { loadStandings(); loadRankings(); }
+  if(name==='standings') {
+    const isIndividual = currentLeague.league_mode === 'individual';
+    document.getElementById('team-standings-section').style.display = isIndividual ? 'none' : '';
+    if (!isIndividual) loadStandings();
+    loadRankings();
+  }
   if(name==='settings') renderLeagueSettings();
 }
 
@@ -6696,8 +6732,9 @@ async function openTeamModalNew() {
   await populateTeamSelects('', '');
   document.getElementById('league-team-modal-title').textContent='New Team';
   document.getElementById('save-league-team-btn').textContent='Add Team';
-  ['team-name','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
+  ['team-name','team-abbreviation','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('team-slot-day').value='1';
+  document.getElementById('team-court-count').value = courtsForFormat();
   document.getElementById('team-avatar-file').value='';
   pendingAvatarUrl = null; pendingAvatarColor = null;
   renderAvatarPreview();
@@ -6713,11 +6750,13 @@ async function openTeamModalEdit(id) {
   document.getElementById('league-team-modal-title').textContent='Edit Team';
   document.getElementById('save-league-team-btn').textContent='Save Changes';
   document.getElementById('team-name').value=t.name;
+  document.getElementById('team-abbreviation').value=t.abbreviation||'';
   document.getElementById('team-coach-name').value=t.coach_name||'';
   document.getElementById('team-coach-phone').value=t.coach_phone||'';
   document.getElementById('team-coach-email').value=t.coach_email||'';
   document.getElementById('team-slot-day').value = t.time_slot_day!=null?String(t.time_slot_day):'1';
   document.getElementById('team-slot-time').value = t.time_slot_time||'';
+  document.getElementById('team-court-count').value = t.court_count || courtsForFormat();
   document.getElementById('team-coach-pin').value = '';
   document.getElementById('team-coach-pin-confirm').value = '';
   document.getElementById('team-avatar-file').value='';
@@ -6729,6 +6768,7 @@ async function openTeamModalEdit(id) {
 
 async function saveLeagueTeam() {
   const name=document.getElementById('team-name').value.trim();
+  const abbreviation=document.getElementById('team-abbreviation').value.trim()||null;
   const clubId=document.getElementById('team-club').value;
   const coachPlayerId=document.getElementById('team-coach-player').value||null;
   const coachName=document.getElementById('team-coach-name').value.trim();
@@ -6736,6 +6776,7 @@ async function saveLeagueTeam() {
   const coachEmail=document.getElementById('team-coach-email').value.trim()||null;
   const slotDay=document.getElementById('team-slot-day').value;
   const slotTime=document.getElementById('team-slot-time').value||null;
+  const courtCount=parseInt(document.getElementById('team-court-count').value)||courtsForFormat();
   const coachPin=document.getElementById('team-coach-pin').value.trim();
   const coachPinConfirm=document.getElementById('team-coach-pin-confirm').value.trim();
   const errEl=document.getElementById('league-team-error');
@@ -6745,9 +6786,9 @@ async function saveLeagueTeam() {
   if(!coachName){errEl.textContent='Coach name required.';errEl.style.display='flex';return;}
 
   const payload = {
-    league_id: currentLeague.id, name, club_id: clubId,
+    league_id: currentLeague.id, name, abbreviation, club_id: clubId,
     coach_player_id: coachPlayerId, coach_name: coachName, coach_phone: coachPhone, coach_email: coachEmail,
-    time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime,
+    time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime, court_count: courtCount,
     avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor
   };
 
@@ -6922,7 +6963,6 @@ function renderUpNextCard(cardId, bodyId, upNext) {
 // ══════════════════════════════════════════════
 // LEAGUE MATCHES — court result entry & scoring
 // ══════════════════════════════════════════════
-let matchSiteACourts = [];
 let newMatchTeamsCache = [];
 let currentMatch = null, currentMatchTeamA = null, currentMatchTeamB = null;
 let currentMatchResults = {};   // court_number -> saved court_results row
@@ -6931,6 +6971,10 @@ let matchAllPlayers = [];       // cached active players for court pickers
 let matchRosterA = [], matchRosterB = []; // effective picker list: roster + any subs claimed for this match
 let matchRosterABase = [], matchRosterBBase = []; // roster only, before claimed subs are merged in
 let matchSubPool = []; // this match's week's sub pool entries (available + claimed, any team)
+let matchIsIndividual = false; // true when currentMatch.team_b_id is null (Mixer/individual league)
+let matchPooledTeams = [];      // every team in the league, for optgroup labels (individual mode)
+let matchPooledRoster = [];     // every team's players, tagged with _teamId/_teamName/_teamAbbrev (individual mode)
+let weekPlayerUsage = {};       // player_id -> count already saved on OTHER teams' matches this same week (individual mode)
 
 function courtsForFormat() { return currentLeague.format==='SINGLES' ? 3 : 4; }
 
@@ -6967,11 +7011,10 @@ function dateForTeamInWeek(weekStart, timeSlotDay) {
   return d;
 }
 
-// The site split alternates every time the same two teams meet again — matches
-// the doc's "next time they play, flip which courts each site gets" rule.
-function defaultSiteACourts(n, meetingIndex) {
-  const flip = meetingIndex % 2 === 1;
-  return n===3 ? (flip?[3]:[1,2]) : (flip?[3,4]:[1,2]);
+// Every team plays on exactly its own court_count courts, numbered sequentially
+// starting at startCourt — no shared pool, no alternation between sites.
+function teamSiteCourts(startCourt, count) {
+  return Array.from({length: count}, (_, i) => startCourt + i);
 }
 
 // Standard circle-method round robin. Returns an array of rounds, each an array
@@ -7008,39 +7051,53 @@ async function generateFullSchedule() {
   }
 
   const {data:teams} = await sb.from('league_teams').select('*').eq('league_id',currentLeague.id).order('name');
-  if (!teams || teams.length < 2) { toast('Need at least 2 teams to generate a schedule','error'); return; }
+  const isIndividual = currentLeague.league_mode === 'individual';
+  const minTeams = isIndividual ? 1 : 2;
+  if (!teams || teams.length < minTeams) { toast(`Need at least ${minTeams} team${minTeams>1?'s':''} to generate a schedule`,'error'); return; }
   const missingSlot = teams.filter(t=>t.time_slot_day==null);
   if (missingSlot.length) { toast(`Set a locked time slot for ${missingSlot.map(t=>t.name).join(', ')} before generating`,'error'); return; }
   const teamsById = {}; teams.forEach(t=>{ teamsById[t.id]=t; });
 
-  const n = courtsForFormat();
-  const rounds = generateRoundRobinPairs(teams.map(t=>t.id));
-  const cycleLen = rounds.length;
   const matchWeeks = seasonWeekDates(currentLeague).filter(w => isMatchWeek(currentLeague, w.weekNumber));
   const datesOff = currentLeague.dates_off || [];
-  const meetingCounts = {};
   const newMatches = [];
   let conflictCount = 0;
 
-  matchWeeks.forEach(({weekNumber, weekStart}, matchIndex)=>{
-    const pairs = rounds[matchIndex % cycleLen];
-    pairs.forEach(([teamAId, teamBId])=>{
-      const teamA = teamsById[teamAId], teamB = teamsById[teamBId];
-      const key = [teamAId,teamBId].sort().join('|');
-      const meetingIndex = meetingCounts[key] || 0;
-      meetingCounts[key] = meetingIndex + 1;
-
-      const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
-      const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
-      if (datesOff.includes(siteADate) || datesOff.includes(siteBDate)) conflictCount++;
-
-      newMatches.push({
-        league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
-        week_number: weekNumber, site_a_courts: defaultSiteACourts(n, meetingIndex),
-        site_a_date: siteADate, site_b_date: siteBDate
+  if (isIndividual) {
+    // One row per team per match-week — everyone plays, no opponent, no byes.
+    matchWeeks.forEach(({weekNumber, weekStart})=>{
+      teams.forEach(team=>{
+        const siteDate = toISODate(dateForTeamInWeek(weekStart, team.time_slot_day));
+        if (datesOff.includes(siteDate)) conflictCount++;
+        newMatches.push({
+          league_id: currentLeague.id, team_a_id: team.id, team_b_id: null,
+          week_number: weekNumber, site_a_courts: teamSiteCourts(1, team.court_count),
+          court_count: team.court_count,
+          site_a_date: siteDate, site_b_date: siteDate,
+          team_a_subs_needed: 0, team_b_subs_needed: 0
+        });
       });
     });
-  });
+  } else {
+    const rounds = generateRoundRobinPairs(teams.map(t=>t.id));
+    const cycleLen = rounds.length;
+    matchWeeks.forEach(({weekNumber, weekStart}, matchIndex)=>{
+      const pairs = rounds[matchIndex % cycleLen];
+      pairs.forEach(([teamAId, teamBId])=>{
+        const teamA = teamsById[teamAId], teamB = teamsById[teamBId];
+        const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
+        const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
+        if (datesOff.includes(siteADate) || datesOff.includes(siteBDate)) conflictCount++;
+
+        newMatches.push({
+          league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
+          week_number: weekNumber, site_a_courts: teamSiteCourts(1, teamA.court_count),
+          court_count: teamA.court_count + teamB.court_count,
+          site_a_date: siteADate, site_b_date: siteBDate
+        });
+      });
+    });
+  }
 
   if (!newMatches.length) { toast('Nothing to generate','error'); return; }
   const {error} = await sb.from('league_matches').insert(newMatches);
@@ -7080,11 +7137,11 @@ function renderLeagueMatches(matches, teams, resultCounts) {
     el.innerHTML='<div class="card"><div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No matches yet</div><div class="empty-sub">Add matches one at a time, or generate the whole season at once</div><button class="btn btn-primary" onclick="openNewMatchModal()">+ New Match</button></div></div>';
     return;
   }
-  const n = courtsForFormat();
   const datesOff = currentLeague.dates_off || [];
   const teamById = id => teams.find(t=>t.id===id);
   const teamName = id => teamById(id)?.name || '—';
   const matchCard = m => {
+    const n = m.court_count || courtsForFormat();
     const entered = resultCounts[m.id]||0;
     const complete = entered>=n;
     const onDayOff = datesOff.includes(m.site_a_date) || datesOff.includes(m.site_b_date);
@@ -7144,13 +7201,16 @@ function renderLeagueMatches(matches, teams, resultCounts) {
 }
 
 async function openNewMatchModal() {
-  matchSiteACourts = [];
+  const isIndividual = currentLeague.league_mode === 'individual';
+  document.getElementById('match-team-b-group').style.display = isIndividual ? 'none' : '';
   document.getElementById('match-week').value='';
   document.getElementById('match-week-hint').textContent = `1–${currentLeague.session_length_weeks} for this league`;
   document.getElementById('match-site-dates').innerHTML='';
   document.getElementById('new-match-error').style.display='none';
-  document.getElementById('match-court-split').innerHTML='<div class="form-hint">Select both teams and a week to set the court split.</div>';
-  const {data:teams} = await sb.from('league_teams').select('id,name,time_slot_day,time_slot_time').eq('league_id',currentLeague.id).order('name');
+  document.getElementById('match-court-split').innerHTML = isIndividual
+    ? '<div class="form-hint">Select a team and a week to see the courts used.</div>'
+    : '<div class="form-hint">Select both teams and a week to see the courts used.</div>';
+  const {data:teams} = await sb.from('league_teams').select('id,name,time_slot_day,time_slot_time,court_count').eq('league_id',currentLeague.id).order('name');
   newMatchTeamsCache = teams||[];
   ['match-team-a','match-team-b'].forEach(id=>{
     const s=document.getElementById(id);
@@ -7160,90 +7220,90 @@ async function openNewMatchModal() {
 }
 
 async function renderCourtSplitPicker() {
+  const isIndividual = currentLeague.league_mode === 'individual';
   const teamAId = document.getElementById('match-team-a').value;
-  const teamBId = document.getElementById('match-team-b').value;
+  const teamBId = isIndividual ? '' : document.getElementById('match-team-b').value;
   const weekNum = parseInt(document.getElementById('match-week').value);
   const el = document.getElementById('match-court-split');
   const datesEl = document.getElementById('match-site-dates');
-  if(!teamAId || !teamBId || teamAId===teamBId || !weekNum || weekNum<1 || weekNum>currentLeague.session_length_weeks) {
-    el.innerHTML = '<div class="form-hint">Select two different teams and a valid week to set the court split.</div>';
+  const weekValid = weekNum && weekNum>=1 && weekNum<=currentLeague.session_length_weeks;
+  const teamsValid = isIndividual ? !!teamAId : (teamAId && teamBId && teamAId!==teamBId);
+  if (!teamsValid || !weekValid) {
+    el.innerHTML = isIndividual
+      ? '<div class="form-hint">Select a team and a valid week to see the courts used.</div>'
+      : '<div class="form-hint">Select two different teams and a valid week to see the courts used.</div>';
     datesEl.innerHTML = '';
-    matchSiteACourts = [];
     return;
   }
   const teamA = newMatchTeamsCache.find(t=>t.id===teamAId);
-  const teamB = newMatchTeamsCache.find(t=>t.id===teamBId);
-  if (teamA.time_slot_day==null || teamB.time_slot_day==null) {
-    el.innerHTML = '<div class="alert alert-error">Both teams need a locked time slot set (edit the team) before a match can be scheduled.</div>';
+  const teamB = isIndividual ? null : newMatchTeamsCache.find(t=>t.id===teamBId);
+  if (teamA.time_slot_day==null || (teamB && teamB.time_slot_day==null)) {
+    el.innerHTML = `<div class="alert alert-error">${isIndividual?'The':'Both'} team${isIndividual?'':'s'} need a locked time slot set (edit the team) before a match can be scheduled.</div>`;
     datesEl.innerHTML = '';
-    matchSiteACourts = [];
     return;
   }
   const weeks = seasonWeekDates(currentLeague);
   const weekStart = weeks[weekNum-1].weekStart;
   const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
-  const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
   const datesOff = currentLeague.dates_off || [];
   const warn = d => datesOff.includes(d) ? ' <span class="badge badge-red">⚠ day off</span>' : '';
+
+  if (isIndividual) {
+    datesEl.innerHTML = `<div class="alert alert-info" style="margin-bottom:14px">
+      ${escQ(teamA.name)}'s site: <strong>${fmtDate(siteADate)}</strong>${warn(siteADate)}
+    </div>`;
+    el.innerHTML = `<div class="form-hint">${escQ(teamA.name)} plays on courts 1–${teamA.court_count||1}.</div>`;
+    return;
+  }
+
+  const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
   datesEl.innerHTML = `<div class="alert alert-info" style="margin-bottom:14px">
     ${escQ(teamA.name)}'s site: <strong>${fmtDate(siteADate)}</strong>${warn(siteADate)} &nbsp;·&nbsp;
     ${escQ(teamB.name)}'s site: <strong>${fmtDate(siteBDate)}</strong>${warn(siteBDate)}
   </div>`;
-
-  const n = courtsForFormat();
-  const {data:prior} = await sb.from('league_matches').select('id')
-    .or(`and(team_a_id.eq.${teamAId},team_b_id.eq.${teamBId}),and(team_a_id.eq.${teamBId},team_b_id.eq.${teamAId})`);
-  matchSiteACourts = defaultSiteACourts(n, (prior||[]).length);
-  renderCourtSplitButtons(n);
-}
-
-function renderCourtSplitButtons(n) {
-  const teamAName = document.querySelector('#match-team-a option:checked').textContent;
-  const teamBName = document.querySelector('#match-team-b option:checked').textContent;
-  const el = document.getElementById('match-court-split');
-  el.innerHTML = Array.from({length:n},(_,i)=>i+1).map(c=>{
-    const atA = matchSiteACourts.includes(c);
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
-      <span style="width:64px;font-weight:600">Court ${c}</span>
-      <button type="button" class="btn btn-sm ${atA?'btn-primary':'btn-ghost'}" onclick="toggleCourtSite(${c},true)">${escQ(teamAName)}'s site</button>
-      <button type="button" class="btn btn-sm ${!atA?'btn-primary':'btn-ghost'}" onclick="toggleCourtSite(${c},false)">${escQ(teamBName)}'s site</button>
-    </div>`;
-  }).join('');
-}
-
-function toggleCourtSite(court, toA) {
-  matchSiteACourts = toA
-    ? [...new Set([...matchSiteACourts, court])]
-    : matchSiteACourts.filter(c=>c!==court);
-  renderCourtSplitButtons(courtsForFormat());
+  const aCourts = teamSiteCourts(1, teamA.court_count);
+  const bCourts = teamSiteCourts(aCourts.length+1, teamB.court_count);
+  el.innerHTML = `<div class="form-hint">${escQ(teamA.name)} plays on court${aCourts.length===1?'':'s'} ${aCourts.join(', ')} (its site) · ${escQ(teamB.name)} plays on court${bCourts.length===1?'':'s'} ${bCourts.join(', ')} (its site).</div>`;
 }
 
 async function saveNewMatch() {
+  const isIndividual = currentLeague.league_mode === 'individual';
   const teamAId = document.getElementById('match-team-a').value;
-  const teamBId = document.getElementById('match-team-b').value;
+  const teamBId = isIndividual ? '' : document.getElementById('match-team-b').value;
   const weekNum = parseInt(document.getElementById('match-week').value);
   const errEl = document.getElementById('new-match-error');
   errEl.style.display='none';
-  if(!teamAId || !teamBId || teamAId===teamBId){ errEl.textContent='Select two different teams.'; errEl.style.display='flex'; return; }
+  if (isIndividual) {
+    if(!teamAId){ errEl.textContent='Select a team.'; errEl.style.display='flex'; return; }
+  } else {
+    if(!teamAId || !teamBId || teamAId===teamBId){ errEl.textContent='Select two different teams.'; errEl.style.display='flex'; return; }
+  }
   if(!weekNum || weekNum<1 || weekNum>currentLeague.session_length_weeks){ errEl.textContent=`Week must be between 1 and ${currentLeague.session_length_weeks}.`; errEl.style.display='flex'; return; }
   const teamA = newMatchTeamsCache.find(t=>t.id===teamAId);
-  const teamB = newMatchTeamsCache.find(t=>t.id===teamBId);
-  if (!teamA || !teamB || teamA.time_slot_day==null || teamB.time_slot_day==null) { errEl.textContent='Both teams need a locked time slot set before a match can be scheduled.'; errEl.style.display='flex'; return; }
-  const n = courtsForFormat();
-  if(matchSiteACourts.length===0 || matchSiteACourts.length===n){ errEl.textContent='Split the courts between both sites — one team can\'t host every court.'; errEl.style.display='flex'; return; }
+  const teamB = isIndividual ? null : newMatchTeamsCache.find(t=>t.id===teamBId);
+  if (!teamA || teamA.time_slot_day==null || (teamB && teamB.time_slot_day==null)) { errEl.textContent='Both teams need a locked time slot set before a match can be scheduled.'; errEl.style.display='flex'; return; }
 
   const weeks = seasonWeekDates(currentLeague);
   const weekStart = weeks[weekNum-1].weekStart;
   const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
-  const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
 
   const btn = document.getElementById('save-match-btn');
   btn.disabled = true;
-  const {error} = await sb.from('league_matches').insert({
-    league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
-    week_number: weekNum, site_a_courts: matchSiteACourts,
-    site_a_date: siteADate, site_b_date: siteBDate
-  });
+  const payload = isIndividual
+    ? {
+        league_id: currentLeague.id, team_a_id: teamAId, team_b_id: null,
+        week_number: weekNum, site_a_courts: teamSiteCourts(1, teamA.court_count),
+        court_count: teamA.court_count,
+        site_a_date: siteADate, site_b_date: siteADate,
+        team_a_subs_needed: 0, team_b_subs_needed: 0
+      }
+    : {
+        league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
+        week_number: weekNum, site_a_courts: teamSiteCourts(1, teamA.court_count),
+        court_count: teamA.court_count + teamB.court_count,
+        site_a_date: siteADate, site_b_date: toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day))
+      };
+  const {error} = await sb.from('league_matches').insert(payload);
   btn.disabled = false;
   if(error){ errEl.textContent='Error: '+error.message; errEl.style.display='flex'; return; }
   toast('Match created!','success');
@@ -7254,13 +7314,14 @@ async function saveNewMatch() {
 async function openMatchById(id) {
   const {data:match} = await sb.from('league_matches').select('*').eq('id',id).single();
   if(!match) return;
+  matchIsIndividual = !match.team_b_id;
   const [{data:teamA},{data:teamB},{data:results},{data:players},{data:rosterA},{data:rosterB}] = await Promise.all([
     sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_a_id).single(),
-    sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_b_id).single(),
+    matchIsIndividual ? Promise.resolve({data:null}) : sb.from('league_teams').select('*,clubs(name)').eq('id',match.team_b_id).single(),
     sb.from('court_results').select('*').eq('match_id',id),
     sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name'),
     sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_a_id),
-    sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_b_id)
+    matchIsIndividual ? Promise.resolve({data:[]}) : sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_b_id)
   ]);
   currentMatch = match;
   currentMatchTeamA = teamA;
@@ -7274,14 +7335,53 @@ async function openMatchById(id) {
   courtDrafts = {};
   (results||[]).forEach(r=>{ currentMatchResults[r.court_number] = r; });
 
-  document.getElementById('match-header-name').innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamA,22)}${escQ(teamA.name)}</span> <span style="opacity:.7">vs</span> <span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamB,22)}${escQ(teamB.name)}</span>`;
-  document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${teamA.name}: ${siteLine(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)} · ${teamB.name}: ${siteLine(match.site_b_date, teamB.time_slot_time, teamB.clubs?.name)}`;
+  if (matchIsIndividual) {
+    await loadPooledRosterAndWeekUsage(match);
+    document.getElementById('match-header-name').innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamA,22)}${escQ(teamA.name)}'s Courts</span> <span class="badge badge-blue" style="margin-left:8px">Mixer · Week ${match.week_number}</span>`;
+    document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${siteLine(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)}`;
+  } else {
+    document.getElementById('match-header-name').innerHTML = `<span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamA,22)}${escQ(teamA.name)}</span> <span style="opacity:.7">vs</span> <span style="display:inline-flex;align-items:center;gap:6px;vertical-align:middle">${teamAvatarHtml(teamB,22)}${escQ(teamB.name)}</span>`;
+    document.getElementById('match-header-sub').textContent = `Week ${match.week_number} · ${teamA.name}: ${siteLine(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)} · ${teamB.name}: ${siteLine(match.site_b_date, teamB.time_slot_time, teamB.clubs?.name)}`;
+  }
   const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
-  document.getElementById('match-edit-date-btn').style.display = isStaff ? 'inline-block' : 'none';
+  document.getElementById('match-edit-date-btn').style.display = (isStaff && !matchIsIndividual) ? 'inline-block' : 'none';
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('match-screen').classList.add('active');
   renderMatchScreen();
   loadMatchSubPool();
+}
+
+// For a Mixer/individual match: every team's roster pools together (tagged
+// with that team's abbreviation) so any coach can fill any court from anyone
+// in the league, plus a snapshot of who's already been used on another
+// team's courts this same week — used only for a soft double-booking warning,
+// never a hard block (coaches "beg, borrow and steal" on purpose here).
+async function loadPooledRosterAndWeekUsage(match) {
+  const [{data:teams}, {data:siblingMatches}] = await Promise.all([
+    sb.from('league_teams').select('id,name,abbreviation').eq('league_id', currentLeague.id).order('name'),
+    sb.from('league_matches').select('id').eq('league_id', currentLeague.id).eq('week_number', match.week_number).neq('id', match.id)
+  ]);
+  matchPooledTeams = teams||[];
+  const teamIds = matchPooledTeams.map(t=>t.id);
+  const {data:rosterRows} = teamIds.length
+    ? await sb.from('league_team_players').select('team_id,players(id,roster_name)').in('team_id', teamIds)
+    : {data:[]};
+  const teamById = {}; matchPooledTeams.forEach(t=>{ teamById[t.id]=t; });
+  matchPooledRoster = (rosterRows||[])
+    .filter(r=>r.players)
+    .map(r=>({ ...r.players, _teamId:r.team_id, _teamName:teamById[r.team_id]?.name||'', _teamAbbrev:teamById[r.team_id]?.abbreviation||'' }))
+    .sort((a,b)=> a._teamName.localeCompare(b._teamName) || a.roster_name.localeCompare(b.roster_name));
+
+  const siblingIds = (siblingMatches||[]).map(m=>m.id);
+  const {data:siblingResults} = siblingIds.length
+    ? await sb.from('court_results').select('*').in('match_id', siblingIds)
+    : {data:[]};
+  weekPlayerUsage = {};
+  (siblingResults||[]).forEach(r=>{
+    [r.team_a_player1_id, r.team_a_player2_id, r.team_b_player1_id, r.team_b_player2_id].filter(Boolean).forEach(pid=>{
+      weekPlayerUsage[pid] = (weekPlayerUsage[pid]||0) + 1;
+    });
+  });
 }
 
 function openEditMatchDateModal() {
@@ -7396,6 +7496,7 @@ function closeMatch() {
   currentMatch = null; currentMatchTeamA = null; currentMatchTeamB = null;
   matchRosterABase = []; matchRosterBBase = []; matchSubPool = [];
   currentMatchResults = {}; courtDrafts = {}; matchRosterA = []; matchRosterB = [];
+  matchIsIndividual = false; matchPooledTeams = []; matchPooledRoster = []; weekPlayerUsage = {};
   document.getElementById('match-screen').classList.remove('active');
   document.getElementById('league-screen').classList.add('active');
   loadLeagueMatches();
@@ -7424,18 +7525,46 @@ function playerOptionsHtml(selectedId, roster, usedElsewhere) {
   return html;
 }
 
+// Mixer/individual matches: every court's picker draws from the WHOLE
+// league's pooled roster (not just one team), grouped by team with each
+// name tagged by that team's abbreviation, so a coach can see at a glance
+// who they're borrowing. usedElsewhere flags a player already picked on
+// another court this match OR already saved on another team's courts this
+// same week — purely informational here, never blocking the selection.
+function pooledPlayerOptionsHtml(selectedId, usedElsewhere) {
+  const used = usedElsewhere || new Set();
+  const byTeam = {};
+  matchPooledRoster.forEach(p => { (byTeam[p._teamId] = byTeam[p._teamId]||[]).push(p); });
+  const opt = p => {
+    const isDup = used.has(p.id);
+    const tag = p._teamAbbrev ? ` (${escQ(p._teamAbbrev)})` : '';
+    return `<option value="${p.id}" ${p.id===selectedId?'selected':''}${isDup?' style="color:#C0392B;font-weight:700"':''}>${isDup?'⚠ ':''}${escQ(p.roster_name)}${tag}</option>`;
+  };
+  let html = '<option value="">Select player…</option>';
+  matchPooledTeams.forEach(t => {
+    const players = byTeam[t.id];
+    if (players && players.length) html += `<optgroup label="${escQ(t.name)}${t.abbreviation?` (${escQ(t.abbreviation)})`:''}">${players.map(opt).join('')}</optgroup>`;
+  });
+  return html;
+}
+
 // Which players are already selected for this side on a different court in
 // this same match (excludeCourt), so the picker can flag a double-booking.
+// In Mixer/individual mode every slot pools from the same league-wide
+// roster, so BOTH sides of every other court count, plus anyone already
+// saved on another team's courts this same week (weekPlayerUsage) — always
+// just a soft warning, never a block.
 function duplicatePlayerIdsForSide(excludeCourt, side) {
-  const n = courtsForFormat();
+  const n = currentMatch?.court_count || courtsForFormat();
   const used = new Set();
   for (let c = 1; c <= n; c++) {
     if (c === excludeCourt) continue;
     const d = courtDrafts[c];
     if (!d) continue;
-    const ids = side === 'a' ? [d.teamAP1, d.teamAP2] : [d.teamBP1, d.teamBP2];
+    const ids = matchIsIndividual ? [d.teamAP1, d.teamAP2, d.teamBP1, d.teamBP2] : (side === 'a' ? [d.teamAP1, d.teamAP2] : [d.teamBP1, d.teamBP2]);
     ids.filter(Boolean).forEach(id => used.add(id));
   }
+  if (matchIsIndividual) Object.keys(weekPlayerUsage).forEach(id => used.add(id));
   return used;
 }
 
@@ -7451,28 +7580,57 @@ function usedPlayerIdsForSlot(c, field) {
   return used;
 }
 
+// A running count of pooled players picked so far on this page's courts, by
+// team — lets a coach see at a glance whether they're drawing fairly from
+// every team instead of leaning on just one or two.
+function tallyBarHtml() {
+  const counts = {}; matchPooledTeams.forEach(t => counts[t.id] = 0);
+  const rosterById = {}; matchPooledRoster.forEach(p => rosterById[p.id] = p);
+  Object.values(courtDrafts).forEach(d => {
+    [d.teamAP1, d.teamAP2, d.teamBP1, d.teamBP2].filter(Boolean).forEach(id => {
+      const p = rosterById[id];
+      if (p && counts[p._teamId] != null) counts[p._teamId]++;
+    });
+  });
+  const chips = matchPooledTeams.map(t => `<span class="badge badge-blue" style="margin-right:6px">${escQ(t.abbreviation || t.name)}: ${counts[t.id]}</span>`).join('');
+  return `<div class="card" id="match-tally-bar" style="margin-bottom:16px"><div class="card-body" style="padding:12px 16px">
+    <div style="font-size:12px;color:var(--ink-muted);margin-bottom:6px">Players selected so far, by team</div>${chips}
+  </div></div>`;
+}
+
+function updateTallyBar() {
+  if (!matchIsIndividual) return;
+  const el = document.getElementById('match-tally-bar');
+  if (el) el.outerHTML = tallyBarHtml();
+}
+
 function renderMatchScreen() {
-  const n = courtsForFormat();
+  const n = currentMatch.court_count || courtsForFormat();
   const isDoubles = currentLeague.format==='DOUBLES';
   const list = document.getElementById('match-courts-list');
   // Every court's draft must exist before any court renders, so duplicate-
   // player detection can see selections on courts not yet reached below.
   for (let c=1; c<=n; c++) initCourtDraft(c);
-  let html = '';
+  let html = matchIsIndividual ? tallyBarHtml() : '';
   for (let c=1; c<=n; c++) {
-    const atTeamA = (currentMatch.site_a_courts||[]).includes(c);
-    const siteLabel = atTeamA
+    const siteLabel = matchIsIndividual
       ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
-      : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name} — ${fmtDate(currentMatch.site_b_date)}`;
+      : ((currentMatch.site_a_courts||[]).includes(c)
+          ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
+          : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name} — ${fmtDate(currentMatch.site_b_date)}`);
     const d = courtDrafts[c];
+    const slot1Label = matchIsIndividual ? `Player${isDoubles?'/Pair':''} 1` : escQ(currentMatchTeamA.name);
+    const slot2Label = matchIsIndividual ? `Player${isDoubles?'/Pair':''} 2` : escQ(currentMatchTeamB.name);
+    const slot1Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterA, used);
+    const slot2Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterB, used);
     html += `<div class="card" style="margin-bottom:16px">
       <div class="card-header"><div class="card-title">Court ${c}</div><span class="badge badge-blue">${escQ(siteLabel)}</span></div>
       <div class="card-body">
         <div class="form-row">
           <div>
-            <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamA.name)}</div>
-            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP1, matchRosterA, usedPlayerIdsForSlot(c,'teamAP1'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamAP2, matchRosterA, usedPlayerIdsForSlot(c,'teamAP2'))}</select>`:''}
+            <div style="font-weight:700;margin-bottom:8px">${slot1Label}</div>
+            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP1, usedPlayerIdsForSlot(c,'teamAP1'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP2, usedPlayerIdsForSlot(c,'teamAP2'))}</select>`:''}
             <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
               <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
@@ -7480,9 +7638,9 @@ function renderMatchScreen() {
             </select>
           </div>
           <div>
-            <div style="font-weight:700;margin-bottom:8px">${escQ(currentMatchTeamB.name)}</div>
-            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP1, matchRosterB, usedPlayerIdsForSlot(c,'teamBP1'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${playerOptionsHtml(d.teamBP2, matchRosterB, usedPlayerIdsForSlot(c,'teamBP2'))}</select>`:''}
+            <div style="font-weight:700;margin-bottom:8px">${slot2Label}</div>
+            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP1, usedPlayerIdsForSlot(c,'teamBP1'))}</select>
+            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP2, usedPlayerIdsForSlot(c,'teamBP2'))}</select>`:''}
             <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
               <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
               <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
@@ -7640,15 +7798,33 @@ function updateCourtWinnerDisplay(c) {
   const d = courtDrafts[c];
   const w = courtWinner(d);
   const g = courtGames(d);
+  if (matchIsIndividual) {
+    const label = w==='A' ? 'Player/Pair 1' : w==='B' ? 'Player/Pair 2' : '—';
+    el.textContent = `Games: ${g.a} – ${g.b}  ·  Court winner so far: ${label}`;
+    return;
+  }
   const label = w==='A' ? currentMatchTeamA.name : w==='B' ? currentMatchTeamB.name : '—';
   el.textContent = `Games: ${currentMatchTeamA.name} ${g.a} – ${g.b} ${currentMatchTeamB.name}  ·  Court winner so far: ${label}`;
 }
 
 function renderMatchSummary() {
-  const n = courtsForFormat();
-  const s = matchSummary(courtDrafts, n);
+  const n = currentMatch.court_count || courtsForFormat();
   const enteredCount = Object.keys(currentMatchResults).length;
   const complete = enteredCount >= n;
+  if (matchIsIndividual) {
+    document.getElementById('match-summary-card').innerHTML = `
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:20px;font-weight:700">${escQ(currentMatchTeamA.name)}'s Courts — Week ${currentMatch.week_number}</div>
+            <div style="font-size:13px;color:var(--ink-muted);margin-top:4px">${enteredCount} of ${n} courts saved &nbsp;·&nbsp; Mixer league — results count toward each player's individual ranking, not a team score</div>
+          </div>
+          <span class="badge ${complete?'badge-green':'badge-blue'}">${complete?'Complete':'In Progress'}</span>
+        </div>
+      </div>`;
+    return;
+  }
+  const s = matchSummary(courtDrafts, n);
   const winnerName = s.winner==='A' ? currentMatchTeamA.name : s.winner==='B' ? currentMatchTeamB.name : 'Not yet decided';
   document.getElementById('match-summary-card').innerHTML = `
     <div class="card-body">
@@ -7837,7 +8013,16 @@ async function removeSubPoolEntry(id) {
 }
 
 // ── Match-level claiming (score entry screen) ──
+// Mixer/individual matches skip this entirely — pooling already lets a
+// coach pick anyone from any team directly on a court, so there's nothing
+// to "claim" the way team-mode borrows across two fixed sides.
 async function loadMatchSubPool() {
+  if (matchIsIndividual) {
+    const el = document.getElementById('match-subs-card');
+    if (el) el.innerHTML = '';
+    refreshCourtPlayerOptions();
+    return;
+  }
   const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name,phone)')
     .eq('league_id',currentLeague.id).eq('week_number',currentMatch.week_number);
   matchSubPool = data||[];
@@ -7858,7 +8043,7 @@ function updateEffectiveRostersWithSubs() {
 const SLOT_KEY_TO_FIELD = {'a-p1':'teamAP1','a-p2':'teamAP2','b-p1':'teamBP1','b-p2':'teamBP2'};
 
 function refreshCourtPlayerOptions() {
-  const n = courtsForFormat();
+  const n = currentMatch.court_count || courtsForFormat();
   const isDoubles = currentLeague.format==='DOUBLES';
   for (let c=1; c<=n; c++) {
     const slots = isDoubles ? ['a-p1','a-p2','b-p1','b-p2'] : ['a-p1','b-p1'];
@@ -7866,11 +8051,13 @@ function refreshCourtPlayerOptions() {
       const sel = document.getElementById(`court-${c}-${key}`);
       if (!sel) return;
       const side = key[0];
-      const roster = side==='a' ? matchRosterA : matchRosterB;
       const current = sel.value;
-      sel.innerHTML = playerOptionsHtml(current, roster, usedPlayerIdsForSlot(c, SLOT_KEY_TO_FIELD[key]));
+      sel.innerHTML = matchIsIndividual
+        ? pooledPlayerOptionsHtml(current, usedPlayerIdsForSlot(c, SLOT_KEY_TO_FIELD[key]))
+        : playerOptionsHtml(current, side==='a'?matchRosterA:matchRosterB, usedPlayerIdsForSlot(c, SLOT_KEY_TO_FIELD[key]));
     });
   }
+  updateTallyBar();
 }
 
 function renderMatchSubPanel() {
@@ -7954,7 +8141,6 @@ async function releaseSubClaim(poolId) {
 async function loadStandings() {
   const el = document.getElementById('league-standings-body');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
-  const n = courtsForFormat();
   const [{data:teams}, {data:matches}] = await Promise.all([
     sb.from('league_teams').select('id,name').eq('league_id',currentLeague.id),
     sb.from('league_matches').select('*').eq('league_id',currentLeague.id)
@@ -7970,6 +8156,7 @@ async function loadStandings() {
   (teams||[]).forEach(t=>{ stats[t.id] = {name:t.name, played:0, wins:0, losses:0, courtsFor:0, courtsAgainst:0, gamesFor:0, gamesAgainst:0}; });
 
   (matches||[]).forEach(m=>{
+    const n = m.court_count || courtsForFormat();
     const mResults = resultsByMatch[m.id] || [];
     if (mResults.length < n) return; // not fully entered yet — excluded from standings
     if (!stats[m.team_a_id] || !stats[m.team_b_id]) return;

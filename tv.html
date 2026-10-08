@@ -604,7 +604,9 @@
     // Which court numbers physically belong to this team's site this week —
     // site_a_courts for the team_a host, the complement for team_b, or (an
     // individual/mixer-mode match with no team_b) every court belongs here.
-    const totalCourts = league.format === 'DOUBLES' ? 4 : 3;
+    // Each team sets its own court count at team setup, so use the match's
+    // own resolved total rather than a fixed per-format constant.
+    const totalCourts = match.court_count || (league.format === 'DOUBLES' ? 4 : 3);
     const allCourtNums = Array.from({ length: totalCourts }, (_, i) => i + 1);
     const siteACourts = new Set(match.site_a_courts || []);
     const hostCourtNums = !match.team_b_id ? new Set(allCourtNums)
