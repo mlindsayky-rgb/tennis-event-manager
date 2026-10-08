@@ -1140,7 +1140,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <select class="form-select" id="league-format"><option value="SINGLES">Singles</option><option value="DOUBLES">Doubles</option></select>
         </div>
         <div class="form-group"><label class="form-label">Session Length <span class="req">*</span></label>
-          <select class="form-select" id="league-session-length"><option value="5">5 weeks</option><option value="10">10 weeks</option></select>
+          <select class="form-select" id="league-session-length" onchange="suggestLeagueEndDate()"><option value="5">5 weeks</option><option value="10">10 weeks</option></select>
         </div>
       </div>
       <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="2" max="16" placeholder="e.g. 4"><div class="form-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
@@ -1152,8 +1152,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="form-hint">Week 1 is practice, week 2 is a match, and so on — practice weeks don't get a match or lineup, teams just meet at their own locked time and location.</div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date"></div>
-        <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"></div>
+        <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date" onchange="suggestLeagueEndDate()"></div>
+        <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"><div class="form-hint">Auto-filled from Start Date + Session Length, rounded to the following Sunday so every team's weekday is covered — adjust it manually if you need something different.</div></div>
       </div>
       <div class="form-group">
         <label class="form-label">Dates Off</label>
@@ -5902,11 +5902,28 @@ function addLeagueDateOff() {
   }
   input.value='';
   renderDatesOffList();
+  suggestLeagueEndDate();
 }
 
 function removeLeagueDateOff(d) {
   leagueDatesOffDraft = leagueDatesOffDraft.filter(x=>x!==d);
   renderDatesOffList();
+  suggestLeagueEndDate();
+}
+
+// End Date = Start Date + Session Length, rounded forward to the following
+// Sunday (a league's teams can lock different weekdays, so the season should
+// fully cover the last week regardless of which day it was "started" on),
+// plus one bonus week per Date Off already added, to make room for a makeup.
+function suggestLeagueEndDate() {
+  const startVal = document.getElementById('league-start-date').value;
+  const weeks = parseInt(document.getElementById('league-session-length').value);
+  if (!startVal || !weeks) return;
+  const end = new Date(startVal + 'T00:00:00');
+  end.setDate(end.getDate() + weeks*7 - 1);
+  end.setDate(end.getDate() + (7 - end.getDay()) % 7);
+  end.setDate(end.getDate() + leagueDatesOffDraft.length*7);
+  document.getElementById('league-end-date').value = toISODate(end);
 }
 
 function renderDatesOffList() {
