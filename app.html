@@ -724,6 +724,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="event-nav-tab" id="league-nav-matches" onclick="leagueDetailTab('matches',this)">Matches</button>
     <button class="event-nav-tab" id="league-nav-subs" onclick="leagueDetailTab('subs',this)">Subs</button>
     <button class="event-nav-tab" id="league-nav-standings" onclick="leagueDetailTab('standings',this)">Standings</button>
+    <button class="event-nav-tab" id="league-nav-players" onclick="leagueDetailTab('players',this)">Players</button>
     <button class="event-nav-tab" id="league-nav-settings" onclick="leagueDetailTab('settings',this)">League Settings</button>
   </nav>
   <div class="content">
@@ -783,6 +784,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <div id="rankings-board-body" style="margin-top:16px"></div>
         </div>
       </div>
+    </div>
+    <div id="ltab-players" style="display:none">
+      <div class="section-header"><div><div class="section-title" style="font-size:16px">Player Data</div><div class="section-sub">Coach, director, and admin only — phone, most recent participation, win %, and recruiting notes for everyone on this league's rosters</div></div></div>
+      <div class="card"><div class="card-body" id="league-players-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
     <div id="ltab-settings" style="display:none">
       <div class="card"><div class="card-body" id="league-settings-body"></div></div>
@@ -6035,6 +6040,7 @@ function applyLeagueRoleGating() {
   backBtn.textContent = isStaff ? '← Back' : 'Sign Out';
   backBtn.onclick = isStaff ? closeLeague : logout;
   document.getElementById('league-nav-settings').style.display = isStaff ? '' : 'none';
+  document.getElementById('league-nav-players').style.display = (role==='admin'||role==='director'||role==='coach') ? '' : 'none';
   document.getElementById('league-change-pin-btn').style.display = (role==='director'||role==='coach'||role==='captain') ? 'inline-block' : 'none';
   if (role === 'coach' || role === 'captain') {
     computeUpNext(currentUser.team_id).then(upNext => renderUpNextCard('league-up-next-card', 'league-up-next-body', upNext));
@@ -6061,7 +6067,7 @@ function closeLeague() {
 function leagueDetailTab(name, btn) {
   document.querySelectorAll('#league-screen .event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['teams','matches','subs','standings','settings'].forEach(t=>{
+  ['teams','matches','subs','standings','players','settings'].forEach(t=>{
     document.getElementById('ltab-'+t).style.display = t===name?'block':'none';
   });
   const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
@@ -6077,6 +6083,7 @@ function leagueDetailTab(name, btn) {
     if (!isIndividual) loadStandings();
     loadRankings();
   }
+  if(name==='players') loadLeaguePlayers();
   if(name==='settings') renderLeagueSettings();
 }
 
@@ -6406,7 +6413,16 @@ async function loadPlayerDirectory() {
       return l && l.start_date <= today && l.end_date >= today;
     });
     if (isCurrent) {
-      rows.push({ id: pid, name: p.roster_name, email: p.email, phone: p.phone, status: 'Current', lastCoach: '', lastCaptain: '', lastPlayed: '' });
+      const currentEntry = rosterEntries.find(r => {
+        const l = r.league_teams?.leagues;
+        return l && l.start_date <= today && l.end_date >= today;
+      });
+      rows.push({
+        id: pid, name: p.roster_name, email: p.email, phone: p.phone, status: 'Current',
+        lastCoach: currentEntry?.league_teams?.coach_name || '',
+        lastCaptain: '',
+        lastPlayed: currentEntry?.league_teams?.leagues?.start_date || '',
+      });
     } else {
       const mostRecent = rosterEntries.slice().sort((a, b) => new Date(b.league_teams?.leagues?.end_date || 0) - new Date(a.league_teams?.leagues?.end_date || 0))[0];
       rows.push({
@@ -8333,6 +8349,67 @@ function renderRankingsBoard() {
   el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Matches</th><th>Win %</th><th>Games %</th></tr></thead><tbody>
     ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.matches}</td><td>${pct(r.winPct)}</td><td>${pct(r.gamesPct)}</td></tr>`).join('')}
     </tbody></table>`;
+}
+
+// ══════════════════════════════════════════════
+// LEAGUE PLAYER DATA — coach-and-above tab (never captain). Phone, most
+// recent participation, win % (reuses computeLeagueRankings), and a
+// recruiting note per player — lets a coach/director track who to go
+// after again if someone drops off a roster.
+// ══════════════════════════════════════════════
+async function loadLeaguePlayers() {
+  const el = document.getElementById('league-players-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const teamIds = currentLeagueTeams.map(t => t.id);
+  const [{ data: rosterRows }, rankings] = await Promise.all([
+    teamIds.length
+      ? sb.from('league_team_players').select('player_id,team_id,players(id,roster_name,phone,notes)').in('team_id', teamIds)
+      : Promise.resolve({ data: [] }),
+    computeLeagueRankings(),
+  ]);
+  const rankByPlayer = {}; rankings.forEach(r => { rankByPlayer[r.player_id] = r; });
+  const teamById = {}; currentLeagueTeams.forEach(t => { teamById[t.id] = t; });
+  const startYear = currentLeague.start_date ? parseDateSafe(currentLeague.start_date).getFullYear() : '—';
+
+  const seen = new Set();
+  const rows = [];
+  (rosterRows || []).forEach(r => {
+    const p = r.players;
+    if (!p || seen.has(p.id)) return;
+    seen.add(p.id);
+    const team = teamById[r.team_id];
+    const rk = rankByPlayer[p.id];
+    rows.push({
+      id: p.id, name: p.roster_name, phone: p.phone, notes: p.notes || '',
+      lastPlayed: `Current — ${escQ(team?.coach_name || '—')} (${startYear})`,
+      winPct: rk ? rk.winPct : 0, hasMatches: rk ? rk.matches > 0 : false,
+    });
+  });
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  renderLeaguePlayers(rows);
+}
+
+function renderLeaguePlayers(rows) {
+  const el = document.getElementById('league-players-list');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 0"><div class="empty-sub">No players rostered yet</div></div>';
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Last Played</th><th>Win %</th><th>Notes</th></tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td>${escQ(r.name)}</td>
+      <td style="font-size:12px;color:var(--ink-muted)">${escQ(r.phone) || '—'}</td>
+      <td style="font-size:12px;color:var(--ink-muted)">${r.lastPlayed}</td>
+      <td>${r.hasMatches ? Math.round(r.winPct * 100) + '%' : '—'}</td>
+      <td><input class="form-input" style="font-size:12px" value="${escQ(r.notes)}" placeholder="Add a note…" onchange="saveLeaguePlayerNote('${r.id}',this.value)"></td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function saveLeaguePlayerNote(playerId, value) {
+  const { error } = await sb.from('players').update({ notes: value }).eq('id', playerId);
+  if (error) { toast('Error saving note: ' + error.message, 'error'); return; }
+  toast('Note saved', 'success');
 }
 
 async function loadPlayers(containerId, filterMode) {
