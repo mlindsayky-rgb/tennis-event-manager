@@ -7221,7 +7221,7 @@ function renderLeagueMatches(matches, teams, resultCounts) {
       <div class="event-card-accent ${status.accentClass}"></div>
       <div class="event-card-body">
         <div>
-          <div class="event-card-name">${fmtMonthDay(m.site_a_date)} 🎾 Match Week${matchHeaderLocationHtml(m.site_a_date, teamA?.time_slot_time, teamA?.clubs?.name, teamB?m.site_b_date:null, teamB?.time_slot_time, teamB?.clubs?.name)}</div>
+          <div class="event-card-name">${fmtMonthDay(m.site_a_date)} 🎾 Match${matchHeaderLocationHtml(m.site_a_date, teamA?.time_slot_time, teamA?.clubs?.name, teamB?m.site_b_date:null, teamB?.time_slot_time, teamB?.clubs?.name)}</div>
           <div class="event-card-meta"><span>Week ${m.week_number}</span><span>${entered} of ${n} courts entered</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -7253,7 +7253,7 @@ function renderLeagueMatches(matches, teams, resultCounts) {
       <div class="event-card-accent" style="background:var(--ink-muted)"></div>
       <div class="event-card-body">
         <div style="width:100%">
-          <div class="event-card-name">${fmtMonthDay(weekStartISO)} 🏃 Practice Week</div>
+          <div class="event-card-name">${fmtMonthDay(weekStartISO)} 🏃 Practice</div>
           <div class="event-card-meta"><span>Week ${weekNumber}</span><span>No lineup needed</span></div>
           ${rows}
         </div>
@@ -7409,10 +7409,10 @@ async function openMatchById(id) {
 
   if (matchIsIndividual) {
     await loadPooledRosterAndWeekUsage(match);
-    document.getElementById('match-header-name').innerHTML = `🎾 Match Week${matchHeaderLocationHtml(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)} <span class="badge badge-blue" style="margin-left:8px">Mixer · Week ${match.week_number}</span>`;
+    document.getElementById('match-header-name').innerHTML = `🎾 Match${matchHeaderLocationHtml(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)} <span class="badge badge-blue" style="margin-left:8px">Mixer · Week ${match.week_number}</span>`;
     document.getElementById('match-header-sub').innerHTML = `${teamAvatarHtml(teamA,16)} ${escQ(teamA.name)}'s courts · ${siteLine(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)}`;
   } else {
-    document.getElementById('match-header-name').innerHTML = `🎾 Match Week${matchHeaderLocationHtml(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name, match.site_b_date, teamB.time_slot_time, teamB.clubs?.name)}`;
+    document.getElementById('match-header-name').innerHTML = `🎾 Match${matchHeaderLocationHtml(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name, match.site_b_date, teamB.time_slot_time, teamB.clubs?.name)}`;
     document.getElementById('match-header-sub').innerHTML = `Week ${match.week_number} · ${teamAvatarHtml(teamA,16)} ${escQ(teamA.name)}: ${siteLine(match.site_a_date, teamA.time_slot_time, teamA.clubs?.name)} · ${teamAvatarHtml(teamB,16)} ${escQ(teamB.name)}: ${siteLine(match.site_b_date, teamB.time_slot_time, teamB.clubs?.name)}`;
   }
   const isStaff = currentUser?.role === 'admin' || currentUser?.role === 'director';
