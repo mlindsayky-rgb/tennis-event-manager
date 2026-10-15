@@ -58,7 +58,10 @@
   let activeWeek = null;
 
   function escQ(s) { return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
-  function fmtDateFull(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }); }
+  // A bare "YYYY-MM-DD" date parses as UTC midnight, then renders in the
+  // browser's local timezone — shifting the displayed day/weekday back by
+  // one in any timezone behind UTC. Anchor it to local midnight instead.
+  function fmtDateFull(d) { if (!d) return '—'; return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' }); }
   function fmtTime(t) {
     if (!t) return '—';
     const [h,m] = t.split(':').map(Number);

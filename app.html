@@ -9422,8 +9422,17 @@ function statusBadge(s) {
   const l={DRAFT:'Draft',ROSTER_LOADED:'Roster Loaded',TEAMS_SET:'Teams Set',LIVE:'🟢 Live',COMPLETE:'Complete'};
   return `<span class="badge ${m[s]||'badge-gray'}">${l[s]||s}</span>`;
 }
-function fmtDate(d){if(!d)return'—';return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
-function fmtDateFull(d){if(!d)return'—';return new Date(d).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});}
+// A bare "YYYY-MM-DD" date (no time component) is parsed as UTC midnight by
+// the Date constructor, then rendered back in the browser's LOCAL timezone —
+// which silently shifts the displayed day (and weekday) back by one in any
+// timezone behind UTC. Append a local midnight time to those; a real
+// timestamp (already has a "T") is left alone, since converting it to local
+// time for display is correct there.
+function parseDateSafe(d) {
+  return (typeof d === 'string' && !d.includes('T')) ? new Date(d + 'T00:00:00') : new Date(d);
+}
+function fmtDate(d){if(!d)return'—';return parseDateSafe(d).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
+function fmtDateFull(d){if(!d)return'—';return parseDateSafe(d).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric',year:'numeric'});}
 function toast(msg,type='default'){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;document.getElementById('toast-container').appendChild(el);setTimeout(()=>el.remove(),3500);}
 function delay(ms){return new Promise(r=>setTimeout(r,ms));}
 </script>
