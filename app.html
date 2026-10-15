@@ -7179,6 +7179,13 @@ function fmtDayTime(date, time) {
   return `${day}, ${fmtTime(time)}`;
 }
 
+// "Oct 26" — the calendar-scan prefix on a schedule card's title, so a
+// coach can find a week by date at a glance without reading the rest.
+function fmtMonthDay(date) {
+  if (!date) return '';
+  return parseDateSafe(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 // The "Match Week" header's location suffix — practice club and match club
 // can differ (or two teams in one match can each host their own side), so
 // the header spells out exactly where/when, with the day/time bolded.
@@ -7210,15 +7217,12 @@ function renderLeagueMatches(matches, teams, resultCounts) {
     const status = matchStatusInfo(entered, n);
     const onDayOff = datesOff.includes(m.site_a_date) || datesOff.includes(m.site_b_date);
     const teamA = teamById(m.team_a_id), teamB = m.team_b_id ? teamById(m.team_b_id) : null;
-    const siteALine = `<strong>${escQ(teamA?.name||'—')}</strong> — ${siteLine(m.site_a_date, teamA?.time_slot_time, teamA?.clubs?.name)}`;
-    const siteBLine = teamB ? `<strong>${escQ(teamB?.name||'—')}</strong> — ${siteLine(m.site_b_date, teamB?.time_slot_time, teamB?.clubs?.name)}` : '';
     return `<div class="event-card" onclick="openMatchById('${m.id}')">
       <div class="event-card-accent ${status.accentClass}"></div>
       <div class="event-card-body">
         <div>
-          <div class="event-card-name">🎾 Match Week${matchHeaderLocationHtml(m.site_a_date, teamA?.time_slot_time, teamA?.clubs?.name, teamB?m.site_b_date:null, teamB?.time_slot_time, teamB?.clubs?.name)}</div>
+          <div class="event-card-name">${fmtMonthDay(m.site_a_date)} 🎾 Match Week${matchHeaderLocationHtml(m.site_a_date, teamA?.time_slot_time, teamA?.clubs?.name, teamB?m.site_b_date:null, teamB?.time_slot_time, teamB?.clubs?.name)}</div>
           <div class="event-card-meta"><span>Week ${m.week_number}</span><span>${entered} of ${n} courts entered</span></div>
-          <div style="font-size:12px;color:var(--ink-muted);margin-top:4px">${siteALine}${siteBLine?`<br>${siteBLine}`:''}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           ${onDayOff?'<span class="badge badge-red">⚠ Falls on a day off</span>':''}
@@ -7239,6 +7243,7 @@ function renderLeagueMatches(matches, teams, resultCounts) {
   // day/date/time/club for that week, so the season reads top-to-bottom.
   const practiceCard = weekNumber => {
     const weekStart = seasonWeekDates(currentLeague).find(w => w.weekNumber === weekNumber)?.weekStart;
+    const weekStartISO = weekStart ? toISODate(weekStart) : null;
     const rows = (currentLeagueTeams||[]).filter(t => t.time_slot_day != null)
       .map(t => ({ t, date: weekStart ? toISODate(dateForTeamInWeek(weekStart, t.time_slot_day)) : null }))
       .sort((a, b) => `${a.date}T${a.t.time_slot_time||'00:00:00'}`.localeCompare(`${b.date}T${b.t.time_slot_time||'00:00:00'}`) || a.t.name.localeCompare(b.t.name))
@@ -7248,7 +7253,7 @@ function renderLeagueMatches(matches, teams, resultCounts) {
       <div class="event-card-accent" style="background:var(--ink-muted)"></div>
       <div class="event-card-body">
         <div style="width:100%">
-          <div class="event-card-name">🏃 Practice Week</div>
+          <div class="event-card-name">${fmtMonthDay(weekStartISO)} 🏃 Practice Week</div>
           <div class="event-card-meta"><span>Week ${weekNumber}</span><span>No lineup needed</span></div>
           ${rows}
         </div>
