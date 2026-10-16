@@ -1198,7 +1198,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date" onchange="suggestLeagueEndDate()"></div>
-        <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"><div class="form-hint">Auto-filled from Start Date + Session Length, rounded to the following Sunday so every team's weekday is covered — adjust it manually if you need something different.</div></div>
+        <div class="form-group"><label class="form-label">End Date <span class="req">*</span></label><input class="form-input" id="league-end-date" type="date"><div class="form-hint">Auto-filled from Start Date + Session Length (Start Date counts as week 1) — adjust it manually if you need something different.</div></div>
       </div>
       <div class="form-group">
         <label class="form-label">Dates Off</label>
@@ -5990,18 +5990,18 @@ function removeLeagueDateOff(d) {
   suggestLeagueEndDate();
 }
 
-// End Date = Start Date + Session Length, rounded forward to the following
-// Sunday (a league's teams can lock different weekdays, so the season should
-// fully cover the last week regardless of which day it was "started" on),
-// plus one bonus week per Date Off already added, to make room for a makeup.
+// End Date = Start Date + Session Length. The start date is day 1 of week 1,
+// so N weeks later lands on N*7-1 days out (the last day of week N) — no
+// rounding to a calendar week needed, since any rolling 7-day block from the
+// start date already contains every weekday exactly once (matches
+// dateForTeamInWeek's own week-start math). Each Date Off adds one full
+// bonus week, to make room for a makeup.
 function suggestLeagueEndDate() {
   const startVal = document.getElementById('league-start-date').value;
   const weeks = parseInt(document.getElementById('league-session-length').value);
   if (!startVal || !weeks) return;
   const end = new Date(startVal + 'T00:00:00');
-  end.setDate(end.getDate() + weeks*7 - 1);
-  end.setDate(end.getDate() + (7 - end.getDay()) % 7);
-  end.setDate(end.getDate() + leagueDatesOffDraft.length*7);
+  end.setDate(end.getDate() + weeks*7 - 1 + leagueDatesOffDraft.length*7);
   document.getElementById('league-end-date').value = toISODate(end);
 }
 
