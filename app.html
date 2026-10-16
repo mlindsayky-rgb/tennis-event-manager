@@ -566,6 +566,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" onclick="adminTab('events',this)">Events</button>
     <button class="nav-tab" onclick="adminTab('leagues',this)">Leagues</button>
     <button class="nav-tab" onclick="adminTab('directory',this)">Player Directory</button>
+    <button class="nav-tab" onclick="adminTab('missing',this)">Missing Data</button>
     <button class="nav-tab" onclick="adminTab('settings',this)">Settings</button>
   </nav>
   <div class="content">
@@ -620,6 +621,12 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </label>
       </div>
       <div class="card"><div id="player-directory-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
+    </div>
+    <div id="tab-missing" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Missing Data</div><div class="section-sub">Every player missing a last name, phone number, or home club — edit right here, it saves straight to their player record and shows up everywhere that record is used</div></div>
+      </div>
+      <div class="card"><div id="missing-data-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
     <div id="tab-events" style="display:none">
       <div class="section-header">
@@ -5630,7 +5637,7 @@ let adminAllEvents = [], adminEventFilter = 'all';
 function adminTab(name,btn) {
   document.querySelectorAll('#admin-screen .nav-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
-  ['overview','clubs','directors','players','directory','events','leagues','settings'].forEach(t=>{
+  ['overview','clubs','directors','players','directory','missing','events','leagues','settings'].forEach(t=>{
     const el = document.getElementById(`tab-${t}`);
     if(el) el.style.display = t===name?'block':'none';
   });
@@ -5638,6 +5645,7 @@ function adminTab(name,btn) {
   if(name==='directors') loadDirectors();
   if(name==='players') loadPlayers('players-list');
   if(name==='directory') loadPlayerDirectory();
+  if(name==='missing') loadMissingData();
   if(name==='events') loadAdminEvents();
   if(name==='leagues') loadLeagues();
   if(name==='settings') {
@@ -6497,6 +6505,69 @@ function exportPlayerDirectory() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Player Directory');
   XLSX.writeFile(wb, `player-directory-${inactiveOnly ? 'inactive-' : ''}${toISODate(new Date())}.xlsx`);
+}
+
+// ══════════════════════════════════════════════
+// MISSING DATA — every player record missing a last name, phone, or home
+// club, editable right in the list. Writes go straight to the players
+// table, so they're immediately reflected everywhere that record is read
+// (rosters, lineups, the directory, league Players tabs, etc.) — there's
+// nothing separate to keep in sync.
+// ══════════════════════════════════════════════
+let missingDataClubs = [];
+
+// A name with fewer than two words is missing its last name (every real
+// example we've seen bulk-uploaded has been a first-name-only entry, never
+// a bare last name, so there's no reliable way to tell those apart —
+// surfacing it as "incomplete" and letting the admin type the full name
+// is simpler and more honest than guessing which half is missing).
+function playerMissingFields(p) {
+  const missing = [];
+  const words = (p.roster_name || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length < 2) missing.push('Last Name');
+  if (!p.phone) missing.push('Phone');
+  if (!p.home_club_id) missing.push('Club');
+  return missing;
+}
+
+async function loadMissingData() {
+  const el = document.getElementById('missing-data-list');
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const [{ data: players }, { data: clubs }] = await Promise.all([
+    sb.from('players').select('id,roster_name,phone,home_club_id').order('roster_name'),
+    sb.from('clubs').select('id,name').order('name'),
+  ]);
+  missingDataClubs = clubs || [];
+  const rows = (players || [])
+    .map(p => ({ ...p, missing: playerMissingFields(p) }))
+    .filter(p => p.missing.length);
+  renderMissingDataList(rows);
+}
+
+function renderMissingDataList(rows) {
+  const el = document.getElementById('missing-data-list');
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Nothing missing</div><div class="empty-sub">Every player has a full name, phone number, and home club on file</div></div>';
+    return;
+  }
+  const clubOptionsHtml = selectedId => '<option value="">Select club…</option>' +
+    missingDataClubs.map(c => `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${escQ(c.name)}</option>`).join('');
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Home Club</th><th>Missing</th></tr></thead><tbody>
+    ${rows.map(p => `<tr id="missing-row-${p.id}">
+      <td><input class="form-input" style="font-size:13px;min-width:180px" value="${escQ(p.roster_name)}" onchange="saveMissingDataField('${p.id}','roster_name',this.value)"></td>
+      <td><input class="form-input" style="font-size:13px;min-width:140px" value="${escQ(p.phone)||''}" placeholder="555-123-4567" onchange="saveMissingDataField('${p.id}','phone',this.value)"></td>
+      <td><select class="form-select" style="font-size:13px;min-width:160px" onchange="saveMissingDataField('${p.id}','home_club_id',this.value)">${clubOptionsHtml(p.home_club_id)}</select></td>
+      <td>${p.missing.map(m => `<span class="badge badge-red" style="margin-right:4px">${escQ(m)}</span>`).join('')}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function saveMissingDataField(playerId, field, value) {
+  const payload = { [field]: value.trim ? (value.trim() || null) : (value || null) };
+  const { error } = await sb.from('players').update(payload).eq('id', playerId);
+  if (error) { toast('Error saving: ' + error.message, 'error'); return; }
+  toast('Saved', 'success');
+  loadMissingData();
 }
 
 function refreshRosterCountBadge() {
