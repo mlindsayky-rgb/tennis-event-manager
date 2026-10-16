@@ -492,6 +492,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   .pin-card { padding: 40px 24px; }
   .team-grid { grid-template-columns: 1fr; }
   .builder-toolbar { gap: 10px; }
+  /* Generating a full schedule is a desktop, director/admin-only action —
+     too easy to tap by accident on the narrow real estate of a phone. */
+  #generate-schedule-btn-wrap { display: none !important; }
 }
 </style>
 </head>
