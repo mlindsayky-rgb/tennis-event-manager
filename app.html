@@ -5852,6 +5852,18 @@ let leagueDatesOffDraft = [];
 let editLeagueId = null;
 let editTeamId = null;
 
+// Maps the weekday word embedded in a league's name (e.g. "Sapphire Wed
+// Evening Women's Doubles") to a Mon=0..Sun=6 sort index, so leagues list
+// by day of week rather than by creation/start date. Leagues with no
+// recognizable weekday in their name sort to the end.
+const LEAGUE_DAY_ORDER = ['mon','tue','wed','thu','fri','sat','sun'];
+function leagueDayIndex(name) {
+  const m = (name||'').match(/\b(mon(day)?|tue(s|sday)?|wed(nesday)?|thu(rs|rsday)?|fri(day)?|sat(urday)?|sun(day)?)\b/i);
+  if (!m) return LEAGUE_DAY_ORDER.length;
+  const idx = LEAGUE_DAY_ORDER.indexOf(m[0].slice(0,3).toLowerCase());
+  return idx === -1 ? LEAGUE_DAY_ORDER.length : idx;
+}
+
 async function loadLeagues(containerId) {
   containerId = containerId || 'leagues-list';
   const el = document.getElementById(containerId);
@@ -5862,7 +5874,8 @@ async function loadLeagues(containerId) {
   ]);
   const counts = {};
   (teams||[]).forEach(t=>{ counts[t.league_id]=(counts[t.league_id]||0)+1; });
-  renderLeaguesList(leagues||[], counts, containerId);
+  const sorted = (leagues||[]).slice().sort((a,b)=>leagueDayIndex(a.name)-leagueDayIndex(b.name));
+  renderLeaguesList(sorted, counts, containerId);
 }
 
 function renderLeaguesList(leagues, counts, containerId) {
