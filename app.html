@@ -735,7 +735,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div id="league-teams-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-matches" style="display:none">
-      <div id="generate-schedule-btn-wrap" style="margin-bottom:16px"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
+      <div style="position:relative;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center;min-height:40px">
+        <div id="matches-schedule-title" style="font-family:var(--font-display);font-size:28px;font-weight:400;color:var(--navy);text-align:center;letter-spacing:-.3px"></div>
+        <div id="generate-schedule-btn-wrap" style="position:absolute;right:0;top:50%;transform:translateY(-50%)"><button class="btn btn-secondary" onclick="generateFullSchedule()">⚡ Generate Full Schedule</button></div>
+      </div>
       <div id="league-matches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
     <div id="ltab-subs" style="display:none">
@@ -6080,7 +6083,11 @@ function leagueDetailTab(name, btn) {
   if(name==='teams') { actionBtn.style.display=isStaff?'inline-block':'none'; actionBtn.textContent='+ Add Team'; actionBtn.onclick=openTeamModalNew; }
   else if(name==='matches') { actionBtn.style.display=isStaff?'inline-block':'none'; actionBtn.textContent='+ New Match'; actionBtn.onclick=openNewMatchModal; }
   else { actionBtn.style.display='none'; }
-  if(name==='matches') { loadLeagueMatches(); document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none'; }
+  if(name==='matches') {
+    document.getElementById('matches-schedule-title').textContent = currentLeague.name;
+    loadLeagueMatches();
+    document.getElementById('generate-schedule-btn-wrap').style.display = isStaff?'':'none';
+  }
   if(name==='subs') { loadInterestedSubs(); loadSubPool(); }
   if(name==='standings') {
     const isIndividual = currentLeague.league_mode === 'individual';
