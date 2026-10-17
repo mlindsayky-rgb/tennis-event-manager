@@ -565,6 +565,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" onclick="adminTab('players',this)">Players</button>
     <button class="nav-tab" onclick="adminTab('events',this)">Events</button>
     <button class="nav-tab" onclick="adminTab('leagues',this)">Leagues</button>
+    <button class="nav-tab" onclick="adminTab('coaches',this)">Coaches</button>
     <button class="nav-tab" onclick="adminTab('directory',this)">Player Directory</button>
     <button class="nav-tab" onclick="adminTab('missing',this)">Missing Data</button>
     <button class="nav-tab" onclick="adminTab('settings',this)">Settings</button>
@@ -660,6 +661,22 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button>
       </div>
       <div id="leagues-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+
+    <div id="tab-coaches" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Coaches</div><div class="section-sub">One shared record per coach — editing a name, phone, or email here (or from a team) updates it everywhere that coach is assigned</div></div>
+      </div>
+      <div class="card"><div class="card-body">
+        <div class="form-row" style="align-items:flex-end">
+          <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="new-coach-name" placeholder="Full name"></div>
+          <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="new-coach-phone" placeholder="(555) 555-5555"></div>
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="new-coach-email" type="email" placeholder="coach@email.com"></div>
+          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-primary" onclick="addCoach()">+ Add Coach</button></div>
+        </div>
+        <div id="new-coach-error" class="alert alert-error" style="display:none;margin-top:10px"></div>
+      </div></div>
+      <div class="card" style="margin-top:20px"><div id="coaches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
 
     <div id="tab-settings" style="display:none">
@@ -1007,6 +1024,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" id="dir-nav-events" onclick="dirTab('events',this)">Events</button>
     <button class="nav-tab" id="dir-nav-leagues" onclick="dirTab('leagues',this)" style="display:none">Leagues</button>
     <button class="nav-tab" id="dir-nav-players" onclick="dirTab('players',this)">Players</button>
+    <button class="nav-tab" onclick="dirTab('coaches',this)">Coaches</button>
     <button class="nav-tab" onclick="dirTab('missing',this)">Missing Data</button>
     <button class="nav-tab" onclick="dirTab('notes',this)">Notes</button>
   </nav>
@@ -1048,6 +1066,21 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button>
       </div>
       <div id="dir-leagues-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+    <div id="dir-tab-coaches" style="display:none">
+      <div class="section-header">
+        <div><div class="section-title">Coaches</div><div class="section-sub">One shared record per coach — editing a name, phone, or email here (or from a team) updates it everywhere that coach is assigned</div></div>
+      </div>
+      <div class="card"><div class="card-body">
+        <div class="form-row" style="align-items:flex-end">
+          <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="dir-new-coach-name" placeholder="Full name"></div>
+          <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="dir-new-coach-phone" placeholder="(555) 555-5555"></div>
+          <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="dir-new-coach-email" type="email" placeholder="coach@email.com"></div>
+          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-primary" onclick="addCoach('dir-')">+ Add Coach</button></div>
+        </div>
+        <div id="dir-new-coach-error" class="alert alert-error" style="display:none;margin-top:10px"></div>
+      </div></div>
+      <div class="card" style="margin-top:20px"><div id="dir-coaches-list"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
     </div>
     <div id="dir-tab-missing" style="display:none">
       <div class="section-header">
@@ -1250,7 +1283,12 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <select class="form-select" id="team-coach-player" onchange="autofillCoachFromPlayer(this.value)"><option value="">— Coach is not a current player —</option></select>
           <div class="form-hint">Optional. If the coach already plays in the system, linking auto-fills their name.</div>
         </div>
-        <div class="form-group"><label class="form-label">Coach Name <span class="req">*</span></label><input class="form-input" id="team-coach-name" placeholder="Full name"></div>
+        <div class="form-group">
+          <label class="form-label">Coach Name <span class="req">*</span></label>
+          <input class="form-input" id="team-coach-name" list="team-coach-datalist" placeholder="Start typing to pick an existing coach, or enter a new one" oninput="onTeamCoachNameInput(this.value)">
+          <datalist id="team-coach-datalist"></datalist>
+          <div class="form-hint" id="team-coach-match-hint" style="display:none"></div>
+        </div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">Coach Phone</label><input class="form-input" id="team-coach-phone" placeholder="(555) 555-5555"></div>
           <div class="form-group"><label class="form-label">Coach Email</label><input class="form-input" id="team-coach-email" type="email" placeholder="coach@email.com"></div>
@@ -5649,7 +5687,7 @@ let adminAllEvents = [], adminEventFilter = 'all';
 function adminTab(name,btn) {
   document.querySelectorAll('#admin-screen .nav-tab').forEach(t=>t.classList.remove('active'));
   btn.classList.add('active');
-  ['overview','clubs','directors','players','directory','missing','events','leagues','settings'].forEach(t=>{
+  ['overview','clubs','directors','players','directory','missing','events','leagues','coaches','settings'].forEach(t=>{
     const el = document.getElementById(`tab-${t}`);
     if(el) el.style.display = t===name?'block':'none';
   });
@@ -5660,6 +5698,7 @@ function adminTab(name,btn) {
   if(name==='missing') loadMissingData();
   if(name==='events') loadAdminEvents();
   if(name==='leagues') loadLeagues();
+  if(name==='coaches') loadCoaches('coaches-list');
   if(name==='settings') {
     document.getElementById('auto-lookup-toggle').checked = AUTO_LOOKUP;
     document.getElementById('lookup-states-input').value = LOOKUP_STATES.join(', ');
@@ -5753,11 +5792,12 @@ function renderAdminEvents() {
 function dirTab(name,btn) {
   document.querySelectorAll('#director-screen .nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['events','leagues','players','missing','notes'].forEach(t=>{
+  ['events','leagues','players','coaches','missing','notes'].forEach(t=>{
     document.getElementById(`dir-tab-${t}`).style.display = t===name?'block':'none';
   });
   if(name==='players') loadPlayers('dir-players-list');
   if(name==='leagues') loadLeagues('dir-leagues-list');
+  if(name==='coaches') loadCoaches('dir-coaches-list');
   if(name==='missing') loadMissingData('dir-missing-data-list');
 }
 
@@ -6816,12 +6856,154 @@ async function populateTeamSelects(selectedClub, selectedPlayer) {
   const {data:players}=await sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name');
   (players||[]).forEach(p=>{const o=document.createElement('option');o.value=p.id;o.textContent=p.roster_name;playerSel.appendChild(o);});
   playerSel.value=selectedPlayer||'';
+
+  await loadTeamCoachDatalist();
 }
 
 function autofillCoachFromPlayer(playerId) {
   if(!playerId) return;
   const opt = document.querySelector(`#team-coach-player option[value="${playerId}"]`);
   if(opt) document.getElementById('team-coach-name').value = opt.textContent;
+  onTeamCoachNameInput(document.getElementById('team-coach-name').value);
+}
+
+// ══════════════════════════════════════════════
+// COACH DIRECTORY — a coach is one shared record (name/phone/email) that
+// can be linked to many teams, so correcting a typo or updating a phone
+// number in one place fixes it everywhere that coach is assigned, instead
+// of every team carrying its own independently-typed copy.
+// ══════════════════════════════════════════════
+let teamModalCoaches = [];
+
+async function loadTeamCoachDatalist() {
+  const {data} = await sb.from('coaches').select('id,name,phone,email').order('name');
+  teamModalCoaches = data || [];
+  document.getElementById('team-coach-datalist').innerHTML =
+    teamModalCoaches.map(c=>`<option value="${escQ(c.name)}">`).join('');
+}
+
+function findCoachByName(name) {
+  const norm = (name||'').trim().toLowerCase();
+  if (!norm) return null;
+  return teamModalCoaches.find(c => c.name.trim().toLowerCase() === norm) || null;
+}
+
+// Typing/picking a name that exactly matches an existing coach auto-fills
+// their phone/email and shows which coach it'll link to — reassurance that
+// re-typing "Coach Sarah" the same way again reuses her, not a duplicate.
+function onTeamCoachNameInput(name) {
+  const hint = document.getElementById('team-coach-match-hint');
+  const match = findCoachByName(name);
+  if (match) {
+    document.getElementById('team-coach-phone').value = match.phone || '';
+    document.getElementById('team-coach-email').value = match.email || '';
+    hint.textContent = `Linking to existing coach "${match.name}" — editing phone/email here updates it on all of their teams.`;
+    hint.style.display = 'block';
+  } else {
+    hint.style.display = 'none';
+  }
+}
+
+// Finds-or-creates the canonical coach record for whatever's currently in
+// the modal, updates it if the name matched but phone/email changed, and
+// pushes the result out to every OTHER team already linked to that coach —
+// the actual "same source of truth everywhere" behavior.
+// Pushes a coach's current name/phone/email onto every team linked to them
+// — the one place that keeps "a coach is a coach" true across the app.
+async function syncCoachToTeams(coachId, name, phone, email) {
+  await sb.from('league_teams').update({coach_name: name, coach_phone: phone, coach_email: email}).eq('coach_id', coachId);
+}
+
+async function resolveTeamCoach(name, phone, email) {
+  const match = findCoachByName(name);
+  let coachId, finalName = name;
+  if (match) {
+    coachId = match.id;
+    finalName = match.name; // keep the already-canonical spelling/casing
+    if ((match.phone||null) !== phone || (match.email||null) !== email) {
+      await sb.from('coaches').update({phone, email, updated_at: new Date().toISOString()}).eq('id', coachId);
+    }
+  } else {
+    const {data, error} = await sb.from('coaches').insert({name, phone, email}).select().single();
+    if (error) throw error;
+    coachId = data.id;
+  }
+  await syncCoachToTeams(coachId, finalName, phone, email);
+  return {coachId, name: finalName, phone, email};
+}
+
+// ══════════════════════════════════════════════
+// ADMIN COACHES TAB — the full directory, editable inline. Every edit here
+// writes straight to the shared coaches row and then syncs it out to every
+// team that coach is on (same propagation resolveTeamCoach does).
+// ══════════════════════════════════════════════
+let coachesListCache = [];
+let coachesContainerId = 'coaches-list';
+
+async function loadCoaches(containerId) {
+  coachesContainerId = containerId || 'coaches-list';
+  const el = document.getElementById(coachesContainerId);
+  el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+  const [{data:coaches}, {data:teams}] = await Promise.all([
+    sb.from('coaches').select('id,name,phone,email').order('name'),
+    sb.from('league_teams').select('coach_id,name'),
+  ]);
+  coachesListCache = coaches || [];
+  const teamsByCoach = {};
+  (teams||[]).forEach(t=>{ if(t.coach_id){ (teamsByCoach[t.coach_id]=teamsByCoach[t.coach_id]||[]).push(t.name); } });
+  renderCoachesList(teamsByCoach);
+}
+
+function renderCoachesList(teamsByCoach) {
+  const el = document.getElementById(coachesContainerId);
+  if (!coachesListCache.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">🧑‍🏫</div><div class="empty-title">No coaches yet</div><div class="empty-sub">Add one above, or just type a coach name the next time you create a team</div></div>';
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Teams</th></tr></thead><tbody>
+    ${coachesListCache.map(c => `<tr id="coach-row-${c.id}">
+      <td><input class="form-input" style="font-size:13px;min-width:160px" value="${escQ(c.name)}" onchange="saveCoachField('${c.id}','name',this.value)"></td>
+      <td><input class="form-input" style="font-size:13px;min-width:140px" value="${escQ(c.phone)||''}" placeholder="555-123-4567" onchange="saveCoachField('${c.id}','phone',this.value)"></td>
+      <td><input class="form-input" style="font-size:13px;min-width:180px" value="${escQ(c.email)||''}" placeholder="coach@email.com" onchange="saveCoachField('${c.id}','email',this.value)"></td>
+      <td style="font-size:12px;color:var(--ink-muted)">${(teamsByCoach[c.id]||[]).map(escQ).join(', ') || '—'}</td>
+    </tr>`).join('')}
+    </tbody></table>`;
+}
+
+async function saveCoachField(coachId, field, value) {
+  const val = value.trim();
+  if (field === 'name' && !val) { toast('Coach name is required','error'); loadCoaches(coachesContainerId); return; }
+  const payload = { [field]: field==='name' ? val : (val||null), updated_at: new Date().toISOString() };
+  const { error } = await sb.from('coaches').update(payload).eq('id', coachId);
+  if (error) { toast('Error saving: '+error.message, 'error'); return; }
+  const c = coachesListCache.find(x=>x.id===coachId);
+  if (c) Object.assign(c, payload);
+  await syncCoachToTeams(coachId, c?.name, c?.phone||null, c?.email||null);
+  toast('Saved', 'success');
+  loadCoaches(coachesContainerId);
+}
+
+// idPrefix lets the same add-form logic serve both the admin tab
+// (new-coach-*) and the director tab (dir-new-coach-*), which need
+// distinct element ids since both screens exist in the DOM at once.
+async function addCoach(idPrefix) {
+  idPrefix = idPrefix || '';
+  const errEl = document.getElementById(idPrefix+'new-coach-error');
+  errEl.style.display = 'none';
+  const name = document.getElementById(idPrefix+'new-coach-name').value.trim();
+  const phone = document.getElementById(idPrefix+'new-coach-phone').value.trim() || null;
+  const email = document.getElementById(idPrefix+'new-coach-email').value.trim() || null;
+  if (!name) { errEl.textContent = 'Coach name required.'; errEl.style.display='flex'; return; }
+  if (coachesListCache.some(c => c.name.trim().toLowerCase() === name.toLowerCase())) {
+    errEl.textContent = `"${name}" already exists — edit that row instead of adding a duplicate.`;
+    errEl.style.display = 'flex';
+    return;
+  }
+  const { error } = await sb.from('coaches').insert({ name, phone, email });
+  if (error) { errEl.textContent = 'Error: '+error.message; errEl.style.display='flex'; return; }
+  [idPrefix+'new-coach-name',idPrefix+'new-coach-phone',idPrefix+'new-coach-email'].forEach(id=>document.getElementById(id).value='');
+  toast('Coach added!', 'success');
+  loadCoaches(coachesContainerId);
 }
 
 // ══════════════════════════════════════════════
@@ -6916,6 +7098,7 @@ async function openTeamModalNew() {
   document.getElementById('league-team-modal-title').textContent='New Team';
   document.getElementById('save-league-team-btn').textContent='Add Team';
   ['team-name','team-abbreviation','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('team-coach-match-hint').style.display='none';
   document.getElementById('team-slot-day').value='1';
   document.getElementById('team-court-count').value = courtsForFormat();
   document.getElementById('team-avatar-file').value='';
@@ -6937,6 +7120,7 @@ async function openTeamModalEdit(id) {
   document.getElementById('team-coach-name').value=t.coach_name||'';
   document.getElementById('team-coach-phone').value=t.coach_phone||'';
   document.getElementById('team-coach-email').value=t.coach_email||'';
+  onTeamCoachNameInput(t.coach_name||'');
   document.getElementById('team-slot-day').value = t.time_slot_day!=null?String(t.time_slot_day):'1';
   document.getElementById('team-slot-time').value = t.time_slot_time||'';
   document.getElementById('team-court-count').value = t.court_count || courtsForFormat();
@@ -6968,9 +7152,21 @@ async function saveLeagueTeam() {
   if(!clubId){errEl.textContent='Home club required.';errEl.style.display='flex';return;}
   if(!coachName){errEl.textContent='Coach name required.';errEl.style.display='flex';return;}
 
+  // A coach is one shared record, not a fresh copy per team — find the
+  // existing one by name (so re-typing "Coach Sarah" reuses her instead of
+  // creating a duplicate), or create a new one, then push any edited
+  // phone/email out to every other team already linked to that coach.
+  let coach;
+  try {
+    coach = await resolveTeamCoach(coachName, coachPhone, coachEmail);
+  } catch (e) {
+    errEl.textContent = 'Error saving coach: '+e.message; errEl.style.display='flex'; return;
+  }
+
   const payload = {
     league_id: currentLeague.id, name, abbreviation, club_id: clubId,
-    coach_player_id: coachPlayerId, coach_name: coachName, coach_phone: coachPhone, coach_email: coachEmail,
+    coach_player_id: coachPlayerId, coach_id: coach.coachId,
+    coach_name: coach.name, coach_phone: coach.phone, coach_email: coach.email,
     time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime, court_count: courtCount,
     avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor
   };
