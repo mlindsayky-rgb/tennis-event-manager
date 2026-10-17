@@ -7170,19 +7170,49 @@ function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// When a league alternates practice and match weeks, week 1 is practice,
-// week 2 is a match, and so on — odd weeks never get a league_matches row.
+// Whether a given 1-indexed week (as returned by seasonWeekDates) is a
+// match week vs. a practice week. Looks up the type seasonWeekDates already
+// worked out for that week, since a Date Off can shift which calendar week
+// carries which weekNumber (see seasonWeekDates for why). Falls back to the
+// plain odd/even rule for a weekNumber beyond the season (e.g. a stale
+// reference) so this never throws.
 function isMatchWeek(league, weekNumber) {
-  return !league.alternate_practice_weeks || weekNumber % 2 === 0;
+  const w = seasonWeekDates(league).find(w => w.weekNumber === weekNumber);
+  return w ? w.isMatch : (!league.alternate_practice_weeks || weekNumber % 2 === 0);
 }
 
+// Walks real calendar weeks starting at the league's start date. A calendar
+// week that contains a Date Off is skipped entirely — no practice, no
+// match, nothing bumped into it — and every later week shifts out by one
+// slot, same as the "+1 week per Date Off" the End Date field already
+// accounts for. The season still needs session_length_weeks real meetings,
+// so weekNumber (1..session_length_weeks, what's stored on league_matches
+// and shown as "Week N") is assigned only to the weeks that are actually
+// kept.
+//
+// Practice/match alternation, though, keeps marching on the ORIGINAL
+// calendar position, skipped weeks included — a skipped week still "uses
+// its turn" in the rotation, so a cancelled match week is followed by a
+// practice week next, exactly as if it had been held. That's why isMatch
+// is computed from calendarPos (not from the compacted weekNumber) and
+// carried on each entry rather than re-derived later.
 function seasonWeekDates(league) {
   const start = new Date(league.start_date + 'T00:00:00');
+  const datesOff = (league.dates_off || []).map(d => new Date(d + 'T00:00:00').getTime());
   const weeks = [];
-  for (let w=1; w<=league.session_length_weeks; w++) {
+  let calendarPos = 0;
+  while (weeks.length < league.session_length_weeks && calendarPos < league.session_length_weeks + 500) {
+    calendarPos++;
     const d = new Date(start);
-    d.setDate(d.getDate() + (w-1)*7);
-    weeks.push({weekNumber:w, weekStart:d});
+    d.setDate(d.getDate() + (calendarPos-1)*7);
+    const weekEndExclusive = d.getTime() + 7*86400000;
+    const isOff = datesOff.some(t => t >= d.getTime() && t < weekEndExclusive);
+    if (isOff) continue;
+    weeks.push({
+      weekNumber: weeks.length+1,
+      weekStart: d,
+      isMatch: !league.alternate_practice_weeks || calendarPos % 2 === 0,
+    });
   }
   return weeks;
 }
@@ -7242,17 +7272,19 @@ async function generateFullSchedule() {
   if (missingSlot.length) { toast(`Set a locked time slot for ${missingSlot.map(t=>t.name).join(', ')} before generating`,'error'); return; }
   const teamsById = {}; teams.forEach(t=>{ teamsById[t.id]=t; });
 
+  // seasonWeekDates already skips any calendar week that contains a Date
+  // Off, so no generated date here can ever land on one — no conflict
+  // counting needed (that's still checked for manually-created matches,
+  // in renderLeagueMatches and the New Match picker, since those bypass
+  // this generator).
   const matchWeeks = seasonWeekDates(currentLeague).filter(w => isMatchWeek(currentLeague, w.weekNumber));
-  const datesOff = currentLeague.dates_off || [];
   const newMatches = [];
-  let conflictCount = 0;
 
   if (isIndividual) {
     // One row per team per match-week — everyone plays, no opponent, no byes.
     matchWeeks.forEach(({weekNumber, weekStart})=>{
       teams.forEach(team=>{
         const siteDate = toISODate(dateForTeamInWeek(weekStart, team.time_slot_day));
-        if (datesOff.includes(siteDate)) conflictCount++;
         newMatches.push({
           league_id: currentLeague.id, team_a_id: team.id, team_b_id: null,
           week_number: weekNumber, site_a_courts: teamSiteCourts(1, team.court_count),
@@ -7271,7 +7303,6 @@ async function generateFullSchedule() {
         const teamA = teamsById[teamAId], teamB = teamsById[teamBId];
         const siteADate = toISODate(dateForTeamInWeek(weekStart, teamA.time_slot_day));
         const siteBDate = toISODate(dateForTeamInWeek(weekStart, teamB.time_slot_day));
-        if (datesOff.includes(siteADate) || datesOff.includes(siteBDate)) conflictCount++;
 
         newMatches.push({
           league_id: currentLeague.id, team_a_id: teamAId, team_b_id: teamBId,
@@ -7289,7 +7320,6 @@ async function generateFullSchedule() {
   toast(currentLeague.alternate_practice_weeks
     ? `Generated ${newMatches.length} matches across ${matchWeeks.length} match weeks (of ${currentLeague.session_length_weeks} total, alternating with practice)!`
     : `Generated ${newMatches.length} matches across ${currentLeague.session_length_weeks} weeks!`, 'success');
-  if (conflictCount) toast(`${conflictCount} match(es) fall on a scheduled day off — flagged in the list, review and adjust manually`,'default');
   loadLeagueMatches();
 }
 
