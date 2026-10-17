@@ -6559,31 +6559,55 @@ function playerMissingFields(p) {
 }
 
 let missingDataContainerId = 'missing-data-list';
+let missingDataAllRows = [];
+// Defaults to "recent" so coaches land on players they're actively entering
+// right now, not last year's roster — "All Players" is one click away.
+let missingDataFilter = 'recent';
+const MISSING_DATA_RECENT_DAYS = 45;
 
 async function loadMissingData(containerId) {
   missingDataContainerId = containerId || 'missing-data-list';
   const el = document.getElementById(missingDataContainerId);
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{ data: players }, { data: clubs }] = await Promise.all([
-    sb.from('players').select('id,roster_name,phone,home_club_id').order('roster_name'),
+    sb.from('players').select('id,roster_name,phone,home_club_id,created_at').order('roster_name'),
     sb.from('clubs').select('id,name').order('name'),
   ]);
   missingDataClubs = clubs || [];
-  const rows = (players || [])
+  missingDataAllRows = (players || [])
     .map(p => ({ ...p, missing: playerMissingFields(p) }))
     .filter(p => p.missing.length);
-  renderMissingDataList(rows);
+  renderMissingDataList();
 }
 
-function renderMissingDataList(rows) {
+function setMissingDataFilter(filter) {
+  missingDataFilter = filter;
+  renderMissingDataList();
+}
+
+function renderMissingDataList() {
   const el = document.getElementById(missingDataContainerId);
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - MISSING_DATA_RECENT_DAYS);
+  const rows = missingDataFilter === 'recent'
+    ? missingDataAllRows.filter(p => !p.created_at || new Date(p.created_at) >= cutoff)
+    : missingDataAllRows;
+
+  const toggleHtml = `<div style="display:flex;gap:8px;margin-bottom:16px">
+    <button class="btn btn-sm ${missingDataFilter==='recent'?'btn-primary':'btn-ghost'}" onclick="setMissingDataFilter('recent')">Last ${MISSING_DATA_RECENT_DAYS} Days</button>
+    <button class="btn btn-sm ${missingDataFilter==='all'?'btn-primary':'btn-ghost'}" onclick="setMissingDataFilter('all')">All Players</button>
+  </div>`;
+
   if (!rows.length) {
-    el.innerHTML = '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Nothing missing</div><div class="empty-sub">Every player has a full name, phone number, and home club on file</div></div>';
+    const emptyHtml = missingDataFilter === 'recent' && missingDataAllRows.length
+      ? '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Nothing missing recently</div><div class="empty-sub">No player added in the last '+MISSING_DATA_RECENT_DAYS+' days is missing data — switch to "All Players" to see older entries</div></div>'
+      : '<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">Nothing missing</div><div class="empty-sub">Every player has a full name, phone number, and home club on file</div></div>';
+    el.innerHTML = toggleHtml + emptyHtml;
     return;
   }
   const clubOptionsHtml = selectedId => '<option value="">Select club…</option>' +
     missingDataClubs.map(c => `<option value="${c.id}" ${c.id===selectedId?'selected':''}>${escQ(c.name)}</option>`).join('');
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Home Club</th><th>Missing</th></tr></thead><tbody>
+  el.innerHTML = toggleHtml + `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Home Club</th><th>Missing</th></tr></thead><tbody>
     ${rows.map(p => `<tr id="missing-row-${p.id}">
       <td><input class="form-input" style="font-size:13px;min-width:180px" value="${escQ(p.roster_name)}" onchange="saveMissingDataField('${p.id}','roster_name',this.value)"></td>
       <td><input class="form-input" style="font-size:13px;min-width:140px" value="${escQ(p.phone)||''}" placeholder="555-123-4567" onchange="saveMissingDataField('${p.id}','phone',this.value)"></td>
