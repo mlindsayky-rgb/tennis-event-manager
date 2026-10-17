@@ -1024,9 +1024,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="nav-tab" id="dir-nav-events" onclick="dirTab('events',this)">Events</button>
     <button class="nav-tab" id="dir-nav-leagues" onclick="dirTab('leagues',this)" style="display:none">Leagues</button>
     <button class="nav-tab" id="dir-nav-players" onclick="dirTab('players',this)">Players</button>
-    <button class="nav-tab" onclick="dirTab('coaches',this)">Coaches</button>
-    <button class="nav-tab" onclick="dirTab('missing',this)">Missing Data</button>
-    <button class="nav-tab" onclick="dirTab('notes',this)">Notes</button>
+    <button class="nav-tab" id="dir-nav-coaches" onclick="dirTab('coaches',this)">Coaches</button>
+    <button class="nav-tab" id="dir-nav-missing" onclick="dirTab('missing',this)">Missing Data</button>
+    <button class="nav-tab" id="dir-nav-notes" onclick="dirTab('notes',this)">Notes</button>
   </nav>
   <div class="content">
     <div id="dir-tab-events" style="display:none">
@@ -1062,8 +1062,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div id="dir-tab-leagues" style="display:none">
       <div class="section-header">
-        <div><div class="section-title">Leagues</div></div>
-        <button class="btn btn-primary" onclick="openNewLeagueModal()">+ New League</button>
+        <div><div class="section-title" id="dir-leagues-title">Leagues</div><div class="section-sub" id="dir-leagues-sub"></div></div>
+        <button class="btn btn-primary" id="dir-new-league-btn" onclick="openNewLeagueModal()">+ New League</button>
       </div>
       <div id="dir-leagues-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
     </div>
@@ -1308,14 +1308,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         </div>
         <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time. Courts defaults to the league format's usual count, but can be set lower if the roster is still filling in, or higher for a Mixer league with more players than courts.</div>
       </div>
-      <div style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px">
-        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Coach Login PIN</div>
-        <div class="form-row">
-          <div class="form-group"><label class="form-label">PIN</label><input class="form-input" id="team-coach-pin" type="password" placeholder="4-6 digits" maxlength="6"></div>
-          <div class="form-group"><label class="form-label">Confirm PIN</label><input class="form-input" id="team-coach-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6"></div>
-        </div>
-        <div class="form-hint">Optional — lets the coach log in to manage this team, lineups, and subs. Leave both blank to set later, or leave blank on edit to keep the current PIN unchanged.</div>
-      </div>
+      <div class="form-hint" style="margin-top:4px">Coach login PIN is set once per coach, not per team — manage it from the Coaches tab.</div>
       <div id="league-team-error" class="alert alert-error" style="display:none"></div>
     </div>
     <div class="modal-footer">
@@ -2101,6 +2094,14 @@ async function attemptLogin() {
     document.getElementById('dir-name').textContent = currentUser.director_name;
     document.getElementById('dir-nav-events').style.display = currentUser.access.includes('events') ? '' : 'none';
     document.getElementById('dir-nav-leagues').style.display = currentUser.access.includes('leagues') ? '' : 'none';
+    // Undo anything a prior coach session (showCoachLeaguesList) hid/renamed
+    // on this same screen, in case this browser tab just switched users.
+    ['dir-nav-players','dir-nav-coaches','dir-nav-missing','dir-nav-notes'].forEach(id=>{
+      const el = document.getElementById(id); if (el) el.style.display = '';
+    });
+    document.getElementById('dir-leagues-title').textContent = 'Leagues';
+    document.getElementById('dir-leagues-sub').textContent = '';
+    document.getElementById('dir-new-league-btn').style.display = '';
     showScreen('director-screen');
     const firstTab = currentUser.access.includes('events') ? 'events' : currentUser.access.includes('leagues') ? 'leagues' : 'players';
     dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
@@ -2110,18 +2111,32 @@ async function attemptLogin() {
     return;
   }
 
-  // Check coach (team-level PIN)
-  const { data: coachTeam } = await sb.from('league_teams')
-    .select('*, leagues(name,format), clubs(name,primary_color,secondary_color,accent_color)')
-    .eq('coach_pin_hash', hash).maybeSingle();
-  if (coachTeam) {
-    currentUser = { role:'coach', team_id:coachTeam.id, team_name:coachTeam.name, league_id:coachTeam.league_id,
-      league_name:coachTeam.leagues?.name, club_id:coachTeam.club_id, club_name:coachTeam.clubs?.name||'Your Club', person_name:coachTeam.coach_name };
-    applyBranding(coachTeam.clubs);
+  // Check coach (one PIN per coach — a coach can be assigned to teams in
+  // several different leagues, so this resolves ALL of them, not just one)
+  const { data: coach } = await sb.from('coaches').select('*').eq('pin_hash', hash).maybeSingle();
+  if (coach) {
+    const { data: teams } = await sb.from('league_teams')
+      .select('id,name,league_id,club_id,clubs(name,primary_color,secondary_color,accent_color)')
+      .eq('coach_id', coach.id);
+    if (!teams || !teams.length) {
+      renderDots('error');
+      statusEl.textContent = 'No teams assigned to this coach yet — contact your admin.';
+      setTimeout(() => { pinBuf=''; renderDots(); statusEl.textContent=''; pinLocked=false; }, 1800);
+      return;
+    }
+    currentUser = { role:'coach', coach_id:coach.id, person_name:coach.name,
+      teams: teams.map(t=>({id:t.id, team_name:t.name, league_id:t.league_id, club_id:t.club_id})) };
+    applyBranding(teams[0].clubs);
     pinBuf=''; renderDots();
     pinLocked = false;
-    openLeagueById(coachTeam.league_id);
-    initMessageBadge();
+    // Messages are team-scoped (see openLeague) — nothing to show until a
+    // specific team's league is actually open, which sets this up itself.
+    if (teams.length === 1) {
+      currentUser.team_id = teams[0].id;
+      openLeagueById(teams[0].league_id);
+    } else {
+      showCoachLeaguesList();
+    }
     return;
   }
 
@@ -2188,19 +2203,22 @@ async function hashPin(pin) {
 // unique across all five holders, or the flat login waterfall (whichever role
 // is checked first wins) could silently log someone into the wrong role.
 // exceptRef lets a person keep their own current PIN when "changing" it to
-// the same value: {table, id, col}.
+// the same value: {table, id, col}. Coach PIN lives on coaches (one per
+// coach, not per team) — captain PIN stays on league_teams, since a captain
+// is tied to one specific team.
 async function pinIsAvailable(hash, exceptRef) {
   const isSelf = (table, id, col) => exceptRef && exceptRef.table === table && exceptRef.id === id && exceptRef.col === col;
-  const [{ data: admin }, { data: dirs }, { data: teams }, { data: plyrs }] = await Promise.all([
+  const [{ data: admin }, { data: dirs }, { data: coaches }, { data: teams }, { data: plyrs }] = await Promise.all([
     sb.from('admin_config').select('id,pin_hash'),
     sb.from('directors').select('id,pin_hash'),
-    sb.from('league_teams').select('id,coach_pin_hash,captain_pin_hash'),
+    sb.from('coaches').select('id,pin_hash'),
+    sb.from('league_teams').select('id,captain_pin_hash'),
     sb.from('players').select('id,pin_hash'),
   ]);
   if ((admin || []).some(r => r.pin_hash === hash && !isSelf('admin_config', r.id, 'pin_hash'))) return false;
   if ((dirs || []).some(r => r.pin_hash === hash && !isSelf('directors', r.id, 'pin_hash'))) return false;
+  if ((coaches || []).some(r => r.pin_hash === hash && !isSelf('coaches', r.id, 'pin_hash'))) return false;
   for (const t of teams || []) {
-    if (t.coach_pin_hash === hash && !isSelf('league_teams', t.id, 'coach_pin_hash')) return false;
     if (t.captain_pin_hash === hash && !isSelf('league_teams', t.id, 'captain_pin_hash')) return false;
   }
   if ((plyrs || []).some(r => r.pin_hash === hash && !isSelf('players', r.id, 'pin_hash'))) return false;
@@ -2319,7 +2337,7 @@ function openChangePinModal() {
 function myPinRef() {
   const role = currentUser?.role;
   if (role === 'director') return { table: 'directors', id: currentUser.director_id, col: 'pin_hash' };
-  if (role === 'coach') return { table: 'league_teams', id: currentUser.team_id, col: 'coach_pin_hash' };
+  if (role === 'coach') return { table: 'coaches', id: currentUser.coach_id, col: 'pin_hash' };
   if (role === 'captain') return { table: 'league_teams', id: currentUser.team_id, col: 'captain_pin_hash' };
   if (role === 'player') return { table: 'players', id: currentUser.player_id, col: 'pin_hash' };
   return null;
@@ -5927,7 +5945,12 @@ async function loadLeagues(containerId) {
   ]);
   const counts = {};
   (teams||[]).forEach(t=>{ counts[t.league_id]=(counts[t.league_id]||0)+1; });
-  const sorted = (leagues||[]).slice().sort((a,b)=>leagueDayIndex(a.name)-leagueDayIndex(b.name));
+  let filtered = leagues || [];
+  if (currentUser?.role === 'coach') {
+    const myLeagueIds = new Set((currentUser.teams||[]).map(t=>t.league_id));
+    filtered = filtered.filter(l=>myLeagueIds.has(l.id));
+  }
+  const sorted = filtered.slice().sort((a,b)=>leagueDayIndex(a.name)-leagueDayIndex(b.name));
   renderLeaguesList(sorted, counts, containerId);
 }
 
@@ -6099,7 +6122,15 @@ async function deleteLeague(id, name) {
 
 function openLeagueById(id) {
   sb.from('leagues').select('*').eq('id',id).single().then(({data})=>{
-    if(data) openLeague(data);
+    if(!data) return;
+    // A coach with several teams doesn't have one fixed team_id for the
+    // whole session — resolve which of her teams belongs to the league
+    // she just picked, right before entering it.
+    if (currentUser?.role === 'coach') {
+      const team = (currentUser.teams||[]).find(t=>t.league_id===id);
+      if (team) currentUser.team_id = team.id;
+    }
+    openLeague(data);
   });
 }
 
@@ -6112,18 +6143,27 @@ function openLeague(league) {
   applyLeagueRoleGating();
   leagueDetailTab('teams', document.querySelector('#league-screen .event-nav-tab'));
   loadLeagueTeams();
+  // Messages are addressed to "the coach/captain of team X", so a coach
+  // with several teams needs this re-read every time team_id changes to
+  // whichever team she's currently viewing (team_id is null until then).
+  if (currentUser?.role === 'coach' || currentUser?.role === 'captain') initMessageBadge();
 }
 
-// Coach/Captain land straight on their one league (no Leagues list to go
-// "back" to), so their nav gets a Sign Out instead of Back, admin-only
-// actions (Add Team, Generate Schedule, League Settings) are hidden, and
-// they get a self-service PIN-change button since nobody sets that up for them.
+// Captain (and a single-team coach) land straight on their one league (no
+// Leagues list to go "back" to), so their nav gets a Sign Out instead of
+// Back. A coach with several teams DOES have a Leagues list of her own
+// (showCoachLeaguesList) to return to, same as staff. Admin-only actions
+// (Add Team, Generate Schedule, League Settings) are hidden for everyone
+// else, and non-staff get a self-service PIN-change button since nobody
+// sets that up for them.
 function applyLeagueRoleGating() {
   const role = currentUser?.role;
   const isStaff = role === 'admin' || role === 'director';
+  const isMultiTeamCoach = role === 'coach' && (currentUser.teams||[]).length > 1;
+  const canGoBack = isStaff || isMultiTeamCoach;
   const backBtn = document.getElementById('league-detail-back-btn');
-  backBtn.textContent = isStaff ? '← Back' : 'Sign Out';
-  backBtn.onclick = isStaff ? closeLeague : logout;
+  backBtn.textContent = canGoBack ? '← Back' : 'Sign Out';
+  backBtn.onclick = canGoBack ? closeLeague : logout;
   document.getElementById('league-nav-settings').style.display = isStaff ? '' : 'none';
   document.getElementById('league-nav-players').style.display = (role==='admin'||role==='director'||role==='coach') ? '' : 'none';
   document.getElementById('league-nav-missing').style.display = (role==='admin'||role==='director'||role==='coach') ? '' : 'none';
@@ -6145,9 +6185,31 @@ function closeLeague() {
   } else if (currentUser?.role === 'director') {
     document.getElementById('director-screen').classList.add('active');
     loadLeagues('dir-leagues-list');
+  } else if (currentUser?.role === 'coach' && (currentUser.teams||[]).length > 1) {
+    currentUser.team_id = null;
+    showCoachLeaguesList();
   } else {
     logout();
   }
+}
+
+// A coach with teams in more than one league gets a stripped-down version
+// of the director's screen — just the Leagues list, filtered to only the
+// leagues she actually coaches in (loadLeagues does the filtering), no
+// "+ New League" button, and no other tabs since none of them apply to her.
+function showCoachLeaguesList() {
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('director-screen').classList.add('active');
+  document.getElementById('dir-club-name').textContent = currentUser.person_name;
+  document.getElementById('dir-name').textContent = 'Coach';
+  document.getElementById('dir-leagues-title').textContent = 'Your Leagues';
+  document.getElementById('dir-leagues-sub').textContent = `Coaching ${currentUser.teams.length} teams across ${new Set(currentUser.teams.map(t=>t.league_id)).size} leagues`;
+  ['dir-nav-events','dir-nav-players','dir-nav-coaches','dir-nav-missing','dir-nav-notes'].forEach(id=>{
+    const el = document.getElementById(id); if (el) el.style.display = 'none';
+  });
+  document.getElementById('dir-nav-leagues').style.display = '';
+  document.getElementById('dir-new-league-btn').style.display = 'none';
+  dirTab('leagues', document.getElementById('dir-nav-leagues'));
 }
 
 function leagueDetailTab(name, btn) {
@@ -6945,7 +7007,7 @@ async function loadCoaches(containerId) {
   const el = document.getElementById(coachesContainerId);
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{data:coaches}, {data:teams}] = await Promise.all([
-    sb.from('coaches').select('id,name,phone,email').order('name'),
+    sb.from('coaches').select('id,name,phone,email,pin_hash').order('name'),
     sb.from('league_teams').select('coach_id,name'),
   ]);
   coachesListCache = coaches || [];
@@ -6960,14 +7022,53 @@ function renderCoachesList(teamsByCoach) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🧑‍🏫</div><div class="empty-title">No coaches yet</div><div class="empty-sub">Add one above, or just type a coach name the next time you create a team</div></div>';
     return;
   }
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Teams</th></tr></thead><tbody>
+  el.innerHTML = `<table class="data-table"><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Teams</th><th>Login PIN</th></tr></thead><tbody>
     ${coachesListCache.map(c => `<tr id="coach-row-${c.id}">
       <td><input class="form-input" style="font-size:13px;min-width:160px" value="${escQ(c.name)}" onchange="saveCoachField('${c.id}','name',this.value)"></td>
       <td><input class="form-input" style="font-size:13px;min-width:140px" value="${escQ(c.phone)||''}" placeholder="555-123-4567" onchange="saveCoachField('${c.id}','phone',this.value)"></td>
       <td><input class="form-input" style="font-size:13px;min-width:180px" value="${escQ(c.email)||''}" placeholder="coach@email.com" onchange="saveCoachField('${c.id}','email',this.value)"></td>
       <td style="font-size:12px;color:var(--ink-muted)">${(teamsByCoach[c.id]||[]).map(escQ).join(', ') || '—'}</td>
+      <td>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span class="badge ${c.pin_hash?'badge-green':'badge-blue'}" style="font-size:11px">${c.pin_hash?'Set':'None'}</span>
+          <button class="btn btn-sm btn-ghost" onclick="openCoachPinEditor('${c.id}')">${c.pin_hash?'Change':'Set'}</button>
+        </div>
+        <div id="coach-pin-editor-${c.id}" style="display:none;margin-top:8px;min-width:220px">
+          <div class="form-row" style="margin-bottom:0">
+            <input class="form-input" type="password" id="coach-pin-${c.id}" placeholder="4-6 digits" maxlength="6" style="font-size:13px">
+            <input class="form-input" type="password" id="coach-pin-confirm-${c.id}" placeholder="Confirm" maxlength="6" style="font-size:13px">
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px">
+            <button class="btn btn-sm btn-primary" onclick="saveCoachPin('${c.id}')">Save</button>
+            <button class="btn btn-sm btn-ghost" onclick="document.getElementById('coach-pin-editor-${c.id}').style.display='none'">Cancel</button>
+          </div>
+          <div id="coach-pin-error-${c.id}" class="alert alert-error" style="display:none;margin-top:6px;font-size:12px"></div>
+        </div>
+      </td>
     </tr>`).join('')}
     </tbody></table>`;
+}
+
+function openCoachPinEditor(coachId) {
+  const el = document.getElementById(`coach-pin-editor-${coachId}`);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveCoachPin(coachId) {
+  const errEl = document.getElementById(`coach-pin-error-${coachId}`);
+  errEl.style.display = 'none';
+  const pin = document.getElementById(`coach-pin-${coachId}`).value.trim();
+  const confirm = document.getElementById(`coach-pin-confirm-${coachId}`).value.trim();
+  if (!/^\d{4,6}$/.test(pin)) { errEl.textContent = 'PIN must be 4-6 digits.'; errEl.style.display='block'; return; }
+  if (pin !== confirm) { errEl.textContent = 'PINs do not match.'; errEl.style.display='block'; return; }
+  const hash = await hashPin(pin);
+  if (!(await pinIsAvailable(hash, { table:'coaches', id:coachId, col:'pin_hash' }))) {
+    errEl.textContent = 'That PIN is already in use by someone else — pick a different one.'; errEl.style.display='block'; return;
+  }
+  const { error } = await sb.from('coaches').update({ pin_hash: hash, updated_at: new Date().toISOString() }).eq('id', coachId);
+  if (error) { errEl.textContent = 'Error: '+error.message; errEl.style.display='block'; return; }
+  toast('Coach PIN saved!', 'success');
+  loadCoaches(coachesContainerId);
 }
 
 async function saveCoachField(coachId, field, value) {
@@ -7097,7 +7198,7 @@ async function openTeamModalNew() {
   await populateTeamSelects('', '');
   document.getElementById('league-team-modal-title').textContent='New Team';
   document.getElementById('save-league-team-btn').textContent='Add Team';
-  ['team-name','team-abbreviation','team-coach-name','team-coach-phone','team-coach-email','team-slot-time','team-coach-pin','team-coach-pin-confirm'].forEach(id=>document.getElementById(id).value='');
+  ['team-name','team-abbreviation','team-coach-name','team-coach-phone','team-coach-email','team-slot-time'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('team-coach-match-hint').style.display='none';
   document.getElementById('team-slot-day').value='1';
   document.getElementById('team-court-count').value = courtsForFormat();
@@ -7124,8 +7225,6 @@ async function openTeamModalEdit(id) {
   document.getElementById('team-slot-day').value = t.time_slot_day!=null?String(t.time_slot_day):'1';
   document.getElementById('team-slot-time').value = t.time_slot_time||'';
   document.getElementById('team-court-count').value = t.court_count || courtsForFormat();
-  document.getElementById('team-coach-pin').value = '';
-  document.getElementById('team-coach-pin-confirm').value = '';
   document.getElementById('team-avatar-file').value='';
   pendingAvatarUrl = t.avatar_url || null; pendingAvatarColor = t.avatar_color || null;
   renderAvatarPreview();
@@ -7144,8 +7243,6 @@ async function saveLeagueTeam() {
   const slotDay=document.getElementById('team-slot-day').value;
   const slotTime=document.getElementById('team-slot-time').value||null;
   const courtCount=parseInt(document.getElementById('team-court-count').value)||courtsForFormat();
-  const coachPin=document.getElementById('team-coach-pin').value.trim();
-  const coachPinConfirm=document.getElementById('team-coach-pin-confirm').value.trim();
   const errEl=document.getElementById('league-team-error');
   errEl.style.display='none';
   if(!name){errEl.textContent='Team name required.';errEl.style.display='flex';return;}
@@ -7170,16 +7267,6 @@ async function saveLeagueTeam() {
     time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime, court_count: courtCount,
     avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor
   };
-
-  if (coachPin || coachPinConfirm) {
-    if (!/^\d{4,6}$/.test(coachPin)) { errEl.textContent='Coach PIN must be 4-6 digits.'; errEl.style.display='flex'; return; }
-    if (coachPin !== coachPinConfirm) { errEl.textContent='Coach PINs do not match.'; errEl.style.display='flex'; return; }
-    const hash = await hashPin(coachPin);
-    if (!(await pinIsAvailable(hash, editTeamId ? { table:'league_teams', id:editTeamId, col:'coach_pin_hash' } : null))) {
-      errEl.textContent='That PIN is already in use by someone else — pick a different one.'; errEl.style.display='flex'; return;
-    }
-    payload.coach_pin_hash = hash;
-  }
 
   const btn=document.getElementById('save-league-team-btn');
   btn.disabled=true;
