@@ -6407,6 +6407,18 @@ async function clearPlayerSnapshot(playerId) {
   await sb.from('players').update({ last_coach_name: null, last_captain_name: null, last_session_end_date: null }).eq('id', playerId);
 }
 
+// Same backfill-only rule as the bulk roster import: a team roster belongs
+// to a specific club, so use it for a player who doesn't have a home club
+// on file yet, and leave one they already have untouched.
+async function backfillPlayerHomeClub(playerId, teamId) {
+  const team = currentLeagueTeams.find(t=>t.id===teamId);
+  if (!team?.club_id) return;
+  const {data:player} = await sb.from('players').select('home_club_id').eq('id',playerId).single();
+  if (player && !player.home_club_id) {
+    await sb.from('players').update({home_club_id: team.club_id}).eq('id', playerId);
+  }
+}
+
 async function addPlayerToRoster() {
   const sel = document.getElementById('roster-add-player');
   const playerId = sel.value;
@@ -6414,6 +6426,7 @@ async function addPlayerToRoster() {
   const {error} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
   if (error) { toast('Error: '+error.message,'error'); return; }
   await clearPlayerSnapshot(playerId);
+  await backfillPlayerHomeClub(playerId, currentRosterTeamId);
   toast('Player added to roster','success');
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
@@ -6683,7 +6696,7 @@ async function handleRosterFile(input) {
     return out;
   });
 
-  const {data:allPlayers} = await sb.from('players').select('id,roster_name,email,phone');
+  const {data:allPlayers} = await sb.from('players').select('id,roster_name,email,phone,home_club_id');
   rosterAllPlayers = allPlayers || [];
 
   const normPhone = p => (p||'').replace(/\D/g,'');
@@ -6750,6 +6763,13 @@ async function confirmRosterImport() {
     errEl.style.display = 'flex';
     return;
   }
+  // A team roster always belongs to a specific club — use it instead of
+  // making someone fill in Home Club by hand for every player (in Missing
+  // Data or otherwise). Only backfills a club that's actually missing;
+  // never overwrites one a matched player already has on file.
+  const rosterTeam = currentLeagueTeams.find(t=>t.id===currentRosterTeamId);
+  const teamClubId = rosterTeam?.club_id || null;
+
   for (const r of rosterImportRows) {
     let playerId = r.matchedPlayerId;
     if (!playerId) {
@@ -6757,10 +6777,16 @@ async function confirmRosterImport() {
       const {data:newPlayer, error} = await sb.from('players').insert({
         roster_name: r.fullName,
         gender: r.gender, player_type: 'AD',
-        email: r.email || null, phone: r.phone || null
+        email: r.email || null, phone: r.phone || null,
+        home_club_id: teamClubId
       }).select().single();
       if (error) { toast('Error creating '+r.fullName+': '+error.message,'error'); continue; }
       playerId = newPlayer.id;
+    } else if (teamClubId) {
+      const matchedPlayer = rosterAllPlayers.find(p=>p.id===playerId);
+      if (matchedPlayer && !matchedPlayer.home_club_id) {
+        await sb.from('players').update({home_club_id: teamClubId}).eq('id', playerId);
+      }
     }
     const {error: rosterErr} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
     if (rosterErr && !/duplicate/i.test(rosterErr.message||'')) {
