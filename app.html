@@ -7170,15 +7170,14 @@ function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
-// Whether a given 1-indexed week (as returned by seasonWeekDates) is a
-// match week vs. a practice week. Looks up the type seasonWeekDates already
-// worked out for that week, since a Date Off can shift which calendar week
-// carries which weekNumber (see seasonWeekDates for why). Falls back to the
-// plain odd/even rule for a weekNumber beyond the season (e.g. a stale
-// reference) so this never throws.
+// When a league alternates practice and match weeks, week 1 is practice,
+// week 2 is a match, and so on — odd weeks never get a league_matches row.
+// weekNumber here is the compacted, actually-held meeting count (what
+// seasonWeekDates assigns), so this alternation always holds strictly
+// meeting-to-meeting — skipping a Date Off never breaks the P/M/P/M
+// rhythm or produces two of the same type in a row.
 function isMatchWeek(league, weekNumber) {
-  const w = seasonWeekDates(league).find(w => w.weekNumber === weekNumber);
-  return w ? w.isMatch : (!league.alternate_practice_weeks || weekNumber % 2 === 0);
+  return !league.alternate_practice_weeks || weekNumber % 2 === 0;
 }
 
 // Walks real calendar weeks starting at the league's start date. A calendar
@@ -7187,15 +7186,10 @@ function isMatchWeek(league, weekNumber) {
 // slot, same as the "+1 week per Date Off" the End Date field already
 // accounts for. The season still needs session_length_weeks real meetings,
 // so weekNumber (1..session_length_weeks, what's stored on league_matches
-// and shown as "Week N") is assigned only to the weeks that are actually
-// kept.
-//
-// Practice/match alternation, though, keeps marching on the ORIGINAL
-// calendar position, skipped weeks included — a skipped week still "uses
-// its turn" in the rotation, so a cancelled match week is followed by a
-// practice week next, exactly as if it had been held. That's why isMatch
-// is computed from calendarPos (not from the compacted weekNumber) and
-// carried on each entry rather than re-derived later.
+// and shown as "Week N") is assigned sequentially to the weeks that are
+// actually kept, and practice/match alternation (isMatchWeek) always
+// follows that same compacted weekNumber — the rhythm never skips a beat
+// just because a calendar date got cancelled.
 function seasonWeekDates(league) {
   const start = new Date(league.start_date + 'T00:00:00');
   const datesOff = (league.dates_off || []).map(d => new Date(d + 'T00:00:00').getTime());
@@ -7208,11 +7202,7 @@ function seasonWeekDates(league) {
     const weekEndExclusive = d.getTime() + 7*86400000;
     const isOff = datesOff.some(t => t >= d.getTime() && t < weekEndExclusive);
     if (isOff) continue;
-    weeks.push({
-      weekNumber: weeks.length+1,
-      weekStart: d,
-      isMatch: !league.alternate_practice_weeks || calendarPos % 2 === 0,
-    });
+    weeks.push({ weekNumber: weeks.length+1, weekStart: d });
   }
   return weeks;
 }
