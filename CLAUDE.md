@@ -8,6 +8,7 @@ Single-file vanilla JS app: `app.html` (the main app), plus standalone `tv.html`
 - For anything risky or hard to reverse (schema/migrations, auth logic, deploy config): describe the change and wait for explicit go-ahead before pushing, same as a migration.
 - The user does not pull files or run terminal/deploy commands themselves — pushing to `main` is the entire deploy step; Netlify picks it up automatically.
 - GitHub Pages (`mlindsayky-rgb.github.io/tennis-event-manager/app.html`) is still live in parallel as a safety net while Netlify beds in — not the deploy target, just a passive mirror of the same `main` branch. Ask before disabling it.
+- `netlify.toml` sets `Cache-Control: no-cache, must-revalidate` on every page — there's no build step or cache-busting filename, so without this a browser/CDN could keep serving a stale `app.html` after a push even through a hard refresh (this happened once, mid-debugging, and cost real time misdiagnosing a "bug" that was actually just stale code). If a fix "isn't showing up," suspect this is somehow not in effect (e.g. GitHub Pages, which has no such header) before assuming the code is wrong.
 
 ## Backend
 - Supabase project: "Battle Tracker", ref `vrnvhrruvzcnslvceacn`.
