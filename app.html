@@ -3562,12 +3562,19 @@ async function loadRounds(){
   const canDeploy=currentEvent.status==='TEAMS_SET'||currentEvent.status==='LIVE';
   const activeCt=(eps||[]).filter(e=>e.status==='ACTIVE').length;
   const curCourts=currentEvent.num_courts||4;
+  const isMixer=(teams||[]).length===1;
+  const rulesOn=!currentEvent.round_configs?.mixerRandomPairs;
 
   el.innerHTML='<div style="padding:20px">'+
     (canDeploy?'<div style="margin-bottom:20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
       '<button class="btn btn-primary" onclick="deployRound('+nextRound+')">⚡ Deploy Round '+nextRound+'</button>'+
       '<button class="btn btn-ghost" onclick="showEventSummary()" style="font-size:13px">📊 Summary</button>'+
       '<span style="font-size:13px;color:var(--ink-muted)">'+activeCt+' active players</span>'+
+      (isMixer?'<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;user-select:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px">'+
+        '<input type="checkbox" '+(rulesOn?'checked':'')+' onchange="toggleMixerPairingRules(this.checked)" style="width:15px;height:15px;accent-color:var(--court)">'+
+        '<span>Use pairing rules (mixed doubles)</span>'+
+      '</label>'+
+      '<span style="font-size:11px;color:var(--ink-muted)">'+(rulesOn?'Men paired with women by rating':'Rules off — anyone with anyone, just a new partner each round')+'</span>':'')+
       '<div style="display:flex;align-items:center;gap:6px;margin-left:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 10px">'+
         '<span style="font-size:12px;color:var(--ink-muted);font-weight:600">Courts:</span>'+
         '<button onclick="adjustCourts(-1)" style="width:28px;height:28px;border:none;background:none;font-size:18px;cursor:pointer;color:var(--ink-mid);line-height:1">−</button>'+
@@ -3757,7 +3764,12 @@ async function deployRound(roundNum){
     window._savedRoundConfigs=cfgByRound;
   }
   const cfg=cfgByRound[roundNum]||{format:'BG',strategy:'AE'};
-  const fmt=cfg.format||'BG';
+  // MIXER with pairing rules switched off: ignore whatever format is
+  // configured (there's no Round Setup step for Mixer anyway) and use
+  // 'ANY' — buildTeamPairs' fallback pairing, which sorts the whole pool
+  // with no gender filter and pairs adjacent with the same repeat-partner
+  // avoidance every other format already gets.
+  const fmt=cfgByRound.mixerRandomPairs?'ANY':(cfg.format||'BG');
   const strategy=cfg.strategy||'AE';
   // Always use the live stepper value (currentEvent.num_courts) first —
   // it reflects what the director just set. Fall back to saved config, then default.
@@ -3904,7 +3916,7 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
   if(rErr){toast('Error creating round: '+rErr.message,'error');return;}
 
   // ── STEP E: Build pairs within each team ─────────────
-  const buildTeamPairs=(pool,fmt,strategy)=>{
+  const buildTeamPairs=(pool,fmt,strategy,pairCap=courts)=>{
     // Sort pool by format
     let sorted;
     if(fmt==='TD') sorted=[...pool].sort(ratingSort);
@@ -3996,7 +4008,7 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
     // BB/GG/TD: pair 1+2, 3+4, with repeat-partner avoidance
     const pairs=[];
     const used=new Set();
-    for(let i=0;i<sorted.length&&pairs.length<courts;i++){
+    for(let i=0;i<sorted.length&&pairs.length<pairCap;i++){
       if(used.has(sorted[i].id)) continue;
       // Find partner: next unused, prefer non-repeat
       let partner=null;
@@ -4063,7 +4075,7 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
       }
       matched=matchWithinPool(pairs);
     } else {
-      matched=matchWithinPool(buildTeamPairs(playing,fmt,strategy));
+      matched=matchWithinPool(buildTeamPairs(playing,fmt,strategy,courts*2));
     }
     for(const m of matched){
       if(courtNum>courts) break;
@@ -5005,6 +5017,21 @@ function adjustCourts(delta) {
   if(el) el.textContent = next;
   sb.from('events').update({num_courts:next}).eq('id',currentEvent.id)
     .then(()=>toast('Courts set to '+next,'success'));
+}
+
+// MIXER: on = the usual gender/rating-aware pairing (BG — men matched
+// with closest-rated women); off = ignore all of that and just rotate
+// partners with the same repeat-avoidance logic, so the only goal is
+// "someone new each round." Stored on the event (not per-round) since
+// the director asked for one on/off switch, not per-round control.
+// round_configs is already a free-form JSONB bucket for round-deploy
+// settings, so this piggybacks on it instead of needing a new column.
+async function toggleMixerPairingRules(rulesOn) {
+  const cfg = { ...(currentEvent.round_configs||{}), mixerRandomPairs: !rulesOn };
+  currentEvent.round_configs = cfg;
+  await sb.from('events').update({round_configs: cfg}).eq('id', currentEvent.id);
+  toast(rulesOn ? 'Pairing rules on — mixed doubles by rating' : 'Pairing rules off — just a new partner each round', 'success');
+  loadRounds();
 }
 
 
