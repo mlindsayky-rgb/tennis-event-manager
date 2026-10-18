@@ -1312,10 +1312,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div id="team-code-section" style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px;display:none">
         <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Player Schedule Link</div>
         <div class="form-hint" style="margin-top:0;margin-bottom:10px">No login needed — share this with players on this team so they can see their schedule and league standings.</div>
-        <div class="form-row" style="align-items:center">
-          <div class="form-group" style="flex:2"><input class="form-input" id="team-code-link" readonly style="font-size:12px"></div>
-          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-sm btn-secondary" type="button" onclick="copyTeamCodeLink()">Copy Link</button></div>
-          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-sm btn-ghost" type="button" onclick="regenerateTeamCode()">Regenerate</button></div>
+        <div class="form-group"><input class="form-input" id="team-code-link" readonly style="font-size:12px;width:100%"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm btn-secondary" type="button" onclick="copyTeamCodeLink()">Copy Link</button>
+          <button class="btn btn-sm btn-ghost" type="button" onclick="regenerateTeamCode()">Regenerate</button>
         </div>
         <div class="form-hint">Regenerating breaks the old link — only do this if it was shared with the wrong people.</div>
       </div>
