@@ -1620,6 +1620,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <button class="event-nav-tab active" onclick="eventTab('roster',this)">Roster</button>
     <button class="event-nav-tab" onclick="eventTab('teams',this)">Team Builder</button>
     <button class="event-nav-tab" onclick="eventTab('rounds',this)">Rounds</button>
+    <button class="event-nav-tab" onclick="eventTab('standings',this)">Standings</button>
     <button class="event-nav-tab" onclick="eventTab('tv',this)">📺 TV Preview</button>
     <button class="event-nav-tab" onclick="eventTab('notes',this)">Notes</button>
   </nav>
@@ -1684,6 +1685,14 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="empty-title">Round Setup</div>
       <div class="empty-sub">Coming in Phase 4 — lock your teams first</div>
     </div>
+  </div>
+
+  <!-- STANDINGS TAB -->
+  <div id="etab-standings" style="display:none;padding:20px">
+    <div class="section-header">
+      <div><div class="section-title" style="font-size:16px">Player Standings</div><div class="section-sub" style="font-size:12px;color:var(--ink-muted)">Ranked by win % (ties broken by % of games won). Team is shown for reference only — it doesn't affect the ranking.</div></div>
+    </div>
+    <div class="card" style="margin-top:12px"><div class="card-body" id="event-standings-body"><div class="loading"><div class="spinner"></div> Loading…</div></div></div>
   </div>
 
   <!-- TV PREVIEW TAB -->
@@ -2737,12 +2746,13 @@ function closeEvent() {
 function eventTab(name, btn) {
   document.querySelectorAll('.event-nav-tab').forEach(t=>t.classList.remove('active'));
   if(btn) btn.classList.add('active');
-  ['roster','teams','rounds','notes'].forEach(t=>{
+  ['roster','teams','rounds','standings','notes'].forEach(t=>{
     const el=document.getElementById('etab-'+t);
     if(el) el.style.display=t===name?'block':'none';
   });
   if(name==='teams') initTeamBuilder();
   if(name==='rounds') loadRounds();
+  if(name==='standings') loadEventStandings();
   if(name==='tv'){
     const tvEl=document.getElementById('etab-tv');
     if(tvEl) tvEl.style.display='block';
@@ -4919,6 +4929,108 @@ function adjustCourts(delta) {
     .then(()=>toast('Courts set to '+next,'success'));
 }
 
+
+// ══════════════════════════════════════════════
+// EVENT STANDINGS — individual player performance within this one event,
+// derived entirely from pairings + scores (nothing stored). Win-only
+// ranking: win % (wins ÷ courts played), ties broken by % of games won.
+// Every active player on the event roster is listed, even with zero
+// courts played yet. Team is shown for reference only — the whole point
+// of this tab is individual performance, not the team-battle score.
+// ══════════════════════════════════════════════
+let lastEventStandingsData = [];
+
+async function loadEventStandings() {
+  lastEventStandingsData = await computeEventStandings();
+  renderEventStandingsBoard();
+}
+
+async function computeEventStandings() {
+  const [{ data: eps }, { data: rounds }, { data: teams }] = await Promise.all([
+    sb.from('event_players').select('id,player_id,status,players(id,roster_name)').eq('event_id', currentEvent.id),
+    sb.from('rounds').select('id').eq('event_id', currentEvent.id),
+    sb.from('teams').select('id,name').eq('event_id', currentEvent.id),
+  ]);
+  const epById = {}; (eps || []).forEach(ep => { epById[ep.id] = ep; });
+  const teamNameMap = {}; (teams || []).forEach(t => { teamNameMap[t.id] = t.name; });
+
+  const teamIds = (teams || []).map(t => t.id);
+  const { data: tps } = teamIds.length
+    ? await sb.from('team_players').select('team_id,event_player_id').in('team_id', teamIds)
+    : { data: [] };
+  const teamOf = {}; // player_id -> team name, for display only
+  (tps || []).forEach(tp => {
+    const ep = epById[tp.event_player_id];
+    if (ep) teamOf[ep.player_id] = teamNameMap[tp.team_id] || '—';
+  });
+
+  const roundIds = (rounds || []).map(r => r.id);
+  const { data: pairings } = roundIds.length
+    ? await sb.from('pairings').select('id,team_a_player1_id,team_a_player2_id,team_b_player1_id,team_b_player2_id').in('round_id', roundIds)
+    : { data: [] };
+  const pairingIds = (pairings || []).map(p => p.id);
+  const { data: scores } = pairingIds.length
+    ? await sb.from('scores').select('pairing_id,team_a_games,team_b_games').in('pairing_id', pairingIds)
+    : { data: [] };
+  const scoreByPairing = {}; (scores || []).forEach(s => { scoreByPairing[s.pairing_id] = s; });
+
+  // Seed every active roster player at zero, then tally real scores on top.
+  const stats = {};
+  (eps || []).filter(ep => ep.status === 'ACTIVE' && ep.players).forEach(ep => {
+    stats[ep.player_id] = stats[ep.player_id] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+  });
+
+  (pairings || []).forEach(p => {
+    const sc = scoreByPairing[p.id];
+    if (!sc) return; // no score entered yet
+    const a = sc.team_a_games, b = sc.team_b_games;
+    if (a === b) return; // tie — doesn't happen in tennis; skip rather than guess a winner
+    const total = a + b;
+    const aIds = [p.team_a_player1_id, p.team_a_player2_id].filter(Boolean);
+    const bIds = [p.team_b_player1_id, p.team_b_player2_id].filter(Boolean);
+    const winIds = a > b ? aIds : bIds, loseIds = a > b ? bIds : aIds;
+    const winGames = a > b ? a : b, loseGames = a > b ? b : a;
+    winIds.forEach(pid => {
+      const s = stats[pid] = stats[pid] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+      s.wins++; s.gamesWon += winGames; s.gamesTotal += total;
+    });
+    loseIds.forEach(pid => {
+      const s = stats[pid] = stats[pid] || { wins: 0, losses: 0, gamesWon: 0, gamesTotal: 0 };
+      s.losses++; s.gamesWon += loseGames; s.gamesTotal += total;
+    });
+  });
+
+  const playerIds = Object.keys(stats);
+  if (!playerIds.length) return [];
+  const nameMap = {}; (eps || []).forEach(ep => { if (ep.players) nameMap[ep.player_id] = ep.players.roster_name; });
+
+  return playerIds.map(pid => {
+    const s = stats[pid];
+    const matches = s.wins + s.losses;
+    return {
+      player_id: pid,
+      name: nameMap[pid] || '—',
+      team_name: teamOf[pid] || '—',
+      wins: s.wins, losses: s.losses, matches,
+      winPct: matches ? s.wins / matches : 0,
+      gamesPct: s.gamesTotal ? s.gamesWon / s.gamesTotal : 0,
+    };
+  }).sort((a, b) => b.winPct - a.winPct || b.gamesPct - a.gamesPct || a.name.localeCompare(b.name));
+}
+
+function renderEventStandingsBoard() {
+  const el = document.getElementById('event-standings-body');
+  if (!el) return;
+  const rows = lastEventStandingsData;
+  if (!rows.length) {
+    el.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">No standings yet</div><div class="empty-sub">Enter a court score to see players appear here</div></div>';
+    return;
+  }
+  const pct = n => `${Math.round(n * 100)}%`;
+  el.innerHTML = `<table class="data-table"><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Matches</th><th>Win %</th><th>Games %</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team_name)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${r.matches}</td><td>${pct(r.winPct)}</td><td>${pct(r.gamesPct)}</td></tr>`).join('')}
+    </tbody></table>`;
+}
 
 // ══════════════════════════════════════════════
 // EVENT SUMMARY
