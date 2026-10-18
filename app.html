@@ -1441,6 +1441,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <select class="form-select" id="event-type" onchange="toggleEventTypeFields(this.value)">
             <option value="AD">Adult Team (AD)</option><option value="JR">Junior Team (JR)</option>
             <option value="BOTH">Mixed — Adults + Juniors</option><option value="INDIVIDUAL">Individual Draw</option>
+            <option value="MIXER">Mixer — everyone plays everyone</option>
           </select>
         </div>
       </div>
@@ -1449,6 +1450,13 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <div class="form-group"><label class="form-label">Courts <span class="req">*</span></label><input class="form-input" id="event-courts" type="number" min="1" max="20" value="4"></div>
           <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="event-teams" type="number" min="2" max="16" placeholder="Required"><div class="form-hint">No default — enter intentionally</div></div>
         </div>
+      </div>
+      <div id="mixer-fields" style="display:none">
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">Courts <span class="req">*</span></label><input class="form-input" id="event-mixer-courts" type="number" min="1" max="20" value="4"></div>
+          <div class="form-group"><label class="form-label">Number of Rounds <span class="req">*</span></label><input class="form-input" id="event-mixer-rounds" type="number" min="1" max="20" value="4"></div>
+        </div>
+        <div class="form-hint" style="margin-top:0 0 10px">One pooled list — no teams. Add players on the Roster tab after creating the event; partners rotate every round.</div>
       </div>
       <div id="individual-fields" style="display:none">
         <div class="form-row">
@@ -1618,7 +1626,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
   <!-- Event nav -->
   <nav class="event-nav">
     <button class="event-nav-tab active" onclick="eventTab('roster',this)">Roster</button>
-    <button class="event-nav-tab" onclick="eventTab('teams',this)">Team Builder</button>
+    <button class="event-nav-tab" id="event-nav-teams" onclick="eventTab('teams',this)">Team Builder</button>
     <button class="event-nav-tab" onclick="eventTab('rounds',this)">Rounds</button>
     <button class="event-nav-tab" onclick="eventTab('standings',this)">Standings</button>
     <button class="event-nav-tab" onclick="eventTab('tv',this)">📺 TV Preview</button>
@@ -2729,6 +2737,8 @@ function openEvent(event) {
   document.getElementById('event-screen').classList.add('active');
   updateLifecycle(currentEvent.status);
   updateActionBtn(currentEvent.status);
+  const teamsNav = document.getElementById('event-nav-teams');
+  if (teamsNav) teamsNav.style.display = currentEvent.event_type === 'MIXER' ? 'none' : '';
   const firstTab = document.querySelector('.event-nav-tab');
   eventTab('roster', firstTab);
   loadRoster();
@@ -3633,8 +3643,14 @@ async function loadRoundPairings(round,teams,eps,soCount){
 
   const pairingRows=(pairings||[]).map(p=>{
     const sc=scores?.find(s=>s.pairing_id===p.id);
-    const taName=tname(p.team_a_id),tbName=tname(p.team_b_id);
-    const taColor=tcolor(p.team_a_id),tbColor=tcolor(p.team_b_id);
+    // MIXER: team_a_id===team_b_id (one pooled "team") — there's no real
+    // rivalry to label, so show the pair's own names instead of the
+    // (identical, meaningless) team name on both sides.
+    const isMixer=p.team_a_id===p.team_b_id;
+    const taName=isMixer?(pname(p.team_a_player1_id)+'/'+pname(p.team_a_player2_id)):tname(p.team_a_id);
+    const tbName=isMixer?(pname(p.team_b_player1_id)+'/'+pname(p.team_b_player2_id)):tname(p.team_b_id);
+    const taColor=isMixer?'var(--ink)':tcolor(p.team_a_id);
+    const tbColor=isMixer?'var(--ink)':tcolor(p.team_b_id);
     let scoreCell='';
     if(sc){
       const ggW=sc.golden_game_winner;
@@ -3649,8 +3665,11 @@ async function loadRoundPairings(round,teams,eps,soCount){
     }
     return '<div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border-radius:8px;font-size:13px;border:1px solid var(--border)">'+
       '<span style="font-weight:700;color:var(--ink-muted);min-width:64px;font-size:12px">Court '+p.court_number+'</span>'+
-      '<div style="flex:1"><span style="color:'+taColor+';font-weight:700">'+taName+'</span> '+pname(p.team_a_player1_id)+' / '+pname(p.team_a_player2_id)+
-      ' <span style="color:var(--ink-ghost);margin:0 6px">vs</span> <span style="color:'+tbColor+';font-weight:700">'+tbName+'</span> '+pname(p.team_b_player1_id)+' / '+pname(p.team_b_player2_id)+'</div>'+
+      (isMixer
+        ? '<div style="flex:1"><span style="font-weight:700">'+pname(p.team_a_player1_id)+' / '+pname(p.team_a_player2_id)+'</span>'+
+          ' <span style="color:var(--ink-ghost);margin:0 6px">vs</span> <span style="font-weight:700">'+pname(p.team_b_player1_id)+' / '+pname(p.team_b_player2_id)+'</span></div>'
+        : '<div style="flex:1"><span style="color:'+taColor+';font-weight:700">'+taName+'</span> '+pname(p.team_a_player1_id)+' / '+pname(p.team_a_player2_id)+
+          ' <span style="color:var(--ink-ghost);margin:0 6px">vs</span> <span style="color:'+tbColor+';font-weight:700">'+tbName+'</span> '+pname(p.team_b_player1_id)+' / '+pname(p.team_b_player2_id)+'</div>')+
       scoreCell+'</div>';
   }).join('');
   const soRow=soPlayers.length?'<div style="font-size:12px;color:var(--ink-muted);padding:6px 4px">Sitting out: '+soPlayers.map(p=>p.name+(p.total>1?' <span style="color:var(--clay);font-size:11px">('+p.total+'x)</span>':'')).join(', ')+'</div>':'';
@@ -3666,9 +3685,23 @@ async function loadRoundPairings(round,teams,eps,soCount){
 async function deployRound(roundNum){
   // ── STEP 0: Load all data ──────────────────────────────
   const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
-  const {data:tps}=await sb.from('team_players').select('team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
+  let {data:tps}=await sb.from('team_players').select('id,team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
   const {data:eps}=await sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id).eq('status','ACTIVE');
   const activePlayers=eps||[];
+
+  // MIXER: one pooled team for the whole roster — keep team_players in
+  // sync with whoever's currently ACTIVE (players get added to the
+  // roster after the event/team is created, so this can't be a one-time
+  // step at creation time).
+  if((teams||[]).length===1){
+    const poolTeamId=teams[0].id;
+    const linked=new Set((tps||[]).filter(tp=>tp.team_id===poolTeamId).map(tp=>tp.event_player_id));
+    const missing=activePlayers.filter(p=>!linked.has(p.id)).map(p=>({team_id:poolTeamId,event_player_id:p.id}));
+    if(missing.length){
+      const {data:inserted}=await sb.from('team_players').insert(missing).select();
+      tps=[...(tps||[]),...(inserted||[])];
+    }
+  }
 
   // Load sit-out history for this event
   const {data:sitLogs}=await sb.from('sitout_log').select('event_player_id,round_number,sitout_type').in('event_player_id',activePlayers.map(e=>e.id));
@@ -3767,6 +3800,10 @@ async function deployRound(roundNum){
   };
 
   const playingSet=new Set();
+  // MIXER: the one pooled team supplies BOTH sides of every court (4
+  // players/court), not just one side (2 players/court) like a real
+  // team in a team-vs-team battle — double the per-court quota.
+  const qc=uniqueTeams.length===1?numCourts*2:numCourts;
   for(const team of uniqueTeams){
     const pool=activePlayers.filter(p=>epTeamMap[p.id]===team.id);
     const men=[...pool.filter(p=>g(p)==='MALE')].sort(fairSort);
@@ -3774,27 +3811,27 @@ async function deployRound(roundNum){
     const all=[...pool].sort(fairSort);
     let selected=[];
     if(fmt==='BB'){
-      selected=men.slice(0,numCourts*2);
-      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+      selected=men.slice(0,qc*2);
+      if(selected.length<qc*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,qc*2-selected.length)];
     } else if(fmt==='GG'){
-      selected=women.slice(0,numCourts*2);
-      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+      selected=women.slice(0,qc*2);
+      if(selected.length<qc*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,qc*2-selected.length)];
     } else if(fmt==='BG'){
-      const selM=men.slice(0,numCourts), selW=women.slice(0,numCourts);
+      const selM=men.slice(0,qc), selW=women.slice(0,qc);
       selected=[...selM,...selW];
-      if(selected.length<numCourts*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,numCourts*2-selected.length)];
+      if(selected.length<qc*2) selected=[...selected,...all.filter(p=>!selected.includes(p)).slice(0,qc*2-selected.length)];
     } else if(fmt==='TD'){
-      // TD: select top numCourts*2 players by ACTUAL rating (ignore sit fairness)
+      // TD: select top qc*2 players by ACTUAL rating (ignore sit fairness)
       // TD is always the best available players — rating determines who plays
       const ratingSort=(a,b)=>actualR(b)-actualR(a);
-      selected=[...pool].sort(ratingSort).slice(0,numCourts*2);
+      selected=[...pool].sort(ratingSort).slice(0,qc*2);
     } else if(fmt==='OPEN'){
-      // OPEN: captain picks — no fairness rotation, just take first numCourts*2
+      // OPEN: captain picks — no fairness rotation, just take first qc*2
       // The OPEN modal handles selection manually
-      selected=all.slice(0,numCourts*2);
+      selected=all.slice(0,qc*2);
     } else {
-      // MIX/fallback: top numCourts*2 by fairness
-      selected=all.slice(0,numCourts*2);
+      // MIX/fallback: top qc*2 by fairness
+      selected=all.slice(0,qc*2);
     }
     selected.forEach(p=>playingSet.add(p.id));
   }
@@ -3997,16 +4034,56 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
 
   // ── STEP G: Generate pairings ─────────────────────────
   const pairings=[];
-  // Build matchups (round-robin rotation with random salt for variety)
   const n=uniqueTeams.length;
+  let courtNum=1;
+  const usedEPIds=new Set();
+
+  if(n===1){
+    // MIXER: one pooled "team" — everyone plays everyone, partners
+    // rotate every round (buildTeamPairs already avoids repeat
+    // partners via prevPartners). Pairs are matched against each
+    // other by closest strength instead of across two team pools,
+    // since there's only one pool to draw from.
+    const poolTeam=uniqueTeams[0];
+    const matchWithinPool=(pairs)=>{
+      const sorted=[...pairs].sort((a,b)=>b.str-a.str);
+      const matched=[];
+      for(let i=0;i+1<sorted.length;i+=2) matched.push({a:sorted[i],b:sorted[i+1]});
+      return matched;
+    };
+    let matched=[];
+    if(fmt==='TD'){
+      // TD: rank the whole pool, adjacent ranks become a court (1+2 vs 3+4, ...)
+      const ranked=[...playing].sort(ratingSort);
+      const numPairs=Math.floor(ranked.length/2);
+      const pairs=[];
+      for(let i=0;i<numPairs;i++){
+        const p1=ranked[i*2],p2=ranked[i*2+1];
+        pairs.push({p1,p2,str:actualR(p1)+actualR(p2)});
+      }
+      matched=matchWithinPool(pairs);
+    } else {
+      matched=matchWithinPool(buildTeamPairs(playing,fmt,strategy));
+    }
+    for(const m of matched){
+      if(courtNum>courts) break;
+      const {a,b}=m;
+      if(usedEPIds.has(a.p1.id)||usedEPIds.has(a.p2.id)||usedEPIds.has(b.p1.id)||usedEPIds.has(b.p2.id)) continue;
+      [a.p1,a.p2,b.p1,b.p2].forEach(p=>usedEPIds.add(p.id));
+      pairings.push({
+        round_id:nr.id,court_number:courtNum++,
+        team_a_id:poolTeam.id,team_b_id:poolTeam.id,
+        team_a_player1_id:a.p1.player_id,team_a_player2_id:a.p2.player_id,
+        team_b_player1_id:b.p1.player_id,team_b_player2_id:b.p2.player_id
+      });
+    }
+  } else {
+  // Build matchups (round-robin rotation with random salt for variety)
   const salt=Math.floor(Math.random()*100);
   const rotated=[...uniqueTeams];
   if(n>1){const rot=rotated.slice(1);const shift=((roundNum-1)+salt)%(n-1);for(let i=0;i<shift;i++)rot.push(rot.shift());rotated.splice(1,rot.length,...rot);}
   const matchups=[];
   for(let i=0;i<Math.floor(n/2);i++){if(rotated[i].id!==rotated[n-1-i].id)matchups.push([rotated[i],rotated[n-1-i]]);}
-
-  let courtNum=1;
-  const usedEPIds=new Set();
 
   for(const [tA,tB] of matchups){
     if(courtNum>courts) break;
@@ -4043,6 +4120,7 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
         team_b_player1_id:b.p1.player_id,team_b_player2_id:b.p2.player_id
       });
     }
+  }
   }
 
   if(pairings.length){
@@ -5682,13 +5760,17 @@ function renderRDO() {
   let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">`;
 
   courts.forEach(c => {
+    // MIXER: team_a_id===team_b_id (one pooled "team") — no real rivalry,
+    // so any player on the court can swap with any other, not just A↔A/B↔B.
+    const isMixer = c.teamAId === c.teamBId;
     const colorA = tcolor(c.teamAId), colorB = tcolor(c.teamBId);
 
     const playerRow = (p, side, slotIdx) => {
-      const teamColor = tcolor(side==='A' ? c.teamAId : c.teamBId);
+      const teamColor = isMixer ? 'var(--court)' : tcolor(side==='A' ? c.teamAId : c.teamBId);
       const isSelected = selectedPlayer?.pid === p.pid && selectedPlayer?.side === side && selectedPlayer?.court === c.court_number;
       // If a player is selected and this is the wrong team side — dim it
-      const isWrongSide = selectedPlayer && selectedPlayer.side !== side && selectedPlayer.pid !== p.pid;
+      // (Mixer has no sides, so nothing is ever "wrong".)
+      const isWrongSide = !isMixer && selectedPlayer && selectedPlayer.side !== side && selectedPlayer.pid !== p.pid;
       return `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;
         background:${isSelected ? teamColor+'25' : 'var(--surface)'};
         border:1.5px solid ${isSelected ? teamColor : 'var(--border)'};
@@ -5709,12 +5791,12 @@ function renderRDO() {
         <span style="font-size:11px;color:var(--ink-muted)">click slot to place selected player</span>
       </div>
       <div style="padding:12px 14px">
-        <!-- Team A -->
-        <div style="font-size:11px;font-weight:700;color:${colorA};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamAId)}</div>
+        <!-- Side 1 -->
+        ${isMixer?'':`<div style="font-size:11px;font-weight:700;color:${colorA};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamAId)}</div>`}
         ${c.teamAPlayers.map((p,i)=>playerRow(p,'A',i)).join('')}
         <div style="border-top:1px solid var(--border);margin:10px 0"></div>
-        <!-- Team B -->
-        <div style="font-size:11px;font-weight:700;color:${colorB};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamBId)}</div>
+        <!-- Side 2 -->
+        ${isMixer?'':`<div style="font-size:11px;font-weight:700;color:${colorB};text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${tname(c.teamBId)}</div>`}
         ${c.teamBPlayers.map((p,i)=>playerRow(p,'B',i)).join('')}
       </div>
     </div>`;
@@ -5745,8 +5827,12 @@ function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
       return;
     }
 
-    // Block cross-team swaps — must be same side (A↔A or B↔B)
-    if(selectedPlayer.side !== side) {
+    const fromCourt = courts.find(c=>c.court_number===selectedPlayer.court);
+    const isMixer = fromCourt.teamAId === fromCourt.teamBId;
+
+    // Block cross-team swaps — must be same side (A↔A or B↔B). Mixer has
+    // no real teams, so any slot can swap with any other slot.
+    if(!isMixer && selectedPlayer.side !== side) {
       toast('Can only swap players within the same team — A with A, B with B','error');
       _rdoState.selectedPlayer = null;
       renderRDO();
@@ -5754,7 +5840,6 @@ function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
     }
 
     // Swap within same team side
-    const fromCourt = courts.find(c=>c.court_number===selectedPlayer.court);
     const toCourt   = courts.find(c=>c.court_number===courtNum);
     const fromArr   = selectedPlayer.side==='A' ? fromCourt.teamAPlayers : fromCourt.teamBPlayers;
     const toArr     = side==='A' ? toCourt.teamAPlayers : toCourt.teamBPlayers;
@@ -9573,7 +9658,12 @@ async function createNewEvent() {
     status:'DRAFT', num_courts:4
   };
 
-  if(type!=='INDIVIDUAL'){
+  if(type==='MIXER'){
+    const rounds=parseInt(document.getElementById('event-mixer-rounds').value);
+    if(!rounds||rounds<1){errEl.textContent='Number of rounds required (min 1).';errEl.style.display='flex';return;}
+    payload.num_rounds=rounds;
+    payload.num_courts=parseInt(document.getElementById('event-mixer-courts').value)||4;
+  } else if(type!=='INDIVIDUAL'){
     const teams=parseInt(document.getElementById('event-teams').value);
     if(!teams||teams<2){errEl.textContent='Number of teams required (min 2).';errEl.style.display='flex';return;}
     payload.num_teams=teams;
@@ -9597,6 +9687,16 @@ async function createNewEvent() {
     });
   }
 
+  if(type==='MIXER'){
+    // One pool "team" covers the whole roster — it only exists to satisfy
+    // the pairings table's team_a_id/team_b_id columns; it's never shown.
+    // Skips the Team Builder/TEAMS_SET lifecycle step entirely — a Mixer
+    // event is deployable the moment players are on the roster.
+    await sb.from('teams').insert({event_id:data.id,name:'All Players',color:'#64748b'});
+    await sb.from('events').update({status:'TEAMS_SET'}).eq('id',data.id);
+    data.status='TEAMS_SET';
+  }
+
   toast('"'+name+'" created!','success');
   closeModal('new-event-modal');
   document.getElementById('event-name').value='';
@@ -9608,8 +9708,9 @@ async function createNewEvent() {
 }
 
 function toggleEventTypeFields(type) {
-  document.getElementById('team-fields').style.display = type==='INDIVIDUAL'?'none':'block';
+  document.getElementById('team-fields').style.display = (type==='INDIVIDUAL'||type==='MIXER')?'none':'block';
   document.getElementById('individual-fields').style.display = type==='INDIVIDUAL'?'block':'none';
+  document.getElementById('mixer-fields').style.display = type==='MIXER'?'block':'none';
 }
 
 // ══════════════════════════════════════════════
