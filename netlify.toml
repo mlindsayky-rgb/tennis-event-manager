@@ -5,3 +5,15 @@
   from = "/"
   to = "/app.html"
   status = 200
+
+# This is a single static app.html with no build step and no cache-busting
+# filename/hash — without this, a browser or the CDN can keep serving a
+# stale copy after a push, which is exactly what happened debugging the
+# Mixer rollout (console showed clearly-outdated behavior minutes after a
+# fix shipped). no-cache (not no-store) still lets the browser cache the
+# file, but forces it to revalidate with the server first every load, so a
+# new deploy's ETag is always picked up immediately with no hard-refresh.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-cache, must-revalidate"
