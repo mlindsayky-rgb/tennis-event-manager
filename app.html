@@ -6972,6 +6972,12 @@ async function saveMissingDataField(playerId, field, value) {
   const payload = { [field]: value.trim ? (value.trim() || null) : (value || null) };
   const { error } = await sb.from('players').update(payload).eq('id', playerId);
   if (error) { toast('Error saving: ' + error.message, 'error'); return; }
+  // Same player_clubs/home_club_id sync backfillPlayerHomeClub does for a
+  // roster add — a director's Players directory is filtered by player_clubs,
+  // a separate table, so setting Club here must keep it in sync too.
+  if (field === 'home_club_id' && payload.home_club_id) {
+    await sb.from('player_clubs').upsert({ player_id: playerId, club_id: payload.home_club_id }, { onConflict: 'player_id,club_id', ignoreDuplicates: true });
+  }
   toast('Saved', 'success');
   loadMissingData(missingDataContainerId);
 }
@@ -9628,8 +9634,15 @@ async function savePlayer() {
   const type=document.getElementById('player-type').value;
   if(!first||!last){toast('Name required','error');return;}
   if(!gender){toast('Gender required','error');return;}
-  const {data,error}=await sb.from('players').insert({roster_name:`${first} ${last}`,gender,player_type:type}).select().single();
+  // A director adding a player is adding one of their own club's players —
+  // assign their club automatically instead of leaving it for them to
+  // notice is missing and fix by hand later (admin has no club to assume).
+  const homeClubId = currentUser?.role==='director' ? currentUser.club_id : null;
+  const {data,error}=await sb.from('players').insert({roster_name:`${first} ${last}`,gender,player_type:type,home_club_id:homeClubId}).select().single();
   if(error){toast('Error: '+error.message,'error');return;}
+  if(homeClubId) {
+    await sb.from('player_clubs').upsert({player_id:data.id, club_id:homeClubId}, {onConflict:'player_id,club_id', ignoreDuplicates:true});
+  }
   toast(`${data.roster_name} added!`,'success');
   closeModal('player-modal');
   ['player-first','player-last'].forEach(id=>document.getElementById(id).value='');
