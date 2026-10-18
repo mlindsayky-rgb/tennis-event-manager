@@ -5961,13 +5961,22 @@ async function loadLeagues(containerId) {
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{data:leagues}, {data:teams}] = await Promise.all([
     sb.from('leagues').select('*').order('start_date',{ascending:false}),
-    sb.from('league_teams').select('id,league_id')
+    sb.from('league_teams').select('id,league_id,club_id')
   ]);
   const counts = {};
   (teams||[]).forEach(t=>{ counts[t.league_id]=(counts[t.league_id]||0)+1; });
   let filtered = leagues || [];
   if (currentUser?.role === 'coach') {
     const myLeagueIds = new Set((currentUser.teams||[]).map(t=>t.league_id));
+    filtered = filtered.filter(l=>myLeagueIds.has(l.id));
+  }
+  // A director only sees leagues where their OWN club has at least one
+  // team — not every league system-wide. If their club shares a league
+  // with another club (their teams play each other), they both see that
+  // one league, same as today; cross-club visibility beyond that is a
+  // separate question for later, not handled here.
+  if (currentUser?.role === 'director' && currentUser.club_id) {
+    const myLeagueIds = new Set((teams||[]).filter(t=>t.club_id===currentUser.club_id).map(t=>t.league_id));
     filtered = filtered.filter(l=>myLeagueIds.has(l.id));
   }
   const sorted = filtered.slice().sort((a,b)=>leagueDayIndex(a.name)-leagueDayIndex(b.name));
