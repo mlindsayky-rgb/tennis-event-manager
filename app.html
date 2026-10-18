@@ -2034,6 +2034,13 @@ async function toggleAutoLookup(enabled) {
 // ══════════════════════════════════════════════
 let pinBuf = '', pinLocked = false;
 
+// A coach can be assigned to more than one team within the SAME league, so
+// "does she need a Leagues picker" (and "does Back return to it") has to
+// key off distinct leagues, never off currentUser.teams.length directly.
+function coachLeagueIds(user) {
+  return [...new Set((user?.teams||[]).map(t=>t.league_id))];
+}
+
 function pinKey(d) {
   if (pinLocked || pinBuf.length >= 6) return;
   pinBuf += d;
@@ -2129,11 +2136,14 @@ async function attemptLogin() {
     applyBranding(teams[0].clubs);
     pinBuf=''; renderDots();
     pinLocked = false;
+    // Whether she needs a Leagues picker depends on how many DISTINCT
+    // leagues she's in, not how many teams — she can coach more than one
+    // team within the same league (openLeagueById resolves all of them).
+    const myLeagueIds = coachLeagueIds(currentUser);
     // Messages are team-scoped (see openLeague) — nothing to show until a
     // specific team's league is actually open, which sets this up itself.
-    if (teams.length === 1) {
-      currentUser.team_id = teams[0].id;
-      openLeagueById(teams[0].league_id);
+    if (myLeagueIds.length === 1) {
+      openLeagueById(myLeagueIds[0]);
     } else {
       showCoachLeaguesList();
     }
@@ -6124,11 +6134,16 @@ function openLeagueById(id) {
   sb.from('leagues').select('*').eq('id',id).single().then(({data})=>{
     if(!data) return;
     // A coach with several teams doesn't have one fixed team_id for the
-    // whole session — resolve which of her teams belongs to the league
-    // she just picked, right before entering it.
+    // whole session — resolve which of her teams belong to the league she
+    // just picked, right before entering it. She can coach MORE THAN ONE
+    // team within the same league, so teamIds holds all of them (used for
+    // ownership checks like roster access); team_id stays a single
+    // "primary" pick for the few features that only support one team
+    // (Up Next, team messaging).
     if (currentUser?.role === 'coach') {
-      const team = (currentUser.teams||[]).find(t=>t.league_id===id);
-      if (team) currentUser.team_id = team.id;
+      const myTeams = (currentUser.teams||[]).filter(t=>t.league_id===id);
+      currentUser.teamIds = myTeams.map(t=>t.id);
+      currentUser.team_id = myTeams[0]?.id;
     }
     openLeague(data);
   });
@@ -6159,8 +6174,8 @@ function openLeague(league) {
 function applyLeagueRoleGating() {
   const role = currentUser?.role;
   const isStaff = role === 'admin' || role === 'director';
-  const isMultiTeamCoach = role === 'coach' && (currentUser.teams||[]).length > 1;
-  const canGoBack = isStaff || isMultiTeamCoach;
+  const isMultiLeagueCoach = role === 'coach' && coachLeagueIds(currentUser).length > 1;
+  const canGoBack = isStaff || isMultiLeagueCoach;
   const backBtn = document.getElementById('league-detail-back-btn');
   backBtn.textContent = canGoBack ? '← Back' : 'Sign Out';
   backBtn.onclick = canGoBack ? closeLeague : logout;
@@ -6185,8 +6200,9 @@ function closeLeague() {
   } else if (currentUser?.role === 'director') {
     document.getElementById('director-screen').classList.add('active');
     loadLeagues('dir-leagues-list');
-  } else if (currentUser?.role === 'coach' && (currentUser.teams||[]).length > 1) {
+  } else if (currentUser?.role === 'coach' && coachLeagueIds(currentUser).length > 1) {
     currentUser.team_id = null;
+    currentUser.teamIds = [];
     showCoachLeaguesList();
   } else {
     logout();
@@ -6288,7 +6304,7 @@ function renderLeagueTeams() {
   }
   el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Club</th><th>Coach</th><th>Time Slot</th><th>Roster</th>${isStaff?'<th>Actions</th>':''}</tr></thead><tbody>
   ${currentLeagueTeams.map(t=>{
-    const ownTeam = !isTeamRole || t.id === currentUser.team_id;
+    const ownTeam = !isTeamRole || (currentUser.teamIds || [currentUser.team_id]).includes(t.id);
     return `<tr>
     <td><div style="display:flex;align-items:center;gap:10px">${teamAvatarHtml(t,28)}<strong>${t.name}</strong></div></td>
     <td>${t.clubs?.name||'—'}</td>
@@ -6315,7 +6331,7 @@ let rosterAllPlayers = [];
 
 async function openRosterModal(teamId) {
   const role = currentUser?.role;
-  if ((role === 'coach' || role === 'captain') && teamId !== currentUser.team_id) {
+  if ((role === 'coach' || role === 'captain') && !(currentUser.teamIds || [currentUser.team_id]).includes(teamId)) {
     toast("You can only manage your own team's roster", 'error');
     return;
   }
