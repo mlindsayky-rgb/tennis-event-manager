@@ -6751,6 +6751,10 @@ async function backfillPlayerHomeClub(playerId, teamId) {
   if (player && !player.home_club_id) {
     await sb.from('players').update({home_club_id: team.club_id}).eq('id', playerId);
   }
+  // A director's Players directory is filtered by player_clubs, a separate
+  // many-to-many table from home_club_id — without this a newly-rostered
+  // player has the right home_club_id but is still invisible there.
+  await sb.from('player_clubs').upsert({player_id: playerId, club_id: team.club_id}, {onConflict: 'player_id,club_id', ignoreDuplicates: true});
 }
 
 async function addPlayerToRoster() {
@@ -7121,6 +7125,13 @@ async function confirmRosterImport() {
       if (matchedPlayer && !matchedPlayer.home_club_id) {
         await sb.from('players').update({home_club_id: teamClubId}).eq('id', playerId);
       }
+    }
+    // A director's Players directory is filtered by player_clubs, a
+    // separate many-to-many table from home_club_id — without this a
+    // newly-rostered player has the right home_club_id but is still
+    // invisible there.
+    if (teamClubId) {
+      await sb.from('player_clubs').upsert({player_id: playerId, club_id: teamClubId}, {onConflict: 'player_id,club_id', ignoreDuplicates: true});
     }
     const {error: rosterErr} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
     if (rosterErr && !/duplicate/i.test(rosterErr.message||'')) {
