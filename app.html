@@ -1309,6 +1309,16 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="form-hint">Locked for the season once play starts. If a facility issue forces a change mid-season, edit it here — remaining unplayed matches will move to the new time. Courts defaults to the league format's usual count, but can be set lower if the roster is still filling in, or higher for a Mixer league with more players than courts.</div>
       </div>
       <div class="form-hint" style="margin-top:4px">Coach login PIN is set once per coach, not per team — manage it from the Coaches tab.</div>
+      <div id="team-code-section" style="border-top:1px solid var(--border);margin:18px 0;padding-top:18px;display:none">
+        <div style="font-size:13px;font-weight:700;color:var(--ink-muted);margin-bottom:12px">Player Schedule Link</div>
+        <div class="form-hint" style="margin-top:0;margin-bottom:10px">No login needed — share this with players on this team so they can see their schedule and league standings.</div>
+        <div class="form-row" style="align-items:center">
+          <div class="form-group" style="flex:2"><input class="form-input" id="team-code-link" readonly style="font-size:12px"></div>
+          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-sm btn-secondary" type="button" onclick="copyTeamCodeLink()">Copy Link</button></div>
+          <div class="form-group" style="flex:0 0 auto"><button class="btn btn-sm btn-ghost" type="button" onclick="regenerateTeamCode()">Regenerate</button></div>
+        </div>
+        <div class="form-hint">Regenerating breaks the old link — only do this if it was shared with the wrong people.</div>
+      </div>
       <div id="league-team-error" class="alert alert-error" style="display:none"></div>
     </div>
     <div class="modal-footer">
@@ -7221,6 +7231,7 @@ async function openTeamModalNew() {
   document.getElementById('team-avatar-file').value='';
   pendingAvatarUrl = null; pendingAvatarColor = null;
   renderAvatarPreview();
+  document.getElementById('team-code-section').style.display='none';
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
 }
@@ -7244,8 +7255,57 @@ async function openTeamModalEdit(id) {
   document.getElementById('team-avatar-file').value='';
   pendingAvatarUrl = t.avatar_url || null; pendingAvatarColor = t.avatar_color || null;
   renderAvatarPreview();
+  document.getElementById('team-code-section').style.display = t.team_code ? '' : 'none';
+  if (t.team_code) document.getElementById('team-code-link').value = teamCodeUrl(t.team_code);
   document.getElementById('league-team-error').style.display='none';
   openModal('league-team-modal');
+}
+
+// A short, URL-safe code so a player can open their team's read-only
+// schedule/standings page (team.html) with no login at all. Hex only, so
+// there's no 0/O or 1/I ambiguity when someone has to read it out loud.
+function genTeamCode() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase().slice(0, 6);
+}
+
+// Resolves relative to wherever this page is actually being served from —
+// works whether that's the Netlify root or the GitHub Pages subpath.
+function teamCodeUrl(code) {
+  return new URL(`team.html?code=${code}`, window.location.href).href;
+}
+
+async function uniqueTeamCode() {
+  for (let i = 0; i < 5; i++) {
+    const code = genTeamCode();
+    const { data } = await sb.from('league_teams').select('id').eq('team_code', code).maybeSingle();
+    if (!data) return code;
+  }
+  return genTeamCode() + Date.now().toString(16).slice(-2).toUpperCase();
+}
+
+function copyTeamCodeLink() {
+  const input = document.getElementById('team-code-link');
+  input.select();
+  const fallback = () => { document.execCommand('copy'); toast('Link copied!', 'success'); };
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(input.value).then(() => toast('Link copied!', 'success')).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+async function regenerateTeamCode() {
+  if (!editTeamId) return;
+  if (!confirm('This breaks the old link for anyone who already has it. Continue?')) return;
+  const code = await uniqueTeamCode();
+  const { error } = await sb.from('league_teams').update({ team_code: code }).eq('id', editTeamId);
+  if (error) { toast('Error: '+error.message, 'error'); return; }
+  document.getElementById('team-code-link').value = teamCodeUrl(code);
+  const t = currentLeagueTeams.find(x=>x.id===editTeamId);
+  if (t) t.team_code = code;
+  toast('New link generated!', 'success');
 }
 
 async function saveLeagueTeam() {
@@ -7283,6 +7343,9 @@ async function saveLeagueTeam() {
     time_slot_day: slotDay===''?null:parseInt(slotDay), time_slot_time: slotTime, court_count: courtCount,
     avatar_url: pendingAvatarUrl, avatar_color: pendingAvatarColor
   };
+  // Every team gets a player schedule link from the moment it's created —
+  // no separate step to turn it on.
+  if (!editTeamId) payload.team_code = await uniqueTeamCode();
 
   const btn=document.getElementById('save-league-team-btn');
   btn.disabled=true;

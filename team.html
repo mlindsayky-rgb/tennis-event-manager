@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Schedule</title>
+<style>
+  :root {
+    --court: #1A5C2A; --court-light: #2E8540; --navy: #0F1F3D;
+    --ink: #18181B; --ink-muted: #71717A; --border: #E4E4E7; --surface: #FAFAF7; --clay: #C0392B;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--surface); color: var(--ink); }
+  header { background: linear-gradient(135deg, var(--navy) 0%, var(--court) 100%); color: #fff; padding: 20px 20px 0; }
+  header h1 { margin: 0; font-size: 20px; }
+  header .sub { font-size: 13px; opacity: .85; margin-top: 4px; padding-bottom: 16px; }
+  nav { display: flex; gap: 4px; padding: 0 16px; background: #fff; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+  nav button { appearance: none; border: none; background: none; padding: 14px 12px; font-size: 14px; font-weight: 600; color: var(--ink-muted); cursor: pointer; border-bottom: 2.5px solid transparent; }
+  nav button.active { color: var(--court); border-bottom-color: var(--court); }
+  .content { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 12px; margin-bottom: 14px; overflow: hidden; }
+  .card-header { padding: 12px 16px; background: #F4F4F2; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 14px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .card-header .meta { font-size: 11px; font-weight: 600; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .card-body { padding: 12px 16px; font-size: 13px; color: var(--ink-muted); }
+  .card-body .big { font-size: 15px; font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge-green { background: #E6F4EA; color: #1A5C2A; }
+  .badge-blue { background: #E8EEFC; color: #1D4ED8; }
+  .badge-red { background: #FBEAEA; color: #C0392B; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-muted); border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--ink-muted); }
+  .empty-state .big { font-size: 40px; margin-bottom: 12px; }
+  .empty-state .title { font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+  .loading { text-align: center; padding: 60px 20px; color: var(--ink-muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1 id="team-name">Loading…</h1>
+  <div class="sub" id="team-sub">—</div>
+</header>
+<nav>
+  <button id="tab-schedule-btn" class="active" onclick="showTab('schedule')">Schedule</button>
+  <button id="tab-standings-btn" onclick="showTab('standings')">Standings</button>
+</nav>
+<div class="content">
+  <div id="tab-schedule"><div class="loading">Loading…</div></div>
+  <div id="tab-standings" style="display:none"><div class="loading">Loading…</div></div>
+</div>
+
+<script type="module">
+  const SUPABASE_URL = 'https://vrnvhrruvzcnslvceacn.supabase.co';
+  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZybnZocnJ1dnpjbnNsdmNlYWNuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MDUwMjgsImV4cCI6MjA5NzE4MTAyOH0.Q7nH6aYILrUewrnmoi5AHK8XNrMoNEeAILIgRxeEaAQ';
+  let createClient;
+  try { ({ createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm')); }
+  catch (e) { ({ createClient } = await import('https://esm.sh/@supabase/supabase-js@2.39.3')); }
+  const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  function escQ(s) { return (s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+  function fmtDateFull(d) { if (!d) return '—'; return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' }); }
+  function fmtTime(t) {
+    if (!t) return '—';
+    const [h,m] = t.split(':').map(Number);
+    const period = h>=12?'PM':'AM';
+    const h12 = h%12===0?12:h%12;
+    return `${h12}:${String(m).padStart(2,'0')} ${period}`;
+  }
+
+  // First name + last initial, e.g. "Jamie R." — matches app.html's player
+  // display convention for this public page. A name with no last name on
+  // file (the same condition the admin Missing Data tool flags) shows as
+  // "Jamie &." rather than guessing or showing a bare first name alone.
+  function firstLastInitial(name) {
+    const words = (name||'').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '—';
+    if (words.length < 2) return `${words[0]} &.`;
+    return `${words[0]} ${words[words.length-1][0].toUpperCase()}.`;
+  }
+
+  // ─── Same schedule math as app.html: a Date Off skips that calendar week
+  //     entirely (no practice, no match), and practice/match alternation
+  //     follows the compacted meeting order, never the raw calendar date. ───
+  function isMatchWeek(league, weekNumber) {
+    return !league.alternate_practice_weeks || weekNumber % 2 === 0;
+  }
+  function seasonWeekDates(league) {
+    const start = new Date(league.start_date + 'T00:00:00');
+    const datesOff = (league.dates_off || []).map(d => new Date(d + 'T00:00:00').getTime());
+    const weeks = [];
+    let calendarPos = 0;
+    while (weeks.length < league.session_length_weeks && calendarPos < league.session_length_weeks + 500) {
+      calendarPos++;
+      const d = new Date(start);
+      d.setDate(d.getDate() + (calendarPos-1)*7);
+      const weekEndExclusive = d.getTime() + 7*86400000;
+      const isOff = datesOff.some(t => t >= d.getTime() && t < weekEndExclusive);
+      if (isOff) continue;
+      weeks.push({ weekNumber: weeks.length+1, weekStart: d });
+    }
+    return weeks;
+  }
+  function dateForTeamInWeek(weekStart, timeSlotDay) {
+    const d = new Date(weekStart);
+    let diff = timeSlotDay - d.getDay();
+    if (diff < 0) diff += 7;
+    d.setDate(d.getDate() + diff);
+    return d;
+  }
+  function toISODate(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
+  function setWinner(s) { const a=Number(s.team_a_games)||0, b=Number(s.team_b_games)||0; if (a===b) return null; return a>b?'A':'B'; }
+  function courtWinner(cr) {
+    if (cr.teamAType==='SOS') return 'B';
+    if (cr.teamBType==='SOS') return 'A';
+    let aSets=0,bSets=0,aGames=0,bGames=0;
+    (cr.sets||[]).forEach(s=>{ aGames+=Number(s.team_a_games)||0; bGames+=Number(s.team_b_games)||0; const w=setWinner(s); if(w==='A')aSets++; else if(w==='B')bSets++; });
+    if (aSets!==bSets) return aSets>bSets?'A':'B';
+    if (aGames!==bGames) return aGames>bGames?'A':'B';
+    return null;
+  }
+  function courtGames(cr) { let a=0,b=0; (cr.sets||[]).forEach(s=>{a+=Number(s.team_a_games)||0; b+=Number(s.team_b_games)||0;}); return {a,b}; }
+
+  let team = null, league = null;
+
+  async function init() {
+    const params = new URLSearchParams(window.location.search);
+    const code = (params.get('code')||'').trim().toUpperCase();
+    if (!code) { showNotFound(); return; }
+    const { data: t } = await sb.from('league_teams').select('*,clubs(name)').eq('team_code', code).maybeSingle();
+    if (!t) { showNotFound(); return; }
+    team = t;
+    const { data: l } = await sb.from('leagues').select('*').eq('id', team.league_id).maybeSingle();
+    if (!l) { showNotFound(); return; }
+    league = l;
+    document.getElementById('team-name').textContent = team.name;
+    document.getElementById('team-sub').textContent = `${league.name} · ${team.clubs?.name||'—'}`;
+    document.title = `${team.name} — Schedule`;
+    await loadSchedule();
+  }
+
+  function showNotFound() {
+    document.getElementById('team-name').textContent = 'Link not found';
+    document.getElementById('team-sub').textContent = '';
+    document.getElementById('tab-schedule').innerHTML = '<div class="empty-state"><div class="big">🔗</div><div class="title">This link isn\'t valid</div><div>Check with your coach for the correct schedule link.</div></div>';
+  }
+
+  window.showTab = (name) => {
+    document.getElementById('tab-schedule').style.display = name==='schedule' ? 'block' : 'none';
+    document.getElementById('tab-standings').style.display = name==='standings' ? 'block' : 'none';
+    document.getElementById('tab-schedule-btn').classList.toggle('active', name==='schedule');
+    document.getElementById('tab-standings-btn').classList.toggle('active', name==='standings');
+    if (name==='standings' && !window.__standingsLoaded) { window.__standingsLoaded = true; loadStandings(); }
+  };
+
+  async function loadSchedule() {
+    const el = document.getElementById('tab-schedule');
+    const weeks = seasonWeekDates(league);
+    const matchWeekNums = weeks.filter(w => isMatchWeek(league, w.weekNumber)).map(w => w.weekNumber);
+
+    const { data: matches } = matchWeekNums.length
+      ? await sb.from('league_matches').select('*').eq('league_id', league.id)
+          .in('week_number', matchWeekNums)
+          .or(`team_a_id.eq.${team.id},team_b_id.eq.${team.id}`)
+      : { data: [] };
+    const matchByWeek = {}; (matches||[]).forEach(m => { matchByWeek[m.week_number] = m; });
+
+    const oppIds = [...new Set((matches||[]).map(m => m.team_a_id===team.id ? m.team_b_id : m.team_a_id).filter(Boolean))];
+    const { data: oppTeams } = oppIds.length ? await sb.from('league_teams').select('id,name').in('id', oppIds) : { data: [] };
+    const oppById = {}; (oppTeams||[]).forEach(t => oppById[t.id] = t.name);
+
+    const matchIds = (matches||[]).map(m => m.id);
+    const { data: results } = matchIds.length ? await sb.from('court_results').select('*').in('match_id', matchIds) : { data: [] };
+    const resultsByMatch = {}; (results||[]).forEach(r => { (resultsByMatch[r.match_id]=resultsByMatch[r.match_id]||[]).push(r); });
+
+    const cards = weeks.map(w => {
+      const isMatch = isMatchWeek(league, w.weekNumber);
+      const date = toISODate(dateForTeamInWeek(w.weekStart, team.time_slot_day));
+      if (!isMatch) {
+        return `<div class="card">
+          <div class="card-header"><span>🏃 Practice</span><span class="meta">Week ${w.weekNumber}</span></div>
+          <div class="card-body"><div class="big">${fmtDateFull(date)}</div>${fmtTime(team.time_slot_time)} · ${escQ(team.clubs?.name||'—')}</div>
+        </div>`;
+      }
+      const m = matchByWeek[w.weekNumber];
+      if (!m) {
+        return `<div class="card">
+          <div class="card-header"><span>🎾 Match</span><span class="meta">Week ${w.weekNumber}</span></div>
+          <div class="card-body"><div class="big">${fmtDateFull(date)}</div>Not yet scheduled</div>
+        </div>`;
+      }
+      const isTeamA = m.team_a_id === team.id;
+      const oppId = isTeamA ? m.team_b_id : m.team_a_id;
+      const oppName = oppId ? (oppById[oppId]||'—') : null;
+      const siteACourts = new Set(m.site_a_courts||[]);
+      const allCourts = (resultsByMatch[m.id]||[]);
+      const myResults = m.team_b_id
+        ? allCourts.filter(r => isTeamA ? siteACourts.has(r.court_number) : !siteACourts.has(r.court_number))
+        : allCourts;
+      let courtsWon=0, courtsLost=0, entered=0;
+      myResults.forEach(r => {
+        entered++;
+        const w2 = courtWinner({ teamAType: r.team_a_entry_type, teamBType: r.team_b_entry_type, sets: r.sets });
+        const mine = isTeamA ? 'A' : 'B';
+        if (w2===mine) courtsWon++; else if (w2) courtsLost++;
+      });
+      let statusHtml;
+      if (!entered) statusHtml = '<span class="badge badge-blue">Upcoming</span>';
+      else if (entered < (m.court_count||0)) statusHtml = `<span class="badge badge-blue">In Progress — ${courtsWon}-${courtsLost}</span>`;
+      else statusHtml = courtsWon>courtsLost ? `<span class="badge badge-green">Won ${courtsWon}-${courtsLost}</span>` : courtsLost>courtsWon ? `<span class="badge badge-red">Lost ${courtsWon}-${courtsLost}</span>` : `<span class="badge badge-blue">Tied ${courtsWon}-${courtsLost}</span>`;
+      return `<div class="card">
+        <div class="card-header"><span>🎾 ${oppName?('vs '+escQ(oppName)):'Match'}</span><span class="meta">Week ${w.weekNumber}</span></div>
+        <div class="card-body"><div class="big">${fmtDateFull(date)}</div>${fmtTime(team.time_slot_time)} · ${escQ(team.clubs?.name||'—')}<div style="margin-top:8px">${statusHtml}</div></div>
+      </div>`;
+    });
+
+    el.innerHTML = cards.join('') || '<div class="empty-state"><div class="big">📅</div><div class="title">No schedule yet</div></div>';
+  }
+
+  async function loadStandings() {
+    const el = document.getElementById('tab-standings');
+    const { data: leagueTeams } = await sb.from('league_teams').select('id,name').eq('league_id', league.id);
+    const teamIds = (leagueTeams||[]).map(t=>t.id);
+    if (!teamIds.length) { el.innerHTML = '<div class="empty-state"><div class="title">No standings yet</div></div>'; return; }
+    const teamNameById = {}; (leagueTeams||[]).forEach(t=>teamNameById[t.id]=t.name);
+
+    const [{ data: rosterRows }, { data: matches }] = await Promise.all([
+      sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds),
+      sb.from('league_matches').select('id').eq('league_id', league.id),
+    ]);
+    const matchIds = (matches||[]).map(m=>m.id);
+    const { data: results } = matchIds.length ? await sb.from('court_results').select('*').in('match_id', matchIds) : { data: [] };
+
+    function courtSides(cr) {
+      const winner = courtWinner({ teamAType: cr.team_a_entry_type, teamBType: cr.team_b_entry_type, sets: cr.sets });
+      if (!winner) return null;
+      const { a: aGames, b: bGames } = courtGames({ sets: cr.sets });
+      const aIds = [cr.team_a_player1_id, cr.team_a_player2_id].filter(Boolean);
+      const bIds = [cr.team_b_player1_id, cr.team_b_player2_id].filter(Boolean);
+      return winner==='A' ? { winIds:aIds, loseIds:bIds, winGames:aGames, loseGames:bGames } : { winIds:bIds, loseIds:aIds, winGames:bGames, loseGames:aGames };
+    }
+
+    const stats = {}, teamOf = {};
+    (rosterRows||[]).forEach(r => {
+      if (!(r.player_id in teamOf)) teamOf[r.player_id] = r.team_id;
+      stats[r.player_id] = stats[r.player_id] || { wins:0, losses:0, gamesWon:0, gamesTotal:0 };
+    });
+    (results||[]).forEach(cr => {
+      const sides = courtSides(cr);
+      if (!sides) return;
+      const total = sides.winGames + sides.loseGames;
+      sides.winIds.forEach(pid => { const s=stats[pid]=stats[pid]||{wins:0,losses:0,gamesWon:0,gamesTotal:0}; s.wins++; s.gamesWon+=sides.winGames; s.gamesTotal+=total; });
+      sides.loseIds.forEach(pid => { const s=stats[pid]=stats[pid]||{wins:0,losses:0,gamesWon:0,gamesTotal:0}; s.losses++; s.gamesWon+=sides.loseGames; s.gamesTotal+=total; });
+    });
+
+    const playerIds = Object.keys(stats);
+    if (!playerIds.length) { el.innerHTML = '<div class="empty-state"><div class="title">No standings yet</div></div>'; return; }
+    const { data: players } = await sb.from('players').select('id,roster_name').in('id', playerIds);
+    const nameMap = {}; (players||[]).forEach(p=>nameMap[p.id]=p.roster_name);
+
+    const rows = playerIds.map(pid => {
+      const s = stats[pid];
+      const m = s.wins + s.losses;
+      return {
+        name: firstLastInitial(nameMap[pid]),
+        team: teamOf[pid] ? (teamNameById[teamOf[pid]]||'—') : 'Sub',
+        wins: s.wins, losses: s.losses,
+        winPct: m ? s.wins/m : 0,
+      };
+    }).sort((a,b) => b.winPct - a.winPct || a.name.localeCompare(b.name));
+
+    const pct = n => `${Math.round(n*100)}%`;
+    el.innerHTML = `<div class="card"><table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>W</th><th>L</th><th>Win %</th></tr></thead><tbody>
+      ${rows.map((r,i) => `<tr><td>${i+1}</td><td>${escQ(r.name)}</td><td>${escQ(r.team)}</td><td>${r.wins}</td><td>${r.losses}</td><td>${pct(r.winPct)}</td></tr>`).join('')}
+      </tbody></table></div>`;
+  }
+
+  init();
+</script>
+</body>
+</html>
