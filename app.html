@@ -2689,6 +2689,13 @@ let draggedChip = null;
 let currentRounds = [];
 
 const TEAM_COLORS = ['#C62828','#1565C0','#2E7D32','#F57F17','#4A148C','#006064','#BF360C','#33691E'];
+// MIXER events use one real "pool" team ("All Players", holds the whole
+// roster via team_players) plus this second, always-empty placeholder —
+// pairings.team_a_id/team_b_id have a `different_teams` CHECK constraint
+// in the live schema (team_a_id <> team_b_id), so a pooled pairing can't
+// use the same team on both sides. Never shown in any UI — every Mixer
+// display path keys off currentEvent.event_type==='MIXER', not team ids.
+const MIXER_GHOST_TEAM_NAME = '__mixer_ghost__';
 const NAME_SETS = [
   ['Aces','Baseline Bashers','Court Crushers','Drop Shot Dragons','Lob Stars'],
   ['Net Ninjas','Rally Kings','Slice Squad','Topspin Tigers','Volley Vipers'],
@@ -3562,7 +3569,7 @@ async function loadRounds(){
   const canDeploy=currentEvent.status==='TEAMS_SET'||currentEvent.status==='LIVE';
   const activeCt=(eps||[]).filter(e=>e.status==='ACTIVE').length;
   const curCourts=currentEvent.num_courts||4;
-  const isMixer=(teams||[]).length===1;
+  const isMixer=currentEvent.event_type==='MIXER';
   const rulesOn=!currentEvent.round_configs?.mixerRandomPairs;
 
   el.innerHTML='<div style="padding:20px">'+
@@ -3650,10 +3657,10 @@ async function loadRoundPairings(round,teams,eps,soCount){
 
   const pairingRows=(pairings||[]).map(p=>{
     const sc=scores?.find(s=>s.pairing_id===p.id);
-    // MIXER: team_a_id===team_b_id (one pooled "team") — there's no real
-    // rivalry to label, so show the pair's own names instead of the
-    // (identical, meaningless) team name on both sides.
-    const isMixer=p.team_a_id===p.team_b_id;
+    // MIXER: one pooled "team" plus a ghost placeholder on the other
+    // side (see MIXER_GHOST_TEAM_NAME) — there's no real rivalry to
+    // label, so show the pair's own names instead of a team name.
+    const isMixer=currentEvent.event_type==='MIXER';
     const taName=isMixer?(pname(p.team_a_player1_id)+'/'+pname(p.team_a_player2_id)):tname(p.team_a_id);
     const tbName=isMixer?(pname(p.team_b_player1_id)+'/'+pname(p.team_b_player2_id)):tname(p.team_b_id);
     const taColor=isMixer?'var(--ink)':tcolor(p.team_a_id);
@@ -3691,8 +3698,19 @@ async function loadRoundPairings(round,teams,eps,soCount){
 
 async function deployRound(roundNum){
   // ── STEP 0: Load all data ──────────────────────────────
-  const {data:teams}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
-  let {data:tps}=await sb.from('team_players').select('id,team_id,event_player_id').in('team_id',(teams||[]).map(t=>t.id));
+  const {data:teamsRaw}=await sb.from('teams').select('id,name,color').eq('event_id',currentEvent.id);
+  let mixerGhostTeamId=(teamsRaw||[]).find(t=>t.name===MIXER_GHOST_TEAM_NAME)?.id || null;
+  // Self-heal: an event created before the ghost-team fix shipped only
+  // has the one pool team — create the missing second team now instead
+  // of failing every deploy against the live `different_teams` CHECK
+  // constraint (team_a_id <> team_b_id), which a pooled pairing would
+  // otherwise violate by using the same team on both sides.
+  if(currentEvent.event_type==='MIXER' && !mixerGhostTeamId){
+    const {data:ghost}=await sb.from('teams').insert({event_id:currentEvent.id,name:MIXER_GHOST_TEAM_NAME,color:'#64748b'}).select().single();
+    mixerGhostTeamId=ghost?.id||null;
+  }
+  const teams=(teamsRaw||[]).filter(t=>t.name!==MIXER_GHOST_TEAM_NAME);
+  let {data:tps}=await sb.from('team_players').select('id,team_id,event_player_id').in('team_id',teams.map(t=>t.id));
   const {data:eps}=await sb.from('event_players').select('id,player_id,status,players(id,roster_name,gender)').eq('event_id',currentEvent.id).eq('status','ACTIVE');
   const activePlayers=eps||[];
 
@@ -3700,7 +3718,7 @@ async function deployRound(roundNum){
   // sync with whoever's currently ACTIVE (players get added to the
   // roster after the event/team is created, so this can't be a one-time
   // step at creation time).
-  if((teams||[]).length===1){
+  if(teams.length===1){
     const poolTeamId=teams[0].id;
     const linked=new Set((tps||[]).filter(tp=>tp.team_id===poolTeamId).map(tp=>tp.event_player_id));
     const missing=activePlayers.filter(p=>!linked.has(p.id)).map(p=>({team_id:poolTeamId,event_player_id:p.id}));
@@ -3862,10 +3880,10 @@ async function deployRound(roundNum){
   }
 
   // ── STEP 4: Deploy ────────────────────────────────────
-  await saveRound(roundNum,playing,sitOutPlayers,tps||[],uniqueTeams,numCourts,cfg,ratingMap,prevPartners);
+  await saveRound(roundNum,playing,sitOutPlayers,tps||[],uniqueTeams,numCourts,cfg,ratingMap,prevPartners,mixerGhostTeamId);
 }
 
-async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride,ratingMap,prevPartners){
+async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOverride,ratingMap,prevPartners,mixerGhostTeamId){
   const cfg=cfgOverride||{format:'BG',strategy:'AE'};
   const fmt=cfg.format||'BG';
   const strategy=cfg.strategy||'AE';
@@ -4084,7 +4102,9 @@ async function saveRound(roundNum,playing,sitOutPlayers,tps,teams,courts,cfgOver
       [a.p1,a.p2,b.p1,b.p2].forEach(p=>usedEPIds.add(p.id));
       pairings.push({
         round_id:nr.id,court_number:courtNum++,
-        team_a_id:poolTeam.id,team_b_id:poolTeam.id,
+        // The live schema's `different_teams` CHECK (team_a_id <> team_b_id)
+        // forbids using the pool team on both sides, hence the ghost team.
+        team_a_id:poolTeam.id,team_b_id:mixerGhostTeamId||poolTeam.id,
         team_a_player1_id:a.p1.player_id,team_a_player2_id:a.p2.player_id,
         team_b_player1_id:b.p1.player_id,team_b_player2_id:b.p2.player_id
       });
@@ -4356,7 +4376,9 @@ async function loadTVPreview() {
   const teamAId=sortedPairings[0]?.team_a_id;
   const teamBId=sortedPairings[0]?.team_b_id;
   const teamA=teams?.find(t=>t.id===teamAId)||teams?.[0];
-  const teamB=teams?.find(t=>t.id===teamBId)||teams?.[1];
+  // MIXER's "team B" is really just the ghost placeholder (see
+  // MIXER_GHOST_TEAM_NAME) — never show its technical name on the TV.
+  const teamB=currentEvent.event_type==='MIXER' ? teamA : (teams?.find(t=>t.id===teamBId)||teams?.[1]);
 
   // Calculate total games won per team (including golden game bonus)
   const gamesA=(scores||[]).reduce((s,sc)=>{
@@ -5787,9 +5809,10 @@ function renderRDO() {
   let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">`;
 
   courts.forEach(c => {
-    // MIXER: team_a_id===team_b_id (one pooled "team") — no real rivalry,
-    // so any player on the court can swap with any other, not just A↔A/B↔B.
-    const isMixer = c.teamAId === c.teamBId;
+    // MIXER: one pooled team plus a ghost placeholder (see
+    // MIXER_GHOST_TEAM_NAME) — no real rivalry, so any player on the
+    // court can swap with any other, not just A↔A/B↔B.
+    const isMixer = currentEvent.event_type === 'MIXER';
     const colorA = tcolor(c.teamAId), colorB = tcolor(c.teamBId);
 
     const playerRow = (p, side, slotIdx) => {
@@ -5855,7 +5878,7 @@ function rdoSelectPlayer(pid, name, side, courtNum, slotIdx) {
     }
 
     const fromCourt = courts.find(c=>c.court_number===selectedPlayer.court);
-    const isMixer = fromCourt.teamAId === fromCourt.teamBId;
+    const isMixer = currentEvent.event_type === 'MIXER';
 
     // Block cross-team swaps — must be same side (A↔A or B↔B). Mixer has
     // no real teams, so any slot can swap with any other slot.
@@ -9741,9 +9764,14 @@ async function createNewEvent() {
   if(type==='MIXER'){
     // One pool "team" covers the whole roster — it only exists to satisfy
     // the pairings table's team_a_id/team_b_id columns; it's never shown.
+    // A second, always-empty placeholder goes alongside it (see
+    // MIXER_GHOST_TEAM_NAME) so every pairing can have team_a_id !== team_b_id.
     // Skips the Team Builder/TEAMS_SET lifecycle step entirely — a Mixer
     // event is deployable the moment players are on the roster.
-    await sb.from('teams').insert({event_id:data.id,name:'All Players',color:'#64748b'});
+    await sb.from('teams').insert([
+      {event_id:data.id,name:'All Players',color:'#64748b'},
+      {event_id:data.id,name:MIXER_GHOST_TEAM_NAME,color:'#64748b'},
+    ]);
     await sb.from('events').update({status:'TEAMS_SET'}).eq('id',data.id);
     data.status='TEAMS_SET';
   }
