@@ -1,6 +1,6 @@
 # Tennis Event Manager
 
-Single-file vanilla JS app: `app.html` (the main app), plus standalone `tv.html` (TV/scoreboard display) and `results.html` (public results page). No build step, no framework, no package.json — just static HTML/JS served as-is.
+Single-file vanilla JS app: `app.html` (the main app), plus standalone `tv.html` (TV/scoreboard display), `results.html` (public results page, by league+week), and `team.html` (public, per-team schedule + league standings, by `?code=`). No build step, no framework, no package.json — just static HTML/JS served as-is.
 
 ## Deploy workflow
 - Production site: https://clubeventmanager.netlify.app/ — Netlify auto-deploys from the `main` branch only (see `netlify.toml`: no build command, publishes repo root, redirects `/` to `/app.html`).
@@ -20,6 +20,9 @@ Single-file vanilla JS app: `app.html` (the main app), plus standalone `tv.html`
 - Missing Data tooling (admin, director, and the coach-facing per-league tab — not captain) flags players missing last name / phone / home club, defaults to showing only players added in the last 45 days.
 - League scheduling (`seasonWeekDates`/`isMatchWeek` in `app.html`): a league's Dates Off cause that calendar week to be skipped entirely (no match, no practice), extending the season by a week to make up the meeting count. Practice/match alternation always follows the actual, compacted meeting order — never the raw calendar date — so a skipped week never produces two of the same type in a row.
 - End Date auto-fill: start date counts as week 1 day 1, so N weeks lands N×7-1 days out; each Date Off adds one bonus week. No day-of-week rounding.
+- `league_teams.team_code` (unique, random 6-char hex, set at team creation) is a no-login shareable link for players — `team.html?code=XXXXXX` shows that team's own schedule (practice/match weeks, opponent, result once entered) plus the whole league's standings. Editing a team shows/copies/regenerates its link. This is intentionally simpler than the existing personal player PIN login (`players.pin_hash`, the full `player-screen`) — the team code needs nobody to remember a PIN, it's just "do you have the link," and stays read-only.
+- Standings everywhere a player name is shown to the public (currently just `team.html`) use "First L." (first name + last initial) — a player missing a last name (the same single-word-name condition the admin Missing Data tool flags) shows as "First &." instead of guessing or showing a bare first name.
+- `results.html` still carries an OLD, un-fixed copy of `seasonWeekDates`/`isMatchWeek` (no Dates-Off-skip, the pre-fix rounding math) — `team.html`'s copy is the current, correct one. If `results.html` is touched again, port the same fix into it; don't assume it already matches `app.html`.
 
 ## Testing
 - Before shipping a schedule/roster/data-model change, write a Playwright test against a mock Supabase client (intercepts the `supabase-js` import and stubs `window.__mockDB`) and run the existing regression suite alongside it — this has repeatedly caught real bugs (date math, alternation logic, dedup) before they reached production. These test files are scratch work, not checked into this repo.
