@@ -1224,10 +1224,17 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div class="form-group"><label class="form-label">Number of Teams <span class="req">*</span></label><input class="form-input" id="league-team-count" type="number" min="1" max="16" placeholder="e.g. 4"><div class="form-hint" id="league-team-count-hint">Sets the league's planned structure — teams can be added up to (or beyond) this count.</div></div>
       <div class="form-group">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="checkbox" id="league-alternate-practice-weeks">
+          <input type="checkbox" id="league-alternate-practice-weeks" onchange="document.getElementById('league-start-with-match-row').style.display=this.checked?'block':'none'">
           <span class="form-label" style="margin:0">Alternate practice &amp; match weeks</span>
         </label>
         <div class="form-hint">Week 1 is practice, week 2 is a match, and so on — practice weeks don't get a match or lineup, teams just meet at their own locked time and location.</div>
+      </div>
+      <div class="form-group" id="league-start-with-match-row" style="display:none">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="league-start-with-match">
+          <span class="form-label" style="margin:0">Start with a Match instead of a Practice</span>
+        </label>
+        <div class="form-hint">Flips the alternation — week 1 is a match, week 2 is practice, and so on. The rest of the pattern (and Dates Off handling) stays the same.</div>
       </div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Start Date <span class="req">*</span></label><input class="form-input" id="league-start-date" type="date" onchange="suggestLeagueEndDate()"></div>
@@ -6284,6 +6291,8 @@ function openNewLeagueModal() {
   document.getElementById('league-session-length').value='5';
   document.getElementById('league-mode').value='team';
   document.getElementById('league-alternate-practice-weeks').checked=true;
+  document.getElementById('league-start-with-match').checked=false;
+  document.getElementById('league-start-with-match-row').style.display='block';
   onLeagueModeChange();
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
@@ -6305,6 +6314,8 @@ async function editLeague(id) {
   document.getElementById('league-start-date').value=l.start_date;
   document.getElementById('league-end-date').value=l.end_date;
   document.getElementById('league-alternate-practice-weeks').checked=!!l.alternate_practice_weeks;
+  document.getElementById('league-start-with-match').checked=!!l.start_with_match;
+  document.getElementById('league-start-with-match-row').style.display=l.alternate_practice_weeks?'block':'none';
   onLeagueModeChange();
   renderDatesOffList();
   document.getElementById('league-error').style.display='none';
@@ -6369,10 +6380,11 @@ async function saveLeague() {
   if(endDate<startDate){errEl.textContent='End date must be after start date.';errEl.style.display='flex';return;}
 
   const alternatePracticeWeeks = document.getElementById('league-alternate-practice-weeks').checked;
+  const startWithMatch = alternatePracticeWeeks && document.getElementById('league-start-with-match').checked;
   const payload = {
     name, format, session_length_weeks: sessionLength, team_count: teamCount, league_mode: leagueMode,
     start_date: startDate, end_date: endDate, dates_off: leagueDatesOffDraft,
-    alternate_practice_weeks: alternatePracticeWeeks
+    alternate_practice_weeks: alternatePracticeWeeks, start_with_match: startWithMatch
   };
   const btn = document.getElementById('save-league-btn');
   btn.disabled=true;
@@ -7807,12 +7819,14 @@ function toISODate(d) {
 
 // When a league alternates practice and match weeks, week 1 is practice,
 // week 2 is a match, and so on — odd weeks never get a league_matches row.
-// weekNumber here is the compacted, actually-held meeting count (what
-// seasonWeekDates assigns), so this alternation always holds strictly
-// meeting-to-meeting — skipping a Date Off never breaks the P/M/P/M
-// rhythm or produces two of the same type in a row.
+// start_with_match flips that: week 1 is the match instead, week 2 is
+// practice. Either way weekNumber here is the compacted, actually-held
+// meeting count (what seasonWeekDates assigns), so the alternation always
+// holds strictly meeting-to-meeting — skipping a Date Off never breaks
+// the rhythm or produces two of the same type in a row.
 function isMatchWeek(league, weekNumber) {
-  return !league.alternate_practice_weeks || weekNumber % 2 === 0;
+  if (!league.alternate_practice_weeks) return true;
+  return league.start_with_match ? weekNumber % 2 === 1 : weekNumber % 2 === 0;
 }
 
 // Walks real calendar weeks starting at the league's start date. A calendar

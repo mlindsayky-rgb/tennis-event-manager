@@ -85,7 +85,8 @@
   //     entirely (no practice, no match), and practice/match alternation
   //     follows the compacted meeting order, never the raw calendar date. ───
   function isMatchWeek(league, weekNumber) {
-    return !league.alternate_practice_weeks || weekNumber % 2 === 0;
+    if (!league.alternate_practice_weeks) return true;
+    return league.start_with_match ? weekNumber % 2 === 1 : weekNumber % 2 === 0;
   }
   function seasonWeekDates(league) {
     const start = new Date(league.start_date + 'T00:00:00');
