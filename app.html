@@ -110,11 +110,21 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 /* ── APP HEADER ── */
 .app-header {
   background: var(--court); color: white;
-  padding: 0 24px; height: 58px;
+  padding: 10px 24px; min-height: 58px;
   display: flex; align-items: center; justify-content: space-between;
   position: sticky; top: 0; z-index: 100;
   box-shadow: 0 2px 12px rgba(0,0,0,.15);
 }
+/* No display was ever set here, so on a narrow phone — where a long title
+   (club + day/time, sometimes a badge too) wraps to 2+ lines — the back
+   button and the title block stacked vertically instead of staying side
+   by side. That made this container far taller than the header's old
+   fixed height, which centered it vertically and pushed the back button
+   up out of the visible header entirely (not covered, just off-screen).
+   min-width:0 on the title block lets IT wrap instead of forcing the row
+   wider than the viewport. */
+.app-header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.app-header-left > div { min-width: 0; flex: 1; }
 .app-header-title { font-size: 15px; font-weight: 700; letter-spacing: -.2px; }
 .app-header-sub { font-size: 11px; opacity: .7; margin-top: 1px; font-weight: 500; }
 .header-btn {

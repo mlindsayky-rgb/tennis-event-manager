@@ -2,6 +2,8 @@
 
 Single-file vanilla JS app: `app.html` (the main app), plus standalone `tv.html` (TV/scoreboard display), `results.html` (public results page, by league+week), and `team.html` (public, per-team schedule + league standings, by `?code=`). No build step, no framework, no package.json — just static HTML/JS served as-is.
 
+- Every screen header shares `.app-header`/`.app-header-left` (back button or icon, then a title+subtitle block). `.app-header-left` has `display:flex` specifically so the back button and title stay side by side even when the title wraps to multiple lines on a narrow phone — without it, the back button and title block stack vertically instead, and since the header's height used to be fixed at 58px with `align-items:center`, that taller stack got centered and pushed the back button up out of the visible header entirely (not covered by anything, just rendered off-screen — reported as "the back button isn't showing" on mobile with a long match title). `.app-header` is `min-height:58px` now (not a fixed `height`) so it can grow to fit wrapped content instead of clipping/overflowing it.
+
 ## Deploy workflow
 - Production site: https://clubeventmanager.netlify.app/ — Netlify auto-deploys from the `main` branch only (see `netlify.toml`: no build command, publishes repo root, redirects `/` to `/app.html`).
 - For changes discussed and approved in chat: commit and push directly to `main`. No PR step needed (single-user project).
