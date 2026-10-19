@@ -6434,7 +6434,13 @@ function openLeague(league) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('league-screen').classList.add('active');
   applyLeagueRoleGating();
-  leagueDetailTab('teams', document.querySelector('#league-screen .event-nav-tab'));
+  // A coach opening a league cares about the schedule, not the team list —
+  // land her on Matches directly. Admin/director/captain still land on Teams.
+  if (currentUser?.role === 'coach') {
+    leagueDetailTab('matches', document.getElementById('league-nav-matches'));
+  } else {
+    leagueDetailTab('teams', document.querySelector('#league-screen .event-nav-tab'));
+  }
   loadLeagueTeams();
   // Messages are addressed to "the coach/captain of team X", so a coach
   // with several teams needs this re-read every time team_id changes to
@@ -8591,7 +8597,7 @@ function courtCardHtml(c) {
         </div>
       </div>
       <div style="margin-top:16px">
-        <div style="font-weight:700;margin-bottom:8px">Sets</div>
+        <div style="font-weight:700;margin-bottom:8px">Enter Scores</div>
         <div id="court-${c}-sets"></div>
         <button class="btn btn-sm btn-secondary" type="button" onclick="addSetRow(${c})">+ Add Set</button>
       </div>
@@ -8608,10 +8614,10 @@ function initCourtDraft(c) {
     teamAP1: existing.team_a_player1_id || '', teamAP2: existing.team_a_player2_id || '',
     teamBP1: existing.team_b_player1_id || '', teamBP2: existing.team_b_player2_id || '',
     teamAType: existing.team_a_entry_type, teamBType: existing.team_b_entry_type,
-    sets: (existing.sets && existing.sets.length) ? existing.sets.map(s=>({...s})) : [{team_a_games:0,team_b_games:0,is_complete:true}]
+    sets: (existing.sets && existing.sets.length) ? existing.sets.map(s=>({...s})) : [{team_a_games:'',team_b_games:'',is_complete:true},{team_a_games:'',team_b_games:'',is_complete:true}]
   } : {
     teamAP1:'', teamAP2:'', teamBP1:'', teamBP2:'', teamAType:'NORMAL', teamBType:'NORMAL',
-    sets:[{team_a_games:0,team_b_games:0,is_complete:true}]
+    sets:[{team_a_games:'',team_b_games:'',is_complete:true},{team_a_games:'',team_b_games:'',is_complete:true}]
   };
 }
 
@@ -8686,7 +8692,7 @@ function updateSetField(c, i, field, value) {
 }
 
 function addSetRow(c) {
-  courtDrafts[c].sets.push({team_a_games:0, team_b_games:0, is_complete:true});
+  courtDrafts[c].sets.push({team_a_games:'', team_b_games:'', is_complete:true});
   renderSetRows(c);
   updateCourtWinnerDisplay(c);
   renderMatchSummary();
@@ -8824,8 +8830,9 @@ async function saveCourtResult(c) {
     if (!d.teamAP1 || !d.teamBP1) { toast(`Select both players for Court ${c}`,'error'); return; }
     if (isDoubles && (!d.teamAP2 || !d.teamBP2)) { toast(`Doubles needs both partners for Court ${c}`,'error'); return; }
     if (d.teamAType==='SOS' && d.teamBType==='SOS') { toast('Both sides can\'t be SOS on the same court','error'); return; }
-    if (!d.sets.length) { toast('Add at least one set','error'); return; }
-    for (const s of d.sets) {
+    const enteredSets = d.sets.filter(s => !(s.team_a_games==='' || s.team_a_games==null) || !(s.team_b_games==='' || s.team_b_games==null));
+    if (!enteredSets.length) { toast('Add at least one set','error'); return; }
+    for (const s of enteredSets) {
       const a=Number(s.team_a_games), b=Number(s.team_b_games);
       if (isNaN(a)||isNaN(b)||a<0||b<0) { toast('Set scores must be non-negative numbers','error'); return; }
       if (s.is_complete && a===b) { toast('A finished set can\'t be tied in games','error'); return; }
@@ -8835,7 +8842,7 @@ async function saveCourtResult(c) {
       team_a_player1_id: d.teamAP1, team_a_player2_id: isDoubles ? d.teamAP2 : null,
       team_b_player1_id: d.teamBP1, team_b_player2_id: isDoubles ? d.teamBP2 : null,
       team_a_entry_type: d.teamAType, team_b_entry_type: d.teamBType,
-      sets: d.sets.map(s=>({team_a_games:Number(s.team_a_games), team_b_games:Number(s.team_b_games), is_complete:!!s.is_complete}))
+      sets: enteredSets.map(s=>({team_a_games:Number(s.team_a_games), team_b_games:Number(s.team_b_games), is_complete:!!s.is_complete}))
     };
   }
   const existing = currentMatchResults[c];
