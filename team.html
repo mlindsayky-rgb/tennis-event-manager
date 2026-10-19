@@ -115,6 +115,7 @@
 
   function setWinner(s) { const a=Number(s.team_a_games)||0, b=Number(s.team_b_games)||0; if (a===b) return null; return a>b?'A':'B'; }
   function courtWinner(cr) {
+    if (cr.teamAType==='UNUSED' || cr.teamBType==='UNUSED') return null; // court not used — doesn't count for either side
     if (cr.teamAType==='SOS') return 'B';
     if (cr.teamBType==='SOS') return 'A';
     let aSets=0,bSets=0,aGames=0,bGames=0;
@@ -123,7 +124,10 @@
     if (aGames!==bGames) return aGames>bGames?'A':'B';
     return null;
   }
-  function courtGames(cr) { let a=0,b=0; (cr.sets||[]).forEach(s=>{a+=Number(s.team_a_games)||0; b+=Number(s.team_b_games)||0;}); return {a,b}; }
+  function courtGames(cr) {
+    if (cr.teamAType==='UNUSED' || cr.teamBType==='UNUSED') return {a:0,b:0};
+    let a=0,b=0; (cr.sets||[]).forEach(s=>{a+=Number(s.team_a_games)||0; b+=Number(s.team_b_games)||0;}); return {a,b};
+  }
 
   let team = null, league = null;
 

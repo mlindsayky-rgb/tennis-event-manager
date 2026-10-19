@@ -8517,61 +8517,89 @@ function updateTallyBar() {
 
 function renderMatchScreen() {
   const n = currentMatch.court_count || courtsForFormat();
-  const isDoubles = currentLeague.format==='DOUBLES';
-  const list = document.getElementById('match-courts-list');
   // Every court's draft must exist before any court renders, so duplicate-
   // player detection can see selections on courts not yet reached below.
+  // (A fresh load only — courtCardHtml/rerenderCourtCard below must NOT
+  // call this, or an in-progress edit like toggling "Court Not Used"
+  // would get clobbered back to whatever's saved in the DB.)
   for (let c=1; c<=n; c++) initCourtDraft(c);
+  const list = document.getElementById('match-courts-list');
   let html = matchIsIndividual ? tallyBarHtml() : '';
-  for (let c=1; c<=n; c++) {
-    const siteLabel = matchIsIndividual
-      ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
-      : ((currentMatch.site_a_courts||[]).includes(c)
-          ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
-          : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name} — ${fmtDate(currentMatch.site_b_date)}`);
-    const d = courtDrafts[c];
-    const slot1Label = matchIsIndividual ? (isDoubles?'Team 1':'Player 1') : escQ(currentMatchTeamA.name);
-    const slot2Label = matchIsIndividual ? (isDoubles?'Team 2':'Player 2') : escQ(currentMatchTeamB.name);
-    const slot1Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterA, used);
-    const slot2Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterB, used);
-    html += `<div class="card" style="margin-bottom:16px">
-      <div class="card-header"><div class="card-title">Court ${c}</div><span class="badge badge-blue">${escQ(siteLabel)}</span></div>
-      <div class="card-body">
-        <div class="form-row">
-          <div>
-            <div style="font-weight:700;margin-bottom:8px">${slot1Label}</div>
-            <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP1, usedPlayerIdsForSlot(c,'teamAP1'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP2, usedPlayerIdsForSlot(c,'teamAP2'))}</select>`:''}
-            <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
-              <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
-              <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
-              <option value="SOS" ${d.teamAType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
-            </select>
-          </div>
-          <div>
-            <div style="font-weight:700;margin-bottom:8px">${slot2Label}</div>
-            <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP1, usedPlayerIdsForSlot(c,'teamBP1'))}</select>
-            ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP2, usedPlayerIdsForSlot(c,'teamBP2'))}</select>`:''}
-            <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
-              <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
-              <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
-              <option value="SOS" ${d.teamBType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
-            </select>
-          </div>
-        </div>
-        <div style="margin-top:16px">
-          <div style="font-weight:700;margin-bottom:8px">Sets</div>
-          <div id="court-${c}-sets"></div>
-          <button class="btn btn-sm btn-secondary" type="button" onclick="addSetRow(${c})">+ Add Set</button>
-        </div>
-        <div id="court-${c}-winner" style="margin-top:12px;font-size:13px;color:var(--ink-muted)"></div>
-        <button class="btn btn-primary" style="margin-top:14px" onclick="saveCourtResult(${c})">Save Court ${c}</button>
-      </div>
-    </div>`;
-  }
+  for (let c=1; c<=n; c++) html += courtCardHtml(c);
   list.innerHTML = html;
   for (let c=1; c<=n; c++) { renderSetRows(c); updateCourtWinnerDisplay(c); }
   renderMatchSummary();
+}
+
+// Re-renders a single court's card in place from its current courtDrafts
+// state, without touching any other court or re-initializing drafts from
+// the DB — used when toggling "Court Not Used" mid-edit, so the rest of
+// the screen's in-progress entries are left alone.
+function rerenderCourtCard(c) {
+  const el = document.getElementById(`court-${c}-card`);
+  if (el) el.outerHTML = courtCardHtml(c);
+  renderSetRows(c);
+  updateCourtWinnerDisplay(c);
+  renderMatchSummary();
+}
+
+function courtCardHtml(c) {
+  const isDoubles = currentLeague.format==='DOUBLES';
+  const siteLabel = matchIsIndividual
+    ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
+    : ((currentMatch.site_a_courts||[]).includes(c)
+        ? `At ${currentMatchTeamA.clubs?.name || currentMatchTeamA.name} — ${fmtDate(currentMatch.site_a_date)}`
+        : `At ${currentMatchTeamB.clubs?.name || currentMatchTeamB.name} — ${fmtDate(currentMatch.site_b_date)}`);
+  const d = courtDrafts[c];
+  const slot1Label = matchIsIndividual ? (isDoubles?'Team 1':'Player 1') : escQ(currentMatchTeamA.name);
+  const slot2Label = matchIsIndividual ? (isDoubles?'Team 2':'Player 2') : escQ(currentMatchTeamB.name);
+  const slot1Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterA, used);
+  const slot2Options = (sel,used) => matchIsIndividual ? pooledPlayerOptionsHtml(sel,used) : playerOptionsHtml(sel, matchRosterB, used);
+  const isUnused = d.teamAType==='UNUSED';
+  return `<div class="card" id="court-${c}-card" style="margin-bottom:16px">
+    <div class="card-header"><div class="card-title">Court ${c}</div><span class="badge badge-blue">${escQ(siteLabel)}</span></div>
+    <div class="card-body">
+      ${isUnused ? `
+      <div class="alert alert-info" style="margin-bottom:12px">This court wasn't used this week — it won't count as a win or loss for either side, but the match can still be marked complete.</div>
+      <select class="form-select" id="court-${c}-unused-toggle" onchange="updateDraftField(${c},'teamAType',this.value)">
+        <option value="UNUSED" selected>Court Not Used</option>
+        <option value="NORMAL">Use this court after all</option>
+      </select>
+      ` : `
+      <div class="form-row">
+        <div>
+          <div style="font-weight:700;margin-bottom:8px">${slot1Label}</div>
+          <select class="form-select" id="court-${c}-a-p1" onchange="updateDraftField(${c},'teamAP1',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP1, usedPlayerIdsForSlot(c,'teamAP1'))}</select>
+          ${isDoubles?`<select class="form-select" id="court-${c}-a-p2" onchange="updateDraftField(${c},'teamAP2',this.value)" style="margin-bottom:8px">${slot1Options(d.teamAP2, usedPlayerIdsForSlot(c,'teamAP2'))}</select>`:''}
+          <select class="form-select" id="court-${c}-a-type" onchange="updateDraftField(${c},'teamAType',this.value)">
+            <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
+            <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
+            <option value="SOS" ${d.teamAType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
+            <option value="UNUSED">Court Not Used</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-weight:700;margin-bottom:8px">${slot2Label}</div>
+          <select class="form-select" id="court-${c}-b-p1" onchange="updateDraftField(${c},'teamBP1',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP1, usedPlayerIdsForSlot(c,'teamBP1'))}</select>
+          ${isDoubles?`<select class="form-select" id="court-${c}-b-p2" onchange="updateDraftField(${c},'teamBP2',this.value)" style="margin-bottom:8px">${slot2Options(d.teamBP2, usedPlayerIdsForSlot(c,'teamBP2'))}</select>`:''}
+          <select class="form-select" id="court-${c}-b-type" onchange="updateDraftField(${c},'teamBType',this.value)">
+            <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
+            <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
+            <option value="SOS" ${d.teamBType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
+            <option value="UNUSED">Court Not Used</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-weight:700;margin-bottom:8px">Sets</div>
+        <div id="court-${c}-sets"></div>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="addSetRow(${c})">+ Add Set</button>
+      </div>
+      <div id="court-${c}-winner" style="margin-top:12px;font-size:13px;color:var(--ink-muted)"></div>
+      `}
+      <button class="btn btn-primary" style="margin-top:14px" onclick="saveCourtResult(${c})">Save Court ${c}</button>
+    </div>
+  </div>`;
 }
 
 function initCourtDraft(c) {
@@ -8590,6 +8618,26 @@ function initCourtDraft(c) {
 const PLAYER_DRAFT_FIELDS = ['teamAP1','teamAP2','teamBP1','teamBP2'];
 
 function updateDraftField(c, field, value) {
+  // "Court Not Used" applies to the whole court, not one side — keep both
+  // sides in sync, and switch the card between its simplified Unused view
+  // and the normal player/sets form.
+  if (field==='teamAType' || field==='teamBType') {
+    if (value==='UNUSED') {
+      courtDrafts[c].teamAType = 'UNUSED';
+      courtDrafts[c].teamBType = 'UNUSED';
+      courtDrafts[c].teamAP1 = ''; courtDrafts[c].teamAP2 = '';
+      courtDrafts[c].teamBP1 = ''; courtDrafts[c].teamBP2 = '';
+      rerenderCourtCard(c);
+      refreshCourtPlayerOptions();
+      return;
+    }
+    if (courtDrafts[c].teamAType==='UNUSED') {
+      courtDrafts[c].teamAType = 'NORMAL';
+      courtDrafts[c].teamBType = 'NORMAL';
+      rerenderCourtCard(c);
+      return;
+    }
+  }
   if (PLAYER_DRAFT_FIELDS.includes(field) && value) {
     const side = field.startsWith('teamA') ? 'a' : 'b';
 
@@ -8620,6 +8668,7 @@ function updateDraftField(c, field, value) {
 
 function renderSetRows(c) {
   const el = document.getElementById(`court-${c}-sets`);
+  if (!el) return; // a court marked Unused has no sets UI to render into
   const sets = courtDrafts[c].sets;
   el.innerHTML = sets.map((s,i)=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
     <input class="form-input" type="number" min="0" placeholder="Games" style="max-width:80px" value="${s.team_a_games}" oninput="updateSetField(${c},${i},'team_a_games',this.value)">
@@ -8660,10 +8709,14 @@ function setWinner(set) {
   return a>b ? 'A' : 'B';
 }
 
-// A court's winner: SOS auto-loses that side's court outright; otherwise most sets
-// won, then that court's own total games if sets are tied (an extension beyond the
-// doc's explicit text, to resolve an otherwise-undefined all-push edge case).
+// A court's winner: a court marked UNUSED (nobody showed up for it this
+// week) never counts for either side — not a win, not a loss, no games.
+// SOS auto-loses that side's court outright; otherwise most sets won,
+// then that court's own total games if sets are tied (an extension
+// beyond the doc's explicit text, to resolve an otherwise-undefined
+// all-push edge case).
 function courtWinner(cr) {
+  if (cr.teamAType==='UNUSED' || cr.teamBType==='UNUSED') return null;
   if (cr.teamAType==='SOS') return 'B';
   if (cr.teamBType==='SOS') return 'A';
   let aSets=0, bSets=0, aGames=0, bGames=0;
@@ -8678,6 +8731,7 @@ function courtWinner(cr) {
 }
 
 function courtGames(cr) {
+  if (cr.teamAType==='UNUSED' || cr.teamBType==='UNUSED') return {a:0,b:0};
   let a=0,b=0;
   (cr.sets||[]).forEach(s=>{ a+=Number(s.team_a_games)||0; b+=Number(s.team_b_games)||0; });
   return {a,b};
@@ -8757,30 +8811,40 @@ function renderMatchSummary() {
 async function saveCourtResult(c) {
   const d = courtDrafts[c];
   const isDoubles = currentLeague.format==='DOUBLES';
-  if (!d.teamAP1 || !d.teamBP1) { toast(`Select both players for Court ${c}`,'error'); return; }
-  if (isDoubles && (!d.teamAP2 || !d.teamBP2)) { toast(`Doubles needs both partners for Court ${c}`,'error'); return; }
-  if (d.teamAType==='SOS' && d.teamBType==='SOS') { toast('Both sides can\'t be SOS on the same court','error'); return; }
-  if (!d.sets.length) { toast('Add at least one set','error'); return; }
-  for (const s of d.sets) {
-    const a=Number(s.team_a_games), b=Number(s.team_b_games);
-    if (isNaN(a)||isNaN(b)||a<0||b<0) { toast('Set scores must be non-negative numbers','error'); return; }
-    if (s.is_complete && a===b) { toast('A finished set can\'t be tied in games','error'); return; }
+  const isUnused = d.teamAType==='UNUSED';
+  let payload;
+  if (isUnused) {
+    payload = {
+      match_id: currentMatch.id, court_number: c,
+      team_a_player1_id: null, team_a_player2_id: null,
+      team_b_player1_id: null, team_b_player2_id: null,
+      team_a_entry_type: 'UNUSED', team_b_entry_type: 'UNUSED', sets: []
+    };
+  } else {
+    if (!d.teamAP1 || !d.teamBP1) { toast(`Select both players for Court ${c}`,'error'); return; }
+    if (isDoubles && (!d.teamAP2 || !d.teamBP2)) { toast(`Doubles needs both partners for Court ${c}`,'error'); return; }
+    if (d.teamAType==='SOS' && d.teamBType==='SOS') { toast('Both sides can\'t be SOS on the same court','error'); return; }
+    if (!d.sets.length) { toast('Add at least one set','error'); return; }
+    for (const s of d.sets) {
+      const a=Number(s.team_a_games), b=Number(s.team_b_games);
+      if (isNaN(a)||isNaN(b)||a<0||b<0) { toast('Set scores must be non-negative numbers','error'); return; }
+      if (s.is_complete && a===b) { toast('A finished set can\'t be tied in games','error'); return; }
+    }
+    payload = {
+      match_id: currentMatch.id, court_number: c,
+      team_a_player1_id: d.teamAP1, team_a_player2_id: isDoubles ? d.teamAP2 : null,
+      team_b_player1_id: d.teamBP1, team_b_player2_id: isDoubles ? d.teamBP2 : null,
+      team_a_entry_type: d.teamAType, team_b_entry_type: d.teamBType,
+      sets: d.sets.map(s=>({team_a_games:Number(s.team_a_games), team_b_games:Number(s.team_b_games), is_complete:!!s.is_complete}))
+    };
   }
-
-  const payload = {
-    match_id: currentMatch.id, court_number: c,
-    team_a_player1_id: d.teamAP1, team_a_player2_id: isDoubles ? d.teamAP2 : null,
-    team_b_player1_id: d.teamBP1, team_b_player2_id: isDoubles ? d.teamBP2 : null,
-    team_a_entry_type: d.teamAType, team_b_entry_type: d.teamBType,
-    sets: d.sets.map(s=>({team_a_games:Number(s.team_a_games), team_b_games:Number(s.team_b_games), is_complete:!!s.is_complete}))
-  };
   const existing = currentMatchResults[c];
   const {data, error} = existing
     ? await sb.from('court_results').update(payload).eq('id',existing.id).select().single()
     : await sb.from('court_results').insert(payload).select().single();
   if (error) { toast('Error: '+error.message,'error'); return; }
   currentMatchResults[c] = data;
-  toast(`Court ${c} saved`,'success');
+  toast(isUnused ? `Court ${c} marked not used` : `Court ${c} saved`,'success');
   renderMatchSummary();
 }
 
@@ -9105,7 +9169,20 @@ async function loadStandings() {
   (results||[]).forEach(r=>{ (resultsByMatch[r.match_id] = resultsByMatch[r.match_id]||[]).push(r); });
 
   const stats = {};
-  (teams||[]).forEach(t=>{ stats[t.id] = {name:t.name, played:0, wins:0, losses:0, courtsFor:0, courtsAgainst:0, gamesFor:0, gamesAgainst:0}; });
+  (teams||[]).forEach(t=>{ stats[t.id] = {name:t.name, played:0, wins:0, losses:0, courtsFor:0, courtsAgainst:0, gamesFor:0, gamesAgainst:0, unused:0}; });
+
+  // Unused-court tracking: counted independently of whether the rest of
+  // that match is fully entered yet — the point is tracking court usage
+  // across the session, not gating it behind match completion.
+  let unusedTotal = 0;
+  (results||[]).forEach(r=>{
+    if (r.team_a_entry_type!=='UNUSED' && r.team_b_entry_type!=='UNUSED') return;
+    unusedTotal++;
+    const m = (matches||[]).find(mm=>mm.id===r.match_id);
+    if (!m) return;
+    if (stats[m.team_a_id]) stats[m.team_a_id].unused++;
+    if (m.team_b_id && stats[m.team_b_id]) stats[m.team_b_id].unused++;
+  });
 
   (matches||[]).forEach(m=>{
     const n = m.court_count || courtsForFormat();
@@ -9124,17 +9201,20 @@ async function loadStandings() {
     else if (s.winner==='B') { stats[m.team_b_id].wins++; stats[m.team_a_id].losses++; }
   });
 
-  renderStandings(Object.values(stats));
+  renderStandings(Object.values(stats), unusedTotal);
 }
 
-function renderStandings(rows) {
+function renderStandings(rows, unusedTotal) {
   const el = document.getElementById('league-standings-body');
   if (!rows.length) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-title">No standings yet</div><div class="empty-sub">Complete a match to see teams appear here</div></div>';
     return;
   }
   rows.sort((a,b)=> b.wins-a.wins || (b.gamesFor-b.gamesAgainst)-(a.gamesFor-a.gamesAgainst));
-  el.innerHTML = `<table class="data-table"><thead><tr><th>Team</th><th>Played</th><th>W</th><th>L</th><th>Courts</th><th>Games</th></tr></thead><tbody>
+  const unusedNote = unusedTotal>0
+    ? `<div style="padding:10px 14px;margin-bottom:14px;background:var(--gold-light,#FFF8E1);border:1px solid #FFE082;border-radius:8px;font-size:13px;color:#5D4037">⚠ <strong>${unusedTotal}</strong> court${unusedTotal===1?'':'s'} marked "Not Used" this session — see the Unused column below.</div>`
+    : '';
+  el.innerHTML = `${unusedNote}<table class="data-table"><thead><tr><th>Team</th><th>Played</th><th>W</th><th>L</th><th>Courts</th><th>Games</th><th>Unused</th></tr></thead><tbody>
   ${rows.map(r=>`<tr>
     <td><strong>${escQ(r.name)}</strong></td>
     <td>${r.played}</td>
@@ -9142,9 +9222,10 @@ function renderStandings(rows) {
     <td>${r.losses}</td>
     <td>${r.courtsFor}–${r.courtsAgainst}</td>
     <td>${r.gamesFor}–${r.gamesAgainst}</td>
+    <td>${r.unused||0}</td>
   </tr>`).join('')}
   </tbody></table>
-  <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">Sorted by wins, then game differential. Only fully-entered matches count.</div>`;
+  <div style="padding:14px 4px;font-size:12px;color:var(--ink-muted)">Sorted by wins, then game differential. Only fully-entered matches count toward W/L — a court marked "Not Used" doesn't block the rest of its match from counting.</div>`;
 }
 
 // ══════════════════════════════════════════════
