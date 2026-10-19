@@ -8581,7 +8581,6 @@ function courtCardHtml(c) {
             <option value="NORMAL" ${d.teamAType==='NORMAL'?'selected':''}>Normal</option>
             <option value="SUB" ${d.teamAType==='SUB'?'selected':''}>Sub</option>
             <option value="SOS" ${d.teamAType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
-            <option value="UNUSED">Court Not Used</option>
           </select>
         </div>
         <div>
@@ -8592,7 +8591,6 @@ function courtCardHtml(c) {
             <option value="NORMAL" ${d.teamBType==='NORMAL'?'selected':''}>Normal</option>
             <option value="SUB" ${d.teamBType==='SUB'?'selected':''}>Sub</option>
             <option value="SOS" ${d.teamBType==='SOS'?'selected':''}>SOS Emergency Fill-In</option>
-            <option value="UNUSED">Court Not Used</option>
           </select>
         </div>
       </div>
@@ -8600,6 +8598,7 @@ function courtCardHtml(c) {
         <div style="font-weight:700;margin-bottom:8px">Enter Scores</div>
         <div id="court-${c}-sets"></div>
         <button class="btn btn-sm btn-secondary" type="button" onclick="addSetRow(${c})">+ Add Set</button>
+        <button class="btn btn-sm btn-secondary" type="button" onclick="updateDraftField(${c},'teamAType','UNUSED')">No Match</button>
       </div>
       <div id="court-${c}-winner" style="margin-top:12px;font-size:13px;color:var(--ink-muted)"></div>
       `}
