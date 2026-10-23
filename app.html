@@ -2058,10 +2058,11 @@ let LOOKUP_STATES = ['KY','IN'];
     }
   }
   try {
-    sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Sessions live in memory only (persistSession:false): signed in while the
+    // app is open, PIN again after a refresh or reopening — by design.
+    sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
     await loadSettings();
-    // Still signed in on this device? Go straight back in.
-    if (!(await resumeSession())) showScreen('pin-screen');
+    showScreen('pin-screen');
   } catch(e) {
     console.error('Boot failed:', e);
     showConnectError('Connection failed. Please retry.');
@@ -2268,24 +2269,6 @@ async function enterApp(profile) {
     openPlayerScreen();
     initMessageBadge();
     return;
-  }
-}
-
-// Picks up where a still-valid saved session left off (stay signed in on
-// this device). Any problem just falls back to the PIN screen.
-async function resumeSession() {
-  try {
-    const { data } = await sb.auth.getSession();
-    if (!data?.session) return false;
-    const r = await pinAuth('resume');
-    if (!r.ok || !r.profile) { await sb.auth.signOut(); return false; }
-    if (r.must_upgrade_pin) { await sb.auth.signOut(); return false; }
-    // The server just refreshed this person's role/team details; pick them up.
-    await sb.auth.refreshSession();
-    await enterApp(r.profile);
-    return true;
-  } catch (e) {
-    return false;
   }
 }
 
