@@ -105,6 +105,12 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 .pin-key:active { transform: scale(.93); background: var(--court-pale); }
 .pin-key.delete { font-size: 18px; color: var(--ink-muted); }
 .pin-key.zero { grid-column: 2; }
+.pin-key.signin { font-size: 15px; background: var(--court); color: white; border-color: var(--court); }
+.pin-key.signin:hover { background: var(--court); filter: brightness(1.08); }
+.pin-key.signin:disabled { background: var(--border); border-color: var(--border); color: var(--ink-muted); cursor: default; filter: none; transform: none; }
+/* Dots 5–6 only appear once someone types past 4 digits (6-digit staff PINs). */
+.pin-dot-extra { display: none; }
+.pin-dots.six .pin-dot-extra { display: block; }
 .pin-status { font-size: 13px; color: var(--clay); margin-top: 18px; min-height: 18px; font-weight: 500; }
 
 /* ── APP HEADER ── */
@@ -533,6 +539,8 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <div class="pin-dot" id="dot-1"></div>
         <div class="pin-dot" id="dot-2"></div>
         <div class="pin-dot" id="dot-3"></div>
+        <div class="pin-dot pin-dot-extra" id="dot-4"></div>
+        <div class="pin-dot pin-dot-extra" id="dot-5"></div>
       </div>
       <div class="pin-keypad">
         <button class="pin-key" onclick="pinKey('1')">1</button>
@@ -544,8 +552,9 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
         <button class="pin-key" onclick="pinKey('7')">7</button>
         <button class="pin-key" onclick="pinKey('8')">8</button>
         <button class="pin-key" onclick="pinKey('9')">9</button>
-        <button class="pin-key zero" onclick="pinKey('0')">0</button>
-        <button class="pin-key delete" onclick="pinDelete()">⌫</button>
+        <button class="pin-key delete" onclick="pinDelete()" aria-label="Delete">⌫</button>
+        <button class="pin-key" onclick="pinKey('0')">0</button>
+        <button class="pin-key signin" id="pin-signin-btn" onclick="attemptLogin()" disabled>Sign in</button>
       </div>
       <div class="pin-status" id="pin-status"></div>
     </div>
@@ -696,7 +705,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
           <div class="card-header"><div class="card-title">Change Admin PIN</div></div>
           <div class="card-body">
             <div class="form-group"><label class="form-label">Current PIN</label><input class="form-input" type="password" id="current-pin" placeholder="Current PIN"></div>
-            <div class="form-group"><label class="form-label">New PIN</label><input class="form-input" type="password" id="new-pin" placeholder="4-6 digits"></div>
+            <div class="form-group"><label class="form-label">New PIN</label><input class="form-input" type="password" id="new-pin" placeholder="6 digits" inputmode="numeric" maxlength="6"></div>
             <div class="form-group"><label class="form-label">Confirm New PIN</label><input class="form-input" type="password" id="confirm-pin" placeholder="Repeat PIN"></div>
             <button class="btn btn-primary" onclick="changeAdminPin()">Update PIN</button>
           </div>
@@ -892,6 +901,23 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('change-pin-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="saveMyPin()">Update PIN</button>
+    </div>
+  </div>
+</div>
+
+<!-- FORCED 6-DIGIT PIN UPGRADE (admin/directors still on a 4-digit PIN, shown once right after sign-in) -->
+<div class="modal-overlay" id="pin-upgrade-modal" data-locked="true">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header"><div class="modal-title">Choose a 6-digit PIN</div></div>
+    <div class="modal-body">
+      <p style="font-size:14px;color:var(--ink-muted);margin:0 0 16px">For extra security, admin and director PINs are now 6 digits. Pick your new PIN to continue. Your old 4-digit PIN stops working once this is saved.</p>
+      <div class="form-group"><label class="form-label">New 6-digit PIN</label><input class="form-input" id="upgrade-pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6"></div>
+      <div class="form-group"><label class="form-label">Confirm New PIN</label><input class="form-input" id="upgrade-pin-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6"></div>
+      <div id="upgrade-pin-error" class="alert alert-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="cancelPinUpgrade()">Sign out</button>
+      <button class="btn btn-primary" id="upgrade-pin-save" onclick="savePinUpgrade()">Save &amp; Continue</button>
     </div>
   </div>
 </div>
@@ -1193,7 +1219,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-body">
       <div class="form-group"><label class="form-label">Name <span class="req">*</span></label><input class="form-input" id="director-name" placeholder="Full name"></div>
       <div class="form-group"><label class="form-label">Club <span class="req">*</span></label><select class="form-select" id="director-club"><option value="">Select club…</option></select></div>
-      <div class="form-group" id="director-pin-group"><label class="form-label">PIN <span class="req">*</span></label><input class="form-input" id="director-pin" type="password" placeholder="4-6 digits" maxlength="6"><div class="form-hint">Share this PIN with the director verbally.</div></div>
+      <div class="form-group" id="director-pin-group"><label class="form-label">PIN <span class="req">*</span></label><input class="form-input" id="director-pin" type="password" placeholder="6 digits" inputmode="numeric" maxlength="6"><div class="form-hint">Share this PIN with the director verbally.</div></div>
       <div class="form-group" id="director-pin-confirm-group"><label class="form-label">Confirm PIN <span class="req">*</span></label><input class="form-input" id="director-pin-confirm" type="password" placeholder="Repeat PIN" maxlength="6"></div>
       <div class="form-group">
         <label class="form-label">Feature Access</label>
@@ -2034,7 +2060,8 @@ let LOOKUP_STATES = ['KY','IN'];
   try {
     sb = mod.createClient(SUPABASE_URL, SUPABASE_KEY);
     await loadSettings();
-    showScreen('pin-screen');
+    // Still signed in on this device? Go straight back in.
+    if (!(await resumeSession())) showScreen('pin-screen');
   } catch(e) {
     console.error('Boot failed:', e);
     showConnectError('Connection failed. Please retry.');
@@ -2089,58 +2116,97 @@ function pinKey(d) {
   if (pinLocked || pinBuf.length >= 6) return;
   pinBuf += d;
   renderDots();
-  clearTimeout(window._pt);
-  if (pinBuf.length >= 4) window._pt = setTimeout(attemptLogin, 600);
+  document.getElementById('pin-status').textContent = '';
 }
 
 function pinDelete() {
-  clearTimeout(window._pt);
+  if (pinLocked) return;
   pinBuf = pinBuf.slice(0,-1);
   renderDots();
   document.getElementById('pin-status').textContent = '';
 }
 
 function renderDots(state='normal') {
-  for(let i=0;i<4;i++){
+  // Dots 5–6 appear only once someone types past 4 digits (6-digit staff PINs).
+  document.getElementById('pin-dots').classList.toggle('six', pinBuf.length > 4);
+  for(let i=0;i<6;i++){
     const d = document.getElementById(`dot-${i}`);
-    d.className = 'pin-dot';
+    d.className = 'pin-dot' + (i >= 4 ? ' pin-dot-extra' : '');
     if(i < pinBuf.length) d.classList.add(state==='error'?'error':'filled');
   }
+  const btn = document.getElementById('pin-signin-btn');
+  if (btn) btn.disabled = pinLocked || !(pinBuf.length === 4 || pinBuf.length === 6);
+}
+
+// Physical keyboard on the PIN screen: digits, Backspace, Enter.
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('pin-screen')?.classList.contains('active')) return;
+  if (/^\d$/.test(e.key)) { pinKey(e.key); e.preventDefault(); }
+  else if (e.key === 'Backspace') { pinDelete(); e.preventDefault(); }
+  else if (e.key === 'Enter') { attemptLogin(); e.preventDefault(); }
+});
+
+// Every PIN check/change goes through the pin-auth server function — the
+// browser never sees or compares PIN hashes. Sends the signed-in session (if
+// any) so the server can check who's asking.
+async function pinAuth(action, payload = {}) {
+  let token = SUPABASE_KEY;
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data?.session?.access_token) token = data.session.access_token;
+  } catch (e) {}
+  let res;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/pin-auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: SUPABASE_KEY, Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, ...payload }),
+    });
+  } catch (e) {
+    return { ok: false, error: 'Connection problem — check your internet and try again.' };
+  }
+  let body = {};
+  try { body = await res.json(); } catch (e) {}
+  return { ok: res.ok, status: res.status, ...body };
 }
 
 async function attemptLogin() {
-  if (!pinBuf || !sb) return;
+  if (pinLocked || !sb) return;
   const statusEl = document.getElementById('pin-status');
-  pinLocked = true;
-  const hash = await hashPin(pinBuf);
+  if (!(pinBuf.length === 4 || pinBuf.length === 6)) { statusEl.textContent = 'Enter your 4- or 6-digit PIN'; return; }
+  pinLocked = true; renderDots();
+  statusEl.style.color = 'var(--ink-muted)'; statusEl.textContent = 'Signing in…';
+  const pin = pinBuf;
+  const r = await pinAuth('login', { pin });
+  statusEl.style.color = '';
+  if (!r.ok || !r.session) {
+    renderDots('error');
+    statusEl.textContent = r.error || 'Incorrect PIN';
+    setTimeout(() => { pinBuf=''; pinLocked=false; renderDots(); if (!r.locked) statusEl.textContent=''; }, 1400);
+    return;
+  }
+  await sb.auth.setSession(r.session);
+  pinBuf = ''; statusEl.textContent = '';
+  pinLocked = false; renderDots();
+  if (r.must_upgrade_pin) { openPinUpgrade(pin, r.profile); return; }
+  await enterApp(r.profile);
+}
 
-  // Check admin
-  const { data: adminData } = await sb.from('admin_config').select('pin_hash').maybeSingle();
-  if (adminData?.pin_hash === hash) {
+// Lands a signed-in person on their screen. `profile` comes from the server
+// (login or resume) in the same shapes the old browser-side lookups produced.
+async function enterApp(profile) {
+  const statusEl = document.getElementById('pin-status');
+  if (profile.role === 'admin') {
     currentUser = { role: 'admin' };
-    pinBuf = ''; renderDots();
     showScreen('admin-screen');
     loadAdminData();
-    pinLocked = false;
     return;
   }
 
-  // Check director
-  const { data: dir } = await sb.from('directors')
-    .select('*, clubs(name,primary_color,secondary_color,accent_color)')
-    .eq('pin_hash', hash).eq('is_active', true).maybeSingle();
-
-  if (dir) {
-    if (dir.locked_until && new Date(dir.locked_until) > new Date()) {
-      const mins = Math.ceil((new Date(dir.locked_until)-new Date())/60000);
-      statusEl.textContent = `Locked. Try again in ${mins} min.`;
-      pinBuf=''; renderDots(); pinLocked=false;
-      return;
-    }
+  if (profile.role === 'director') {
+    const dir = profile.director;
     currentUser = { role:'director', director_id:dir.id, club_id:dir.club_id, club_name:dir.clubs?.name||'Your Club', director_name:dir.name, access: dir.feature_access||['events'] };
-    await sb.from('directors').update({last_login_at:new Date().toISOString(),failed_pin_attempts:0}).eq('id',dir.id);
     applyBranding(dir.clubs);
-    pinBuf=''; renderDots();
     document.getElementById('dir-club-name').textContent = currentUser.club_name;
     document.getElementById('dir-name').textContent = currentUser.director_name;
     document.getElementById('dir-nav-events').style.display = currentUser.access.includes('events') ? '' : 'none';
@@ -2158,74 +2224,102 @@ async function attemptLogin() {
     dirTab(firstTab, document.getElementById(`dir-nav-${firstTab}`) || document.getElementById('dir-nav-players'));
     if (firstTab==='events') loadDirectorEvents();
     initMessageBadge();
-    pinLocked = false;
     return;
   }
 
-  // Check coach (one PIN per coach — a coach can be assigned to teams in
-  // several different leagues, so this resolves ALL of them, not just one)
-  const { data: coach } = await sb.from('coaches').select('*').eq('pin_hash', hash).maybeSingle();
-  if (coach) {
-    const { data: teams } = await sb.from('league_teams')
-      .select('id,name,league_id,club_id,clubs(name,primary_color,secondary_color,accent_color)')
-      .eq('coach_id', coach.id);
-    if (!teams || !teams.length) {
-      renderDots('error');
+  // Coach: one PIN per coach — a coach can be assigned to teams in several
+  // different leagues, so this resolves ALL of them, not just one.
+  if (profile.role === 'coach') {
+    const coach = profile.coach, teams = profile.teams || [];
+    if (!teams.length) {
       statusEl.textContent = 'No teams assigned to this coach yet — contact your admin.';
-      setTimeout(() => { pinBuf=''; renderDots(); statusEl.textContent=''; pinLocked=false; }, 1800);
+      await sb.auth.signOut();
+      setTimeout(() => { statusEl.textContent=''; }, 2500);
       return;
     }
     currentUser = { role:'coach', coach_id:coach.id, person_name:coach.name,
       teams: teams.map(t=>({id:t.id, team_name:t.name, league_id:t.league_id, club_id:t.club_id})) };
     applyBranding(teams[0].clubs);
-    pinBuf=''; renderDots();
-    pinLocked = false;
     // Whether she needs a Leagues picker depends on how many DISTINCT
     // leagues she's in, not how many teams — she can coach more than one
     // team within the same league (openLeagueById resolves all of them).
     const myLeagueIds = coachLeagueIds(currentUser);
     // Messages are team-scoped (see openLeague) — nothing to show until a
     // specific team's league is actually open, which sets this up itself.
-    if (myLeagueIds.length === 1) {
-      openLeagueById(myLeagueIds[0]);
-    } else {
-      showCoachLeaguesList();
-    }
+    if (myLeagueIds.length === 1) openLeagueById(myLeagueIds[0]);
+    else showCoachLeaguesList();
     return;
   }
 
-  // Check captain (team-level PIN — belongs to whoever currently holds the is_captain flag)
-  const { data: captainTeam } = await sb.from('league_teams')
-    .select('*, leagues(name,format), clubs(name,primary_color,secondary_color,accent_color)')
-    .eq('captain_pin_hash', hash).maybeSingle();
-  if (captainTeam) {
-    const { data: captainRow } = await sb.from('league_team_players')
-      .select('player_id,players(roster_name)').eq('team_id',captainTeam.id).eq('is_captain',true).maybeSingle();
+  // Captain: team-level PIN — belongs to whoever currently holds the is_captain flag.
+  if (profile.role === 'captain') {
+    const captainTeam = profile.team, captainRow = profile.captainRow;
     currentUser = { role:'captain', team_id:captainTeam.id, team_name:captainTeam.name, league_id:captainTeam.league_id,
       league_name:captainTeam.leagues?.name, club_id:captainTeam.club_id, club_name:captainTeam.clubs?.name||'Your Club',
       person_name:captainRow?.players?.roster_name || 'Captain', player_id:captainRow?.player_id||null };
     applyBranding(captainTeam.clubs);
-    pinBuf=''; renderDots();
-    pinLocked = false;
     openLeagueById(captainTeam.league_id);
     initMessageBadge();
     return;
   }
 
-  // Check player
-  const { data: player } = await sb.from('players').select('*').eq('pin_hash', hash).eq('is_active', true).maybeSingle();
-  if (player) {
-    currentUser = { role:'player', player_id:player.id, person_name:player.roster_name };
-    pinBuf=''; renderDots();
-    pinLocked = false;
+  if (profile.role === 'player') {
+    currentUser = { role:'player', player_id:profile.player.id, person_name:profile.player.roster_name };
     openPlayerScreen();
     initMessageBadge();
     return;
   }
+}
 
-  renderDots('error');
-  statusEl.textContent = 'Incorrect PIN';
-  setTimeout(() => { pinBuf=''; renderDots(); statusEl.textContent=''; pinLocked=false; }, 1200);
+// Picks up where a still-valid saved session left off (stay signed in on
+// this device). Any problem just falls back to the PIN screen.
+async function resumeSession() {
+  try {
+    const { data } = await sb.auth.getSession();
+    if (!data?.session) return false;
+    const r = await pinAuth('resume');
+    if (!r.ok || !r.profile) { await sb.auth.signOut(); return false; }
+    if (r.must_upgrade_pin) { await sb.auth.signOut(); return false; }
+    // The server just refreshed this person's role/team details; pick them up.
+    await sb.auth.refreshSession();
+    await enterApp(r.profile);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ── Forced 6-digit upgrade (admin/directors still on a 4-digit PIN) ──
+let pinUpgradeCtx = null;
+function openPinUpgrade(oldPin, profile) {
+  pinUpgradeCtx = { oldPin, profile };
+  ['upgrade-pin-new','upgrade-pin-confirm'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('upgrade-pin-error').style.display = 'none';
+  openModal('pin-upgrade-modal');
+  setTimeout(() => document.getElementById('upgrade-pin-new').focus(), 50);
+}
+async function savePinUpgrade() {
+  const errEl = document.getElementById('upgrade-pin-error');
+  errEl.style.display = 'none';
+  const np = document.getElementById('upgrade-pin-new').value.trim();
+  const cp = document.getElementById('upgrade-pin-confirm').value.trim();
+  if (!/^\d{6}$/.test(np)) { errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display = 'flex'; return; }
+  if (np !== cp) { errEl.textContent = 'PINs do not match.'; errEl.style.display = 'flex'; return; }
+  const btn = document.getElementById('upgrade-pin-save');
+  btn.disabled = true;
+  const r = await pinAuth('change_own_pin', { current_pin: pinUpgradeCtx.oldPin, new_pin: np });
+  btn.disabled = false;
+  if (!r.ok) { errEl.textContent = r.error || 'Could not save — try again.'; errEl.style.display = 'flex'; return; }
+  closeModal('pin-upgrade-modal');
+  const profile = pinUpgradeCtx.profile;
+  pinUpgradeCtx = null;
+  toast('New PIN saved — use it next time you sign in.', 'success');
+  await enterApp(profile);
+}
+async function cancelPinUpgrade() {
+  pinUpgradeCtx = null;
+  closeModal('pin-upgrade-modal');
+  await logout();
 }
 
 function applyBranding(club) {
@@ -2247,37 +2341,9 @@ function clearBranding() {
   document.documentElement.style.removeProperty('--brand-accent');
 }
 
-async function hashPin(pin) {
-  const data = new TextEncoder().encode('tem_salt_v1_' + pin);
-  const hash = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
 
-// Every login PIN — admin, director, coach, captain, player — must be globally
-// unique across all five holders, or the flat login waterfall (whichever role
-// is checked first wins) could silently log someone into the wrong role.
-// exceptRef lets a person keep their own current PIN when "changing" it to
-// the same value: {table, id, col}. Coach PIN lives on coaches (one per
-// coach, not per team) — captain PIN stays on league_teams, since a captain
-// is tied to one specific team.
-async function pinIsAvailable(hash, exceptRef) {
-  const isSelf = (table, id, col) => exceptRef && exceptRef.table === table && exceptRef.id === id && exceptRef.col === col;
-  const [{ data: admin }, { data: dirs }, { data: coaches }, { data: teams }, { data: plyrs }] = await Promise.all([
-    sb.from('admin_config').select('id,pin_hash'),
-    sb.from('directors').select('id,pin_hash'),
-    sb.from('coaches').select('id,pin_hash'),
-    sb.from('league_teams').select('id,captain_pin_hash'),
-    sb.from('players').select('id,pin_hash'),
-  ]);
-  if ((admin || []).some(r => r.pin_hash === hash && !isSelf('admin_config', r.id, 'pin_hash'))) return false;
-  if ((dirs || []).some(r => r.pin_hash === hash && !isSelf('directors', r.id, 'pin_hash'))) return false;
-  if ((coaches || []).some(r => r.pin_hash === hash && !isSelf('coaches', r.id, 'pin_hash'))) return false;
-  for (const t of teams || []) {
-    if (t.captain_pin_hash === hash && !isSelf('league_teams', t.id, 'captain_pin_hash')) return false;
-  }
-  if ((plyrs || []).some(r => r.pin_hash === hash && !isSelf('players', r.id, 'pin_hash'))) return false;
-  return true;
-}
+// PIN uniqueness is now checked on the server (pin-auth), which can see
+// every holder's PIN; the browser can't and shouldn't.
 
 // ══════════════════════════════════════════════
 // PLAYER SCREEN
@@ -2388,32 +2454,23 @@ function openChangePinModal() {
   openModal('change-pin-modal');
 }
 
-function myPinRef() {
-  const role = currentUser?.role;
-  if (role === 'director') return { table: 'directors', id: currentUser.director_id, col: 'pin_hash' };
-  if (role === 'coach') return { table: 'coaches', id: currentUser.coach_id, col: 'pin_hash' };
-  if (role === 'captain') return { table: 'league_teams', id: currentUser.team_id, col: 'captain_pin_hash' };
-  if (role === 'player') return { table: 'players', id: currentUser.player_id, col: 'pin_hash' };
-  return null;
+function myPinLength() {
+  return (currentUser?.role === 'admin' || currentUser?.role === 'director') ? 6 : 4;
 }
 
 async function saveMyPin() {
-  const ref = myPinRef();
   const errEl = document.getElementById('change-pin-error');
   errEl.style.display = 'none';
-  if (!ref) return;
+  if (!currentUser) return;
   const cur = document.getElementById('my-pin-current').value.trim();
   const np = document.getElementById('my-pin-new').value.trim();
   const cp = document.getElementById('my-pin-confirm').value.trim();
+  const len = myPinLength();
   if (!cur || !np || !cp) { errEl.textContent = 'All fields required.'; errEl.style.display = 'flex'; return; }
   if (np !== cp) { errEl.textContent = 'New PINs do not match.'; errEl.style.display = 'flex'; return; }
-  if (!/^\d{4,6}$/.test(np)) { errEl.textContent = 'PIN must be 4-6 digits.'; errEl.style.display = 'flex'; return; }
-  const curHash = await hashPin(cur);
-  const { data: row } = await sb.from(ref.table).select(ref.col).eq('id', ref.id).maybeSingle();
-  if (!row || row[ref.col] !== curHash) { errEl.textContent = 'Current PIN incorrect.'; errEl.style.display = 'flex'; return; }
-  const newHash = await hashPin(np);
-  if (!(await pinIsAvailable(newHash, ref))) { errEl.textContent = 'That PIN is already in use by someone else — pick a different one.'; errEl.style.display = 'flex'; return; }
-  await sb.from(ref.table).update({ [ref.col]: newHash }).eq('id', ref.id);
+  if (!new RegExp(`^\\d{${len}}$`).test(np)) { errEl.textContent = `PIN must be ${len} digits.`; errEl.style.display = 'flex'; return; }
+  const r = await pinAuth('change_own_pin', { current_pin: cur, new_pin: np });
+  if (!r.ok) { errEl.textContent = r.error || 'Could not update PIN.'; errEl.style.display = 'flex'; return; }
   closeModal('change-pin-modal');
   toast('PIN updated!', 'success');
 }
@@ -2426,8 +2483,9 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
 }
 
-function logout() {
-  currentUser=null; pinBuf=''; renderDots();
+async function logout() {
+  currentUser=null; pinBuf=''; pinLocked=false; renderDots();
+  try { await sb.auth.signOut(); } catch (e) {}
   document.getElementById('pin-status').textContent='';
   clearBranding();
   showScreen('pin-screen');
@@ -6105,7 +6163,8 @@ function dirTab(name,btn) {
 
 function openModal(id) { document.getElementById(id).classList.add('open'); }
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open')}));
+// data-locked modals (the forced PIN upgrade) can't be dismissed by tapping outside.
+document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o&&!o.dataset.locked)o.classList.remove('open')}));
 
 let pendingAdminPinAction = null;
 function requireAdminPinFor(description, action) {
@@ -6123,10 +6182,10 @@ async function submitAdminPinConfirm() {
   const pin = document.getElementById('admin-pin-confirm-input').value.trim();
   const errEl = document.getElementById('admin-pin-confirm-error');
   if (!pin) { errEl.textContent = 'Enter the admin PIN'; errEl.style.display = 'block'; return; }
-  const hash = await hashPin(pin);
-  const { data } = await sb.from('admin_config').select('pin_hash').maybeSingle();
-  if (!data || data.pin_hash !== hash) {
-    errEl.textContent = 'Incorrect admin PIN';
+  const r = await pinAuth('verify_admin_pin', { pin });
+  // Server replies { ok:false } (HTTP 200) for a wrong PIN, or an error body.
+  if (!r.ok) {
+    errEl.textContent = r.error || 'Incorrect admin PIN';
     errEl.style.display = 'block';
     return;
   }
@@ -6684,29 +6743,21 @@ function renderRosterCurrentList() {
 }
 
 async function resetPlayerPin(playerId, name) {
-  const p = prompt(`New PIN for ${name} (4-6 digits):`);
+  const p = prompt(`New 4-digit PIN for ${name}:`);
   if (!p) return;
-  if (!/^\d{4,6}$/.test(p)) { toast('Invalid PIN', 'error'); return; }
-  const hash = await hashPin(p);
-  if (!(await pinIsAvailable(hash, { table: 'players', id: playerId, col: 'pin_hash' }))) {
-    toast('That PIN is already in use by someone else — pick a different one', 'error');
-    return;
-  }
-  await sb.from('players').update({ pin_hash: hash }).eq('id', playerId);
+  if (!/^\d{4}$/.test(p)) { toast('PIN must be 4 digits', 'error'); return; }
+  const r = await pinAuth('set_pin', { kind: 'player', ref_id: playerId, new_pin: p });
+  if (!r.ok) { toast(r.error || 'Could not set PIN', 'error'); return; }
   toast(`PIN reset for ${name}.`, 'success');
 }
 
 async function resetCaptainPin() {
   const team = currentLeagueTeams.find(t => t.id === currentRosterTeamId);
-  const p = prompt(`New Captain PIN for ${team?.name || 'this team'} (4-6 digits):`);
+  const p = prompt(`New 4-digit Captain PIN for ${team?.name || 'this team'}:`);
   if (!p) return;
-  if (!/^\d{4,6}$/.test(p)) { toast('Invalid PIN', 'error'); return; }
-  const hash = await hashPin(p);
-  if (!(await pinIsAvailable(hash, { table: 'league_teams', id: currentRosterTeamId, col: 'captain_pin_hash' }))) {
-    toast('That PIN is already in use by someone else — pick a different one', 'error');
-    return;
-  }
-  await sb.from('league_teams').update({ captain_pin_hash: hash }).eq('id', currentRosterTeamId);
+  if (!/^\d{4}$/.test(p)) { toast('PIN must be 4 digits', 'error'); return; }
+  const r = await pinAuth('set_pin', { kind: 'captain', ref_id: currentRosterTeamId, new_pin: p });
+  if (!r.ok) { toast(r.error || 'Could not set PIN', 'error'); return; }
   toast('Captain PIN reset.', 'success');
 }
 
@@ -6773,14 +6824,14 @@ async function submitCarryover() {
 async function setCaptain(rosterRowId) {
   await sb.from('league_team_players').update({is_captain:false}).eq('team_id',currentRosterTeamId);
   await sb.from('league_team_players').update({is_captain:true}).eq('id',rosterRowId);
-  await sb.from('league_teams').update({captain_pin_hash:null}).eq('id',currentRosterTeamId);
+  await pinAuth('set_pin', { kind: 'captain', ref_id: currentRosterTeamId, new_pin: null });
   await loadRosterMembers();
   toast('Captain updated — set a Captain PIN for them when ready','success');
 }
 
 async function clearCaptain(rosterRowId) {
   await sb.from('league_team_players').update({is_captain:false}).eq('id',rosterRowId);
-  await sb.from('league_teams').update({captain_pin_hash:null}).eq('id',currentRosterTeamId);
+  await pinAuth('set_pin', { kind: 'captain', ref_id: currentRosterTeamId, new_pin: null });
   await loadRosterMembers();
   toast('Captain removed — coach manages lineups and subs until a new one is set','success');
 }
@@ -7334,7 +7385,7 @@ async function loadCoaches(containerId) {
   const el = document.getElementById(coachesContainerId);
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{data:coaches}, {data:teams}] = await Promise.all([
-    sb.from('coaches').select('id,name,phone,email,pin_hash').order('name'),
+    sb.from('coaches').select('id,name,phone,email,pin_set').order('name'),
     sb.from('league_teams').select('coach_id,name'),
   ]);
   coachesListCache = coaches || [];
@@ -7357,13 +7408,13 @@ function renderCoachesList(teamsByCoach) {
       <td style="font-size:12px;color:var(--ink-muted)">${(teamsByCoach[c.id]||[]).map(escQ).join(', ') || '—'}</td>
       <td>
         <div style="display:flex;gap:6px;align-items:center">
-          <span class="badge ${c.pin_hash?'badge-green':'badge-blue'}" style="font-size:11px">${c.pin_hash?'Set':'None'}</span>
-          <button class="btn btn-sm btn-ghost" onclick="openCoachPinEditor('${c.id}')">${c.pin_hash?'Change':'Set'}</button>
+          <span class="badge ${c.pin_set?'badge-green':'badge-blue'}" style="font-size:11px">${c.pin_set?'Set':'None'}</span>
+          <button class="btn btn-sm btn-ghost" onclick="openCoachPinEditor('${c.id}')">${c.pin_set?'Change':'Set'}</button>
         </div>
         <div id="coach-pin-editor-${c.id}" style="display:none;margin-top:8px;min-width:220px">
           <div class="form-row" style="margin-bottom:0">
-            <input class="form-input" type="password" id="coach-pin-${c.id}" placeholder="4-6 digits" maxlength="6" style="font-size:13px">
-            <input class="form-input" type="password" id="coach-pin-confirm-${c.id}" placeholder="Confirm" maxlength="6" style="font-size:13px">
+            <input class="form-input" type="password" id="coach-pin-${c.id}" placeholder="4 digits" inputmode="numeric" maxlength="4" style="font-size:13px">
+            <input class="form-input" type="password" id="coach-pin-confirm-${c.id}" placeholder="Confirm" inputmode="numeric" maxlength="4" style="font-size:13px">
           </div>
           <div style="display:flex;gap:6px;margin-top:6px">
             <button class="btn btn-sm btn-primary" onclick="saveCoachPin('${c.id}')">Save</button>
@@ -7386,14 +7437,10 @@ async function saveCoachPin(coachId) {
   errEl.style.display = 'none';
   const pin = document.getElementById(`coach-pin-${coachId}`).value.trim();
   const confirm = document.getElementById(`coach-pin-confirm-${coachId}`).value.trim();
-  if (!/^\d{4,6}$/.test(pin)) { errEl.textContent = 'PIN must be 4-6 digits.'; errEl.style.display='block'; return; }
+  if (!/^\d{4}$/.test(pin)) { errEl.textContent = 'PIN must be 4 digits.'; errEl.style.display='block'; return; }
   if (pin !== confirm) { errEl.textContent = 'PINs do not match.'; errEl.style.display='block'; return; }
-  const hash = await hashPin(pin);
-  if (!(await pinIsAvailable(hash, { table:'coaches', id:coachId, col:'pin_hash' }))) {
-    errEl.textContent = 'That PIN is already in use by someone else — pick a different one.'; errEl.style.display='block'; return;
-  }
-  const { error } = await sb.from('coaches').update({ pin_hash: hash, updated_at: new Date().toISOString() }).eq('id', coachId);
-  if (error) { errEl.textContent = 'Error: '+error.message; errEl.style.display='block'; return; }
+  const r = await pinAuth('set_pin', { kind: 'coach', ref_id: coachId, new_pin: pin });
+  if (!r.ok) { errEl.textContent = r.error || 'Could not save PIN.'; errEl.style.display='block'; return; }
   toast('Coach PIN saved!', 'success');
   loadCoaches(coachesContainerId);
 }
@@ -9757,24 +9804,21 @@ async function saveDirector() {
 
   const pin=document.getElementById('director-pin').value.trim();
   const pinC=document.getElementById('director-pin-confirm').value.trim();
-  if(!pin||pin.length<4){errEl.textContent='PIN must be 4+ digits.';errEl.style.display='flex';return;}
-  if(!/^\d+$/.test(pin)){errEl.textContent='PIN must be digits only.';errEl.style.display='flex';return;}
+  if(!/^\d{6}$/.test(pin)){errEl.textContent='PIN must be exactly 6 digits.';errEl.style.display='flex';return;}
   if(pin!==pinC){errEl.textContent='PINs do not match.';errEl.style.display='flex';return;}
-  const hash=await hashPin(pin);
-  if (!(await pinIsAvailable(hash))) { errEl.textContent='That PIN is already in use by someone else — pick a different one.'; errEl.style.display='flex'; return; }
-  const {error}=await sb.from('directors').insert({name,club_id:clubId,pin_hash:hash,feature_access:featureAccess,supabase_auth_uid:crypto.randomUUID()});
-  if(error){errEl.textContent='Error: '+error.message;errEl.style.display='flex';return;}
+  const r=await pinAuth('create_director',{name,club_id:clubId,feature_access:featureAccess,pin});
+  if(!r.ok){errEl.textContent=r.error||'Could not create director.';errEl.style.display='flex';return;}
   toast(`Director "${name}" created!`,'success');
   closeModal('director-modal');
   loadDirectors(); loadAdminData();
 }
 
 async function resetDirectorPin(id,name) {
-  const p=prompt(`New PIN for ${name} (4-6 digits):`);
-  if(!p||!/^\d{4,6}$/.test(p)){toast('Invalid PIN','error');return;}
-  const hash=await hashPin(p);
-  if (!(await pinIsAvailable(hash, { table:'directors', id, col:'pin_hash' }))) { toast('That PIN is already in use by someone else — pick a different one','error'); return; }
-  await sb.from('directors').update({pin_hash:hash,failed_pin_attempts:0,locked_until:null}).eq('id',id);
+  const p=prompt(`New 6-digit PIN for ${name}:`);
+  if(!p) return;
+  if(!/^\d{6}$/.test(p)){toast('PIN must be 6 digits','error');return;}
+  const r=await pinAuth('set_pin',{kind:'director',ref_id:id,new_pin:p});
+  if(!r.ok){toast(r.error||'Could not reset PIN','error');return;}
   toast(`PIN reset for ${name}.`,'success');
 }
 
@@ -10542,13 +10586,9 @@ async function changeAdminPin() {
   const cp=document.getElementById('confirm-pin').value.trim();
   if(!cur||!np||!cp){toast('All fields required','error');return;}
   if(np!==cp){toast('New PINs do not match','error');return;}
-  if(!/^\d{4,6}$/.test(np)){toast('PIN must be 4-6 digits','error');return;}
-  const ch=await hashPin(cur);
-  const {data}=await sb.from('admin_config').select('id,pin_hash').maybeSingle();
-  if(!data||data.pin_hash!==ch){toast('Current PIN incorrect','error');return;}
-  const nh=await hashPin(np);
-  if (!(await pinIsAvailable(nh, { table:'admin_config', id:data.id, col:'pin_hash' }))) { toast('That PIN is already in use by someone else — pick a different one','error'); return; }
-  await sb.from('admin_config').update({pin_hash:nh}).eq('id',data.id);
+  if(!/^\d{6}$/.test(np)){toast('PIN must be 6 digits','error');return;}
+  const r=await pinAuth('change_own_pin',{current_pin:cur,new_pin:np});
+  if(!r.ok){toast(r.error||'Could not update PIN','error');return;}
   toast('PIN updated!','success');
   ['current-pin','new-pin','confirm-pin'].forEach(id=>document.getElementById(id).value='');
 }
