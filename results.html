@@ -163,7 +163,7 @@
     if (!matches?.length) { showEmpty('No matches yet', `Week ${week} hasn't been scheduled yet.`); return; }
 
     const teamIds = [...new Set(matches.flatMap(m => m.team_b_id ? [m.team_a_id, m.team_b_id] : [m.team_a_id]))];
-    const { data: teams } = await sb.from('league_teams').select('*,clubs(name)').in('id', teamIds);
+    const { data: teams } = await sb.from('league_teams').select('id,league_id,name,club_id,coach_name,coach_id,time_slot_day,time_slot_time,created_at,avatar_url,avatar_color,court_count,abbreviation,team_code,clubs(name)').in('id', teamIds);
     const teamById = {}; (teams||[]).forEach(t => teamById[t.id] = t);
 
     const matchIds = matches.map(m => m.id);

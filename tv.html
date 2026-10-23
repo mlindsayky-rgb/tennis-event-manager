@@ -578,7 +578,7 @@
 
     const { data: league } = await sb.from('leagues').select('*').eq('id', activeLeagueId).maybeSingle();
     if (!league) { showEmpty('League not found'); return; }
-    const { data: team } = await sb.from('league_teams').select('*,clubs(name)').eq('id', activeTeamId).maybeSingle();
+    const { data: team } = await sb.from('league_teams').select('id,league_id,name,club_id,coach_name,coach_id,time_slot_day,time_slot_time,created_at,avatar_url,avatar_color,court_count,abbreviation,team_code,clubs(name)').eq('id', activeTeamId).maybeSingle();
     if (!team) { showEmpty('Team not found'); return; }
 
     document.getElementById('event-name').textContent = team.name;

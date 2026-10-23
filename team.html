@@ -135,7 +135,7 @@
     const params = new URLSearchParams(window.location.search);
     const code = (params.get('code')||'').trim().toUpperCase();
     if (!code) { showNotFound(); return; }
-    const { data: t } = await sb.from('league_teams').select('*,clubs(name)').eq('team_code', code).maybeSingle();
+    const { data: t } = await sb.from('league_teams').select('id,league_id,name,club_id,coach_name,coach_id,time_slot_day,time_slot_time,created_at,avatar_url,avatar_color,court_count,abbreviation,team_code,clubs(name)').eq('team_code', code).maybeSingle();
     if (!t) { showNotFound(); return; }
     team = t;
     const { data: l } = await sb.from('leagues').select('*').eq('id', team.league_id).maybeSingle();
