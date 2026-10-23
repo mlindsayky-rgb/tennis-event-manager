@@ -9,6 +9,7 @@ CREATE TABLE public.pin_credentials (
   ref_id uuid NOT NULL,
   pin_hash text NOT NULL,
   pin_digits smallint,
+  must_change boolean NOT NULL DEFAULT false,  -- PIN was assigned by someone else; owner picks their own at next sign-in
   auth_user_id uuid,
   updated_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (kind, ref_id),

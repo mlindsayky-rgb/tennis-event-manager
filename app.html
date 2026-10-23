@@ -908,10 +908,10 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
 <!-- FORCED 6-DIGIT PIN UPGRADE (admin/directors still on a 4-digit PIN, shown once right after sign-in) -->
 <div class="modal-overlay" id="pin-upgrade-modal" data-locked="true">
   <div class="modal" style="max-width:420px">
-    <div class="modal-header"><div class="modal-title">Choose a 6-digit PIN</div></div>
+    <div class="modal-header"><div class="modal-title" id="upgrade-pin-title">Choose a 6-digit PIN</div></div>
     <div class="modal-body">
-      <p style="font-size:14px;color:var(--ink-muted);margin:0 0 16px">For extra security, admin and director PINs are now 6 digits. Pick your new PIN to continue. Your old 4-digit PIN stops working once this is saved.</p>
-      <div class="form-group"><label class="form-label">New 6-digit PIN</label><input class="form-input" id="upgrade-pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6"></div>
+      <p id="upgrade-pin-intro" style="font-size:14px;color:var(--ink-muted);margin:0 0 16px"></p>
+      <div class="form-group"><label class="form-label" id="upgrade-pin-label">New 6-digit PIN</label><input class="form-input" id="upgrade-pin-new" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6"></div>
       <div class="form-group"><label class="form-label">Confirm New PIN</label><input class="form-input" id="upgrade-pin-confirm" type="password" inputmode="numeric" autocomplete="new-password" maxlength="6"></div>
       <div id="upgrade-pin-error" class="alert alert-error" style="display:none"></div>
     </div>
@@ -2142,6 +2142,10 @@ function renderDots(state='normal') {
 // Physical keyboard on the PIN screen: digits, Backspace, Enter.
 document.addEventListener('keydown', e => {
   if (!document.getElementById('pin-screen')?.classList.contains('active')) return;
+  // Leave keys alone while someone is typing in a box (e.g. the choose-your-PIN prompt).
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (document.querySelector('.modal-overlay.open')) return;
   if (/^\d$/.test(e.key)) { pinKey(e.key); e.preventDefault(); }
   else if (e.key === 'Backspace') { pinDelete(); e.preventDefault(); }
   else if (e.key === 'Enter') { attemptLogin(); e.preventDefault(); }
@@ -2189,7 +2193,7 @@ async function attemptLogin() {
   await sb.auth.setSession(r.session);
   pinBuf = ''; statusEl.textContent = '';
   pinLocked = false; renderDots();
-  if (r.must_upgrade_pin) { openPinUpgrade(pin, r.profile); return; }
+  if (r.must_upgrade_pin || r.must_change_pin) { openPinUpgrade(pin, r.profile, !!r.must_upgrade_pin); return; }
   await enterApp(r.profile);
 }
 
@@ -2272,11 +2276,19 @@ async function enterApp(profile) {
   }
 }
 
-// ── Forced 6-digit upgrade (admin/directors still on a 4-digit PIN) ──
+// ── Required PIN change right after sign-in ──
+// Two cases: admin/directors still on a 4-digit PIN (must move to 6), and
+// anyone signing in with a PIN someone else assigned (must pick their own).
 let pinUpgradeCtx = null;
-function openPinUpgrade(oldPin, profile) {
-  pinUpgradeCtx = { oldPin, profile };
-  ['upgrade-pin-new','upgrade-pin-confirm'].forEach(id => document.getElementById(id).value = '');
+function openPinUpgrade(oldPin, profile, isSixDigitUpgrade) {
+  const len = (profile.role === 'admin' || profile.role === 'director') ? 6 : 4;
+  pinUpgradeCtx = { oldPin, profile, len };
+  document.getElementById('upgrade-pin-title').textContent = isSixDigitUpgrade ? 'Choose a 6-digit PIN' : 'Choose your own PIN';
+  document.getElementById('upgrade-pin-intro').textContent = isSixDigitUpgrade
+    ? 'For extra security, admin and director PINs are now 6 digits. Pick your new PIN to continue. Your old 4-digit PIN stops working once this is saved.'
+    : `The PIN you just used was assigned to you. Pick your own ${len}-digit PIN to continue — only you will know it. The assigned PIN stops working once this is saved.`;
+  document.getElementById('upgrade-pin-label').textContent = `New ${len}-digit PIN`;
+  ['upgrade-pin-new','upgrade-pin-confirm'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.maxLength = len; });
   document.getElementById('upgrade-pin-error').style.display = 'none';
   openModal('pin-upgrade-modal');
   setTimeout(() => document.getElementById('upgrade-pin-new').focus(), 50);
@@ -2286,8 +2298,10 @@ async function savePinUpgrade() {
   errEl.style.display = 'none';
   const np = document.getElementById('upgrade-pin-new').value.trim();
   const cp = document.getElementById('upgrade-pin-confirm').value.trim();
-  if (!/^\d{6}$/.test(np)) { errEl.textContent = 'PIN must be exactly 6 digits.'; errEl.style.display = 'flex'; return; }
+  const len = pinUpgradeCtx.len;
+  if (!new RegExp(`^\\d{${len}}$`).test(np)) { errEl.textContent = `PIN must be exactly ${len} digits.`; errEl.style.display = 'flex'; return; }
   if (np !== cp) { errEl.textContent = 'PINs do not match.'; errEl.style.display = 'flex'; return; }
+  if (np === pinUpgradeCtx.oldPin) { errEl.textContent = 'Pick a PIN different from the one you were given.'; errEl.style.display = 'flex'; return; }
   const btn = document.getElementById('upgrade-pin-save');
   btn.disabled = true;
   const r = await pinAuth('change_own_pin', { current_pin: pinUpgradeCtx.oldPin, new_pin: np });
@@ -6731,7 +6745,7 @@ async function resetPlayerPin(playerId, name) {
   if (!/^\d{4}$/.test(p)) { toast('PIN must be 4 digits', 'error'); return; }
   const r = await pinAuth('set_pin', { kind: 'player', ref_id: playerId, new_pin: p });
   if (!r.ok) { toast(r.error || 'Could not set PIN', 'error'); return; }
-  toast(`PIN reset for ${name}.`, 'success');
+  toast(`PIN set for ${name} — they'll choose their own the next time they sign in.`, 'success');
 }
 
 async function resetCaptainPin() {
@@ -6741,7 +6755,7 @@ async function resetCaptainPin() {
   if (!/^\d{4}$/.test(p)) { toast('PIN must be 4 digits', 'error'); return; }
   const r = await pinAuth('set_pin', { kind: 'captain', ref_id: currentRosterTeamId, new_pin: p });
   if (!r.ok) { toast(r.error || 'Could not set PIN', 'error'); return; }
-  toast('Captain PIN reset.', 'success');
+  toast('Captain PIN set — the captain will choose their own the next time they sign in.', 'success');
 }
 
 // Carry Over Roster — pulls a prior team's roster onto this (new-season)
@@ -7424,7 +7438,7 @@ async function saveCoachPin(coachId) {
   if (pin !== confirm) { errEl.textContent = 'PINs do not match.'; errEl.style.display='block'; return; }
   const r = await pinAuth('set_pin', { kind: 'coach', ref_id: coachId, new_pin: pin });
   if (!r.ok) { errEl.textContent = r.error || 'Could not save PIN.'; errEl.style.display='block'; return; }
-  toast('Coach PIN saved!', 'success');
+  toast('Coach PIN set — the coach will choose their own the next time they sign in.', 'success');
   loadCoaches(coachesContainerId);
 }
 
@@ -9791,7 +9805,7 @@ async function saveDirector() {
   if(pin!==pinC){errEl.textContent='PINs do not match.';errEl.style.display='flex';return;}
   const r=await pinAuth('create_director',{name,club_id:clubId,feature_access:featureAccess,pin});
   if(!r.ok){errEl.textContent=r.error||'Could not create director.';errEl.style.display='flex';return;}
-  toast(`Director "${name}" created!`,'success');
+  toast(`Director "${name}" created — they'll choose their own PIN the first time they sign in.`,'success');
   closeModal('director-modal');
   loadDirectors(); loadAdminData();
 }
@@ -9802,7 +9816,7 @@ async function resetDirectorPin(id,name) {
   if(!/^\d{6}$/.test(p)){toast('PIN must be 6 digits','error');return;}
   const r=await pinAuth('set_pin',{kind:'director',ref_id:id,new_pin:p});
   if(!r.ok){toast(r.error||'Could not reset PIN','error');return;}
-  toast(`PIN reset for ${name}.`,'success');
+  toast(`PIN set for ${name} — they'll choose their own 6-digit PIN the next time they sign in.`,'success');
 }
 
 async function toggleDirector(id,active) {

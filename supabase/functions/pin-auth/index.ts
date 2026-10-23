@@ -97,22 +97,25 @@ async function logAttempt(svc: SupabaseClient, ip: string, succeeded: boolean) {
 }
 
 // ── Credentials ────────────────────────────────────────────────────────────
-type Cred = { id: string; kind: Kind; ref_id: string; pin_hash: string; auth_user_id: string | null; pin_digits: number | null };
+type Cred = { id: string; kind: Kind; ref_id: string; pin_hash: string; auth_user_id: string | null; pin_digits: number | null; must_change: boolean };
+const CRED_COLS = "id,kind,ref_id,pin_hash,auth_user_id,pin_digits,must_change";
 async function findCredByPin(svc: SupabaseClient, pin: string): Promise<Cred | null> {
-  const { data } = await svc.from("pin_credentials").select("id,kind,ref_id,pin_hash,auth_user_id,pin_digits").in("pin_hash", await bothHashes(pin));
+  const { data } = await svc.from("pin_credentials").select(CRED_COLS).in("pin_hash", await bothHashes(pin));
   return (data?.[0] as Cred) ?? null;
 }
 async function pinTakenByOther(svc: SupabaseClient, pin: string, kind: Kind, refId: string) {
   const { data } = await svc.from("pin_credentials").select("kind,ref_id").in("pin_hash", await bothHashes(pin));
   return (data || []).some((r) => !(r.kind === kind && r.ref_id === refId));
 }
-async function savePin(svc: SupabaseClient, kind: Kind, refId: string, pin: string | null) {
+// mustChange: true when someone else assigned this PIN — the owner is asked
+// to pick their own at their next sign-in.
+async function savePin(svc: SupabaseClient, kind: Kind, refId: string, pin: string | null, mustChange = false) {
   if (pin === null) {
     await svc.from("pin_credentials").delete().eq("kind", kind).eq("ref_id", refId);
   } else {
     const pin_hash = await v2Hash(pin);
     const { error } = await svc.from("pin_credentials")
-      .upsert({ kind, ref_id: refId, pin_hash, pin_digits: pin.length, updated_at: new Date().toISOString() }, { onConflict: "kind,ref_id" });
+      .upsert({ kind, ref_id: refId, pin_hash, pin_digits: pin.length, must_change: mustChange, updated_at: new Date().toISOString() }, { onConflict: "kind,ref_id" });
     if (error) throw error;
   }
   // Keep the "PIN set?" flags the screens show in sync.
@@ -260,9 +263,10 @@ Deno.serve(async (req) => {
         if (cred.kind === "director") {
           await svc.from("directors").update({ last_login_at: new Date().toISOString() }).eq("id", cred.ref_id);
         }
-        // Admin/directors still on a 4-digit PIN must pick a 6-digit one now.
+        // Admin/directors still on a 4-digit PIN must pick a 6-digit one now,
+        // and anyone signing in with a PIN someone else assigned picks their own.
         const must_upgrade_pin = STAFF_KINDS.has(cred.kind) && body.pin.length !== 6;
-        return json({ session, profile: built.profile, must_upgrade_pin });
+        return json({ session, profile: built.profile, must_upgrade_pin, must_change_pin: !!cred.must_change });
       }
 
       case "resume": {
@@ -272,12 +276,12 @@ Deno.serve(async (req) => {
         const user = await callerUser(svc, req);
         if (!user) return json({ error: "Not signed in" }, 401);
         const { data: cred } = await svc.from("pin_credentials")
-          .select("id,kind,ref_id,pin_hash,auth_user_id,pin_digits").eq("auth_user_id", user.id).maybeSingle();
+          .select(CRED_COLS).eq("auth_user_id", user.id).maybeSingle();
         const built = cred ? await buildProfile(svc, cred as Cred) : null;
         if (!cred || !built) return json({ error: "Please sign in again." }, 401);
         await svc.auth.admin.updateUserById(user.id, { app_metadata: built.claims });
         const must_upgrade_pin = STAFF_KINDS.has(cred.kind) && cred.pin_digits !== 6;
-        return json({ profile: built.profile, must_upgrade_pin });
+        return json({ profile: built.profile, must_upgrade_pin, must_change_pin: !!(cred as Cred).must_change });
       }
 
       case "verify_admin_pin": {
@@ -305,6 +309,9 @@ Deno.serve(async (req) => {
         const isMine = !!cur && cur.kind === ref[0] && (ref[0] === "admin" || cur.ref_id === ref[1]);
         if (!isMine) { await logAttempt(svc, ip, false); return json({ error: "Current PIN incorrect." }, 400); }
         const kind = cur!.kind, refId = cur!.ref_id;
+        if (body.new_pin === body.current_pin) {
+          return json({ error: "Pick a new PIN that's different from your current one." }, 400);
+        }
         if (!pinShapeOk(body.new_pin, kind)) {
           return json({ error: STAFF_KINDS.has(kind) ? "PIN must be 6 digits." : "PIN must be 4 digits." }, 400);
         }
@@ -329,7 +336,8 @@ Deno.serve(async (req) => {
         if (await pinTakenByOther(svc, body.new_pin, kind, refId)) {
           return json({ error: "That PIN is already in use by someone else — pick a different one." }, 409);
         }
-        await savePin(svc, kind, refId, body.new_pin);
+        const settingOwn = kind === "director" && refId === me.director_id;
+        await savePin(svc, kind, refId, body.new_pin, !settingOwn);
         return json({ ok: true });
       }
 
@@ -349,7 +357,7 @@ Deno.serve(async (req) => {
           pin_hash: "moved-to-pin_credentials", supabase_auth_uid: crypto.randomUUID(),
         });
         if (error) return json({ error: error.message }, 400);
-        await savePin(svc, "director", id, body.pin);
+        await savePin(svc, "director", id, body.pin, true);
         return json({ ok: true, id });
       }
 
