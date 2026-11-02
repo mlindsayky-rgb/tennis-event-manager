@@ -3011,7 +3011,7 @@ async function addSubPlayer() {
     const {data:newPlayer,error:pErr} = await sb.from('players').insert({
       roster_name:subName,
       gender:'MALE',
-    }).select().single();
+    }).select('id').single();
     if(pErr){toast('Error: '+pErr.message,'error');return;}
     subPlayerId = newPlayer.id;
   }
@@ -3437,7 +3437,7 @@ async function lockTeams(){
         const {data:newSub} = await sb.from('players').insert({
           roster_name: subName,
           gender: 'MALE', // neutral default, director can change
-        }).select().single();
+        }).select('id').single();
         if(newSub) subPlayerId = newSub.id;
       }
 
@@ -5720,7 +5720,7 @@ async function confirmImport() {
       const {data:player, error:pErr} = await sb.from('players').insert({
         roster_name: r.fullName,
         gender: r.gender||'MALE',
-      }).select().single();
+      }).select('id').single();
 
       if(pErr) { console.error('Player insert error:', pErr); failed++; continue; }
 
@@ -6644,11 +6644,23 @@ async function openRosterModal(teamId) {
 }
 
 async function loadRosterMembers() {
-  const {data} = await sb.from('league_team_players').select('id,player_id,is_captain,status,players(roster_name,email,phone)').eq('team_id',currentRosterTeamId);
-  currentRosterMembers = (data||[]).map(r=>({
-    id: r.id, player_id: r.player_id, is_captain: !!r.is_captain, status: r.status || 'confirmed',
-    roster_name: r.players?.roster_name || '—', email: r.players?.email || '', phone: r.players?.phone || ''
-  })).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
+  // PostgREST can't embed players(...) here and reach email/phone -- those
+  // columns are masked (JR players) via players_public, which has no FK
+  // relationship PostgREST can follow for an embed. Two separate queries,
+  // merged client-side, instead.
+  const {data} = await sb.from('league_team_players').select('id,player_id,is_captain,status').eq('team_id',currentRosterTeamId);
+  const playerIds = (data||[]).map(r=>r.player_id);
+  const {data:players} = playerIds.length
+    ? await sb.from('players_public').select('id,roster_name,email,phone').in('id', playerIds)
+    : {data: []};
+  const playerMap = {}; (players||[]).forEach(p => playerMap[p.id] = p);
+  currentRosterMembers = (data||[]).map(r=>{
+    const p = playerMap[r.player_id];
+    return {
+      id: r.id, player_id: r.player_id, is_captain: !!r.is_captain, status: r.status || 'confirmed',
+      roster_name: p?.roster_name || '—', email: p?.email || '', phone: p?.phone || ''
+    };
+  }).sort((a,b)=>a.roster_name.localeCompare(b.roster_name));
   renderRosterCurrentList();
 }
 
@@ -6875,7 +6887,7 @@ async function loadPlayerDirectory() {
 
   const [{ data: rosterRows }, { data: allPlayers }] = await Promise.all([
     sb.from('league_team_players').select('player_id,status,team_id,league_teams(coach_name,leagues(name,start_date,end_date))'),
-    sb.from('players').select('id,roster_name,email,phone,last_coach_name,last_captain_name,last_session_end_date'),
+    sb.from('players_public').select('id,roster_name,email,phone,last_coach_name,last_captain_name,last_session_end_date'),
   ]);
   const playerMap = {}; (allPlayers || []).forEach(p => playerMap[p.id] = p);
   const today = toISODate(new Date());
@@ -6999,11 +7011,15 @@ async function loadMissingData(containerId) {
   const el = document.getElementById(missingDataContainerId);
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
   const [{ data: players }, { data: clubs }] = await Promise.all([
-    sb.from('players').select('id,roster_name,phone,home_club_id,created_at').order('roster_name'),
+    sb.from('players_public').select('id,roster_name,phone,home_club_id,created_at,player_type').order('roster_name'),
     sb.from('clubs').select('id,name').order('name'),
   ]);
   missingDataClubs = clubs || [];
+  // Juniors are excluded outright rather than flagged -- their phone reads
+  // as null through players_public regardless of what's really on file, so
+  // "missing" would be meaningless noise for them specifically.
   missingDataAllRows = (players || [])
+    .filter(p => p.player_type !== 'JR')
     .map(p => ({ ...p, missing: playerMissingFields(p) }))
     .filter(p => p.missing.length);
   renderMissingDataList();
@@ -7118,7 +7134,7 @@ async function handleRosterFile(input) {
     return out;
   });
 
-  const {data:allPlayers} = await sb.from('players').select('id,roster_name,email,phone,home_club_id');
+  const {data:allPlayers} = await sb.from('players_public').select('id,roster_name,email,phone,home_club_id');
   rosterAllPlayers = allPlayers || [];
 
   const normPhone = p => (p||'').replace(/\D/g,'');
@@ -7201,7 +7217,7 @@ async function confirmRosterImport() {
         gender: r.gender, player_type: 'AD',
         email: r.email || null, phone: r.phone || null,
         home_club_id: teamClubId
-      }).select().single();
+      }).select('id').single();
       if (error) { toast('Error creating '+r.fullName+': '+error.message,'error'); continue; }
       playerId = newPlayer.id;
     } else if (teamClubId) {
@@ -8242,7 +8258,7 @@ async function openMatchById(id) {
     sb.from('players').select('id,roster_name').eq('is_active',true).order('roster_name'),
     sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_a_id),
     matchIsIndividual ? Promise.resolve({data:[]}) : sb.from('league_team_players').select('player_id,players(id,roster_name)').eq('team_id',match.team_b_id),
-    sb.from('league_interested_subs').select('players(id,roster_name,phone)').eq('league_id',currentLeague.id)
+    sb.from('league_interested_subs').select('players(id,roster_name)').eq('league_id',currentLeague.id)
   ]);
   currentMatch = match;
   currentMatchTeamA = teamA;
@@ -8893,8 +8909,13 @@ async function saveCourtResult(c) {
 async function loadInterestedSubs() {
   const el = document.getElementById('interested-subs-list');
   el.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
-  const { data } = await sb.from('league_interested_subs').select('*,players(roster_name,phone)').eq('league_id', currentLeague.id);
-  renderInterestedSubsList(data||[]);
+  const { data } = await sb.from('league_interested_subs').select('*').eq('league_id', currentLeague.id);
+  const playerIds = (data||[]).map(r=>r.player_id);
+  const { data: players } = playerIds.length
+    ? await sb.from('players_public').select('id,roster_name,phone').in('id', playerIds)
+    : { data: [] };
+  const playerMap = {}; (players||[]).forEach(p => playerMap[p.id] = p);
+  renderInterestedSubsList((data||[]).map(r => ({ ...r, players: playerMap[r.player_id] || null })));
 }
 
 function renderInterestedSubsList(rows) {
@@ -8943,7 +8964,7 @@ async function handleSubsFile(input) {
     return out;
   });
 
-  const {data:allPlayers} = await sb.from('players').select('id,roster_name,email,phone');
+  const {data:allPlayers} = await sb.from('players_public').select('id,roster_name,email,phone');
   const normPhone = p => (p||'').replace(/\D/g,'');
   const normEmail = e => (e||'').trim().toLowerCase();
 
@@ -9013,7 +9034,7 @@ async function confirmSubsImport() {
       const {data:newPlayer, error} = await sb.from('players').insert({
         roster_name: r.fullName, gender: r.gender, player_type: 'AD',
         email: r.email || null, phone: r.phone || null
-      }).select().single();
+      }).select('id').single();
       if (error) { toast('Error creating '+r.fullName+': '+error.message,'error'); continue; }
       playerId = newPlayer.id;
     }
@@ -9036,7 +9057,7 @@ async function addInterestedSub() {
   if (!gender) { toast('Select a gender','error'); return; }
 
   let playerId = null;
-  const { data: existing } = await sb.from('players').select('id,roster_name,phone').ilike('roster_name', name).maybeSingle();
+  const { data: existing } = await sb.from('players_public').select('id,roster_name,phone').ilike('roster_name', name).maybeSingle();
   if (existing) {
     const useExisting = confirm(`A player named "${existing.roster_name}" already exists — use that record?\n\nOK = use existing · Cancel = add as a separate new person`);
     if (useExisting) {
@@ -9045,7 +9066,7 @@ async function addInterestedSub() {
     }
   }
   if (!playerId) {
-    const { data: created, error } = await sb.from('players').insert({ roster_name: name, gender, player_type: 'AD', phone }).select().single();
+    const { data: created, error } = await sb.from('players').insert({ roster_name: name, gender, player_type: 'AD', phone }).select('id').single();
     if (error) { toast('Error: '+error.message,'error'); return; }
     playerId = created.id;
   }
@@ -9144,7 +9165,7 @@ async function removeSubPoolEntry(id) {
 // effective roster, so old data still displays the same way it used to.
 async function loadMatchSubPool() {
   if (matchIsIndividual) { refreshCourtPlayerOptions(); return; }
-  const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name,phone)')
+  const {data} = await sb.from('league_sub_pool').select('*,players(id,roster_name)')
     .eq('league_id',currentLeague.id).eq('week_number',currentMatch.week_number);
   matchSubPool = data||[];
   updateEffectiveRostersWithSubs();
@@ -9368,10 +9389,17 @@ async function loadLeaguePlayers() {
   const teamIds = currentLeagueTeams.map(t => t.id);
   const [{ data: rosterRows }, rankings] = await Promise.all([
     teamIds.length
-      ? sb.from('league_team_players').select('player_id,team_id,players(id,roster_name,phone,notes)').in('team_id', teamIds)
+      ? sb.from('league_team_players').select('player_id,team_id').in('team_id', teamIds)
       : Promise.resolve({ data: [] }),
     computeLeagueRankings(),
   ]);
+  // Same reason as loadRosterMembers: players_public has no FK PostgREST
+  // can embed through, so this is a second query merged client-side.
+  const playerIds = [...new Set((rosterRows||[]).map(r=>r.player_id))];
+  const { data: players } = playerIds.length
+    ? await sb.from('players_public').select('id,roster_name,phone,notes').in('id', playerIds)
+    : { data: [] };
+  const playerMap = {}; (players||[]).forEach(p => playerMap[p.id] = p);
   const rankByPlayer = {}; rankings.forEach(r => { rankByPlayer[r.player_id] = r; });
   const teamById = {}; currentLeagueTeams.forEach(t => { teamById[t.id] = t; });
   const startYear = currentLeague.start_date ? parseDateSafe(currentLeague.start_date).getFullYear() : '—';
@@ -9379,7 +9407,7 @@ async function loadLeaguePlayers() {
   const seen = new Set();
   const rows = [];
   (rosterRows || []).forEach(r => {
-    const p = r.players;
+    const p = playerMap[r.player_id];
     if (!p || seen.has(p.id)) return;
     seen.add(p.id);
     const team = teamById[r.team_id];
@@ -9814,7 +9842,7 @@ async function savePlayer() {
   // assign their club automatically instead of leaving it for them to
   // notice is missing and fix by hand later (admin has no club to assume).
   const homeClubId = currentUser?.role==='director' ? currentUser.club_id : null;
-  const {data,error}=await sb.from('players').insert({roster_name:`${first} ${last}`,gender,player_type:type,home_club_id:homeClubId}).select().single();
+  const {data,error}=await sb.from('players').insert({roster_name:`${first} ${last}`,gender,player_type:type,home_club_id:homeClubId}).select('id,roster_name').single();
   if(error){toast('Error: '+error.message,'error');return;}
   if(homeClubId) {
     await sb.from('player_clubs').upsert({player_id:data.id, club_id:homeClubId}, {onConflict:'player_id,club_id', ignoreDuplicates:true});
@@ -10489,7 +10517,7 @@ async function runXlsxImport() {
       const {data,error} = await sb.from('players').insert({
         roster_name: `${r.firstName} ${r.lastName}`,
         gender: r.gender, player_type: r.type
-      }).select().single();
+      }).select('id').single();
       if(error) { skipped++; continue; }
       playerId = data.id;
       newPlayerIds.push(playerId);
