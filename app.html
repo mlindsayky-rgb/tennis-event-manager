@@ -1352,6 +1352,11 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     <div class="modal-body">
       <div id="roster-upload-section">
         <div class="form-group">
+          <label class="form-label">Club</label>
+          <select class="form-select" id="roster-import-club"></select>
+          <div class="form-hint">Defaults to this team's own club — change it if this roster is actually for a different one. New and unmatched players are assigned here; a club with linked locations (e.g. Genesis - BW / LTC) assigns both.</div>
+        </div>
+        <div class="form-group">
           <label class="form-label">Upload Roster (.xlsx or .csv)</label>
           <input class="form-input" type="file" id="roster-file-input" accept=".xlsx,.xls,.csv" onchange="handleRosterFile(this)">
           <div class="form-hint">Name can be one column ("Name") or two ("First Name" / "Last Name") — either works. Plus Email and Phone. Matched to existing players by email, then phone — unmatched rows create a new player.</div>
@@ -5742,8 +5747,10 @@ async function confirmImport() {
       } else {
         Object.entries(r.clubAffils).filter(([,v])=>v).forEach(([id])=>clubsToAdd.push(id));
       }
-      for(const clubId of clubsToAdd) {
-        await sb.from('player_clubs').insert({player_id:player.id, club_id:clubId}).maybeSingle();
+      const expandedClubIds = new Set();
+      for(const clubId of clubsToAdd) (await expandClubGroup(clubId)).forEach(id=>expandedClubIds.add(id));
+      if(expandedClubIds.size) {
+        await sb.from('player_clubs').upsert([...expandedClubIds].map(id=>({player_id:player.id, club_id:id})), {onConflict:'player_id,club_id', ignoreDuplicates:true});
       }
 
       created++;
@@ -6638,6 +6645,12 @@ async function openRosterModal(teamId) {
   const isStaffOrCoach = role === 'admin' || role === 'director' || role === 'coach';
   document.getElementById('roster-upload-section').style.display = isStaffOrCoach ? '' : 'none';
   document.getElementById('roster-addplayer-section').style.display = isStaffOrCoach ? '' : 'none';
+  if (isStaffOrCoach) {
+    const clubSel = document.getElementById('roster-import-club');
+    const {data:clubs} = await sb.from('clubs').select('id,name').order('name');
+    clubSel.innerHTML = '<option value="">No club</option>' + (clubs||[]).map(c=>`<option value="${c.id}">${escQ(c.name)}</option>`).join('');
+    clubSel.value = team?.club_id || '';
+  }
   await loadRosterMembers();
   await populateRosterAddPlayerSelect();
   openModal('roster-modal');
@@ -6831,6 +6844,28 @@ async function clearPlayerSnapshot(playerId) {
   await sb.from('players').update({ last_coach_name: null, last_captain_name: null, last_session_end_date: null }).eq('id', playerId);
 }
 
+// Clubs can share a club_group_id to mean "same organization, multiple
+// locations" (e.g. Genesis - BW / Genesis - LTC are one club, two
+// physical locations) — membership in one must always mean membership in
+// all of them. Every place that writes a player_clubs row goes through
+// this first so that rule holds everywhere, not just in one screen.
+async function expandClubGroup(clubId) {
+  if (!clubId) return [];
+  const {data:club} = await sb.from('clubs').select('club_group_id').eq('id', clubId).maybeSingle();
+  if (!club?.club_group_id) return [clubId];
+  const {data:siblings} = await sb.from('clubs').select('id').eq('club_group_id', club.club_group_id);
+  return (siblings||[]).length ? siblings.map(s=>s.id) : [clubId];
+}
+
+// Upserts player_clubs rows for a club AND every club linked to it via
+// club_group_id — the one place this actually happens, so the linking
+// rule can't be forgotten at a new call site.
+async function addPlayerToClubGroup(playerId, clubId) {
+  const clubIds = await expandClubGroup(clubId);
+  const rows = clubIds.map(id => ({ player_id: playerId, club_id: id }));
+  if (rows.length) await sb.from('player_clubs').upsert(rows, { onConflict: 'player_id,club_id', ignoreDuplicates: true });
+}
+
 // Same backfill-only rule as the bulk roster import: a team roster belongs
 // to a specific club, so use it for a player who doesn't have a home club
 // on file yet, and leave one they already have untouched.
@@ -6844,7 +6879,7 @@ async function backfillPlayerHomeClub(playerId, teamId) {
   // A director's Players directory is filtered by player_clubs, a separate
   // many-to-many table from home_club_id — without this a newly-rostered
   // player has the right home_club_id but is still invisible there.
-  await sb.from('player_clubs').upsert({player_id: playerId, club_id: team.club_id}, {onConflict: 'player_id,club_id', ignoreDuplicates: true});
+  await addPlayerToClubGroup(playerId, team.club_id);
 }
 
 async function addPlayerToRoster() {
@@ -7070,7 +7105,7 @@ async function saveMissingDataField(playerId, field, value) {
   // roster add — a director's Players directory is filtered by player_clubs,
   // a separate table, so setting Club here must keep it in sync too.
   if (field === 'home_club_id' && payload.home_club_id) {
-    await sb.from('player_clubs').upsert({ player_id: playerId, club_id: payload.home_club_id }, { onConflict: 'player_id,club_id', ignoreDuplicates: true });
+    await addPlayerToClubGroup(playerId, payload.home_club_id);
   }
   toast('Saved', 'success');
   loadMissingData(missingDataContainerId);
@@ -7201,12 +7236,11 @@ async function confirmRosterImport() {
     errEl.style.display = 'flex';
     return;
   }
-  // A team roster always belongs to a specific club — use it instead of
-  // making someone fill in Home Club by hand for every player (in Missing
-  // Data or otherwise). Only backfills a club that's actually missing;
-  // never overwrites one a matched player already has on file.
-  const rosterTeam = currentLeagueTeams.find(t=>t.id===currentRosterTeamId);
-  const teamClubId = rosterTeam?.club_id || null;
+  // A team roster is usually all one club, so this defaults to the team's
+  // own club, but it's an explicit, editable choice rather than silently
+  // assumed — same reasoning as Missing Data: never overwrites a club a
+  // matched player already has on file, only backfills what's missing.
+  const teamClubId = document.getElementById('roster-import-club').value || null;
 
   for (const r of rosterImportRows) {
     let playerId = r.matchedPlayerId;
@@ -7231,7 +7265,7 @@ async function confirmRosterImport() {
     // newly-rostered player has the right home_club_id but is still
     // invisible there.
     if (teamClubId) {
-      await sb.from('player_clubs').upsert({player_id: playerId, club_id: teamClubId}, {onConflict: 'player_id,club_id', ignoreDuplicates: true});
+      await addPlayerToClubGroup(playerId, teamClubId);
     }
     const {error: rosterErr} = await sb.from('league_team_players').insert({team_id: currentRosterTeamId, player_id: playerId});
     if (rosterErr && !/duplicate/i.test(rosterErr.message||'')) {
@@ -9594,9 +9628,13 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
 // Open club membership modal
 async function openClubMembership(playerId, playerName) {
   document.getElementById('club-membership-title').textContent = `Club Memberships — ${playerName}`;
+  openModal('club-membership-modal');
+  await renderClubMembershipList(playerId);
+}
+
+async function renderClubMembershipList(playerId) {
   const listEl = document.getElementById('club-membership-list');
   listEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
-  openModal('club-membership-modal');
 
   const [{data:clubs}, {data:current}] = await Promise.all([
     sb.from('clubs').select('id,name').order('name'),
@@ -9615,16 +9653,23 @@ async function openClubMembership(playerId, playerName) {
     </div>`).join('');
 }
 
+// Toggling one club always toggles every club linked to it too (same
+// organization, multiple locations — see expandClubGroup) — re-renders
+// the whole checkbox list afterward so a linked club's box visibly
+// updates even though it wasn't the one clicked.
 async function togglePlayerClub(playerId, clubId, adding, clubName) {
+  const clubIds = await expandClubGroup(clubId);
   if(adding) {
-    const {error} = await sb.from('player_clubs').insert({player_id:playerId, club_id:clubId});
+    const rows = clubIds.map(id => ({player_id:playerId, club_id:id}));
+    const {error} = await sb.from('player_clubs').upsert(rows, {onConflict:'player_id,club_id', ignoreDuplicates:true});
     if(error) { toast('Error: '+error.message,'error'); return; }
-    toast(`Added to ${clubName}!`, 'success');
+    toast(clubIds.length>1 ? `Added to ${clubName} (and its linked location)!` : `Added to ${clubName}!`, 'success');
   } else {
-    const {error} = await sb.from('player_clubs').delete().eq('player_id',playerId).eq('club_id',clubId);
+    const {error} = await sb.from('player_clubs').delete().eq('player_id',playerId).in('club_id',clubIds);
     if(error) { toast('Error: '+error.message,'error'); return; }
-    toast(`Removed from ${clubName}`, 'default');
+    toast(clubIds.length>1 ? `Removed from ${clubName} (and its linked location)` : `Removed from ${clubName}`, 'default');
   }
+  await renderClubMembershipList(playerId);
   // Refresh player list
   const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
   const mode = document.querySelector(`#${lid} .btn-primary`)?.textContent?.includes('My Club') ? 'my_club' : 'all';
@@ -9845,7 +9890,7 @@ async function savePlayer() {
   const {data,error}=await sb.from('players').insert({roster_name:`${first} ${last}`,gender,player_type:type,home_club_id:homeClubId}).select('id,roster_name').single();
   if(error){toast('Error: '+error.message,'error');return;}
   if(homeClubId) {
-    await sb.from('player_clubs').upsert({player_id:data.id, club_id:homeClubId}, {onConflict:'player_id,club_id', ignoreDuplicates:true});
+    await addPlayerToClubGroup(data.id, homeClubId);
   }
   toast(`${data.roster_name} added!`,'success');
   closeModal('player-modal');
@@ -10536,10 +10581,10 @@ async function runXlsxImport() {
         if(!isMember) continue;
         const clubId = r.clubColMap[col];
         if(!clubId) continue;
-        // Upsert — add if not already a member
-        const {error} = await sb.from('player_clubs')
-          .upsert({player_id:playerId, club_id:clubId}, {onConflict:'player_id,club_id', ignoreDuplicates:true});
-        if(!error) clubsUpdated++;
+        // Also adds any club linked to this one (same org, multiple
+        // locations) — see expandClubGroup.
+        await addPlayerToClubGroup(playerId, clubId);
+        clubsUpdated++;
       }
     }
   }
