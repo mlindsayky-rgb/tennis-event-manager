@@ -1581,7 +1581,7 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
       <div id="xlsx-preview" style="display:none;margin-top:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
           <div style="font-size:14px;font-weight:600" id="xlsx-summary"></div>
-          <div id="xlsx-unresolved-warn" style="font-size:13px;color:var(--gold);display:none">⚠ Resolve fuzzy matches before importing</div>
+          <div id="xlsx-unresolved-warn" style="font-size:13px;color:var(--gold);display:none">⚠ Resolve fuzzy matches and pick a gender for new players before importing</div>
         </div>
         <div style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r)">
           <table class="data-table" id="xlsx-preview-table" style="margin:0">
@@ -10425,14 +10425,16 @@ document.getElementById('xlsx-file-input').addEventListener('change', async func
         // Exact match
         const exact = xlsxExistingPlayers.find(p => p.roster_name.toLowerCase() === fullName);
         if(exact) return { ...row, status:'exists', matchId: exact.id, matchName: exact.roster_name, clubColMap };
-        // Fuzzy match — check if any player name is within 2 chars
+        // Fuzzy match — a likely typo on at least one name part, not just
+        // any two names that happen to be a short edit apart (see isNameTypo)
         const fuzzy = xlsxExistingPlayers.find(p => {
           const parts = p.roster_name.toLowerCase().split(' ');
           const rparts = fullName.split(' ');
-          return parts.length === rparts.length && parts.some((part,i) => levenshtein(part, rparts[i]) <= 2 && levenshtein(part, rparts[i]) > 0);
+          return parts.length === rparts.length && parts.some((part,i) => isNameTypo(part, rparts[i]));
         });
         if(fuzzy) return { ...row, status:'fuzzy', matchId: fuzzy.id, matchName: fuzzy.roster_name, fuzzyResolution: null, clubColMap };
-        if(!row.gender) return { ...row, status:'error', error:'Missing gender', clubColMap };
+        // Gender may be blank here — resolved inline in the preview table
+        // rather than dead-ending the row, see xlsxNeedsGender.
         return { ...row, status:'new', clubColMap };
       });
 
@@ -10453,25 +10455,62 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
+// A flat "distance <= 2" catches real typos (Smyth/Smith) but also pairs
+// that just happen to share a short edit path despite being genuinely
+// different names (Hall/Dahl is distance 2 on 4 letters — half the word).
+// Scale the tolerance by the shorter word's length instead: short words
+// need to be nearly exact, longer ones can tolerate a 2-character slip.
+function isNameTypo(a, b) {
+  const d = levenshtein(a, b);
+  if (d === 0) return false; // identical — exact match handles this
+  const maxAllowed = Math.min(a.length, b.length) <= 4 ? 1 : 2;
+  return d <= maxAllowed;
+}
+
+// A row only actually needs a gender picked if it's going to become a
+// new player row — an exact/fuzzy match reusing an existing player's own
+// gender never needs one.
+function xlsxNeedsGender(r) {
+  return (r.status==='new' || (r.status==='fuzzy' && r.fuzzyResolution==='add_new')) && !r.gender;
+}
+
+function xlsxGenderCellHtml(idx) {
+  const r = xlsxAnalyzed[idx];
+  if (xlsxNeedsGender(r)) {
+    return `<select class="form-select" style="font-size:11px;padding:2px 4px;min-width:50px" onchange="setXlsxGender(${idx},this.value)">
+      <option value="">?</option>
+      <option value="MALE">M</option>
+      <option value="FEMALE">F</option>
+    </select>`;
+  }
+  return r.gender==='MALE' ? '♂' : (r.gender==='FEMALE' ? '♀' : '—');
+}
+
+function setXlsxGender(idx, value) {
+  xlsxAnalyzed[idx].gender = value;
+  const cell = document.getElementById(`xlsx-gender-${idx}`);
+  if (cell) cell.innerHTML = xlsxGenderCellHtml(idx);
+  updateImportBtn();
+}
+
 function renderXlsxPreview(dbClubs, clubColMap) {
   const counts = { new:0, exists:0, fuzzy:0, error:0 };
   xlsxAnalyzed.forEach(r => counts[r.status]=(counts[r.status]||0)+1);
 
-  const hasFuzzy = counts.fuzzy > 0;
+  const needsGenderCount = xlsxAnalyzed.filter(xlsxNeedsGender).length;
   const unknownClubs = xlsxClubCols.filter(c => !clubColMap[c]);
 
   document.getElementById('xlsx-summary').innerHTML =
     `<span style="color:var(--green)">✅ ${counts.new} new</span>` +
     (counts.exists ? ` &nbsp;🔄 ${counts.exists} existing (club update only)` : '') +
     (counts.fuzzy ? ` &nbsp;<span style="color:var(--gold)">⚠ ${counts.fuzzy} fuzzy match</span>` : '') +
+    (needsGenderCount ? ` &nbsp;<span style="color:var(--clay)">⚠ ${needsGenderCount} need gender</span>` : '') +
     (counts.error ? ` &nbsp;<span style="color:var(--clay)">✕ ${counts.error} error</span>` : '');
 
   if(unknownClubs.length) {
     document.getElementById('xlsx-error').textContent = `Club columns not found in system: ${unknownClubs.join(', ')} — create these clubs first or check spelling`;
     document.getElementById('xlsx-error').style.display='flex';
   }
-
-  document.getElementById('xlsx-unresolved-warn').style.display = hasFuzzy ? 'block' : 'none';
 
   // Build table
   const thead = document.getElementById('xlsx-thead');
@@ -10504,7 +10543,7 @@ function renderXlsxPreview(dbClubs, clubColMap) {
       <td><strong>${name}</strong></td>
       <td>${statusCell}</td>
       ${clubCells}
-      <td>${r.gender==='MALE'?'♂':'♀'}</td>
+      <td id="xlsx-gender-${i}">${xlsxGenderCellHtml(i)}</td>
       <td>${r.type}</td>
     </tr>`;
   }).join('');
@@ -10515,9 +10554,6 @@ function renderXlsxPreview(dbClubs, clubColMap) {
 
 function resolveXlsx(idx, resolution) {
   xlsxAnalyzed[idx].fuzzyResolution = resolution;
-  // Re-render just that row
-  const unresolved = xlsxAnalyzed.filter(r=>r.status==='fuzzy'&&!r.fuzzyResolution).length;
-  document.getElementById('xlsx-unresolved-warn').style.display = unresolved ? 'block' : 'none';
   // Refresh tbody
   const tbody = document.getElementById('xlsx-tbody');
   const rows = tbody.querySelectorAll('tr');
@@ -10528,16 +10564,23 @@ function resolveXlsx(idx, resolution) {
   else if(resolved==='update_name') badge=`<span class="badge badge-blue">✏️ Update name</span>`;
   else if(resolved==='add_new') badge=`<span class="badge badge-green">New (confirmed)</span>`;
   rows[idx].querySelectorAll('td')[1].innerHTML = badge;
+  // "Different person" turns this into a new player row, which may now
+  // need a gender picked — refresh the G column too.
+  const genderCell = document.getElementById(`xlsx-gender-${idx}`);
+  if (genderCell) genderCell.innerHTML = xlsxGenderCellHtml(idx);
   updateImportBtn();
 }
 
 function updateImportBtn() {
-  const unresolved = xlsxAnalyzed.filter(r=>r.status==='fuzzy'&&!r.fuzzyResolution).length;
+  const unresolvedFuzzy = xlsxAnalyzed.filter(r=>r.status==='fuzzy'&&!r.fuzzyResolution).length;
+  const needsGenderCount = xlsxAnalyzed.filter(xlsxNeedsGender).length;
+  const unresolved = unresolvedFuzzy + needsGenderCount;
   const importable = xlsxAnalyzed.filter(r=>r.status!=='error').length;
   const btn = document.getElementById('xlsx-import-btn');
+  document.getElementById('xlsx-unresolved-warn').style.display = unresolved ? 'block' : 'none';
   btn.style.display = importable > 0 ? 'inline-block' : 'none';
   btn.disabled = unresolved > 0;
-  btn.textContent = unresolved > 0 ? `Resolve ${unresolved} fuzzy match${unresolved>1?'es':''} first` : `Import All (${importable})`;
+  btn.textContent = unresolved > 0 ? `Resolve ${unresolved} item${unresolved>1?'s':''} first` : `Import All (${importable})`;
 }
 
 async function runXlsxImport() {
