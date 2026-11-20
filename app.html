@@ -10467,11 +10467,15 @@ function isNameTypo(a, b) {
   return d <= maxAllowed;
 }
 
-// A row only actually needs a gender picked if it's going to become a
-// new player row — an exact/fuzzy match reusing an existing player's own
-// gender never needs one.
+// True for a row that will actually create a new players row on import —
+// an exact match, or a fuzzy match resolved as "Same person"/"Same + fix
+// name", reuses an existing player and never touches gender or type.
+function xlsxBecomesNewPlayer(r) {
+  return r.status==='new' || (r.status==='fuzzy' && r.fuzzyResolution==='add_new');
+}
+
 function xlsxNeedsGender(r) {
-  return (r.status==='new' || (r.status==='fuzzy' && r.fuzzyResolution==='add_new')) && !r.gender;
+  return xlsxBecomesNewPlayer(r) && !r.gender;
 }
 
 function xlsxGenderCellHtml(idx) {
@@ -10491,6 +10495,26 @@ function setXlsxGender(idx, value) {
   const cell = document.getElementById(`xlsx-gender-${idx}`);
   if (cell) cell.innerHTML = xlsxGenderCellHtml(idx);
   updateImportBtn();
+}
+
+// Type is auto-detected from a Type/Category column when the sheet has
+// one, defaulting to AD when it doesn't — but that detection was never
+// shown anywhere, so a sheet with juniors and no recognized Type column
+// (or values the column-sniffing didn't catch) silently imported
+// everyone as adults with no way to notice or fix it. Editable for any
+// row that will actually create a new player; an existing player's type
+// isn't touched by import, so just show it there, not an inert dropdown.
+function xlsxTypeCellHtml(idx) {
+  const r = xlsxAnalyzed[idx];
+  if (!xlsxBecomesNewPlayer(r)) return r.type || '—';
+  return `<select class="form-select" style="font-size:11px;padding:2px 4px;min-width:42px" onchange="setXlsxType(${idx},this.value)">
+    <option value="AD" ${r.type==='AD'?'selected':''}>AD</option>
+    <option value="JR" ${r.type==='JR'?'selected':''}>JR</option>
+  </select>`;
+}
+
+function setXlsxType(idx, value) {
+  xlsxAnalyzed[idx].type = value;
 }
 
 function renderXlsxPreview(dbClubs, clubColMap) {
@@ -10544,7 +10568,7 @@ function renderXlsxPreview(dbClubs, clubColMap) {
       <td>${statusCell}</td>
       ${clubCells}
       <td id="xlsx-gender-${i}">${xlsxGenderCellHtml(i)}</td>
-      <td>${r.type}</td>
+      <td id="xlsx-type-${i}">${xlsxTypeCellHtml(i)}</td>
     </tr>`;
   }).join('');
 
@@ -10565,9 +10589,11 @@ function resolveXlsx(idx, resolution) {
   else if(resolved==='add_new') badge=`<span class="badge badge-green">New (confirmed)</span>`;
   rows[idx].querySelectorAll('td')[1].innerHTML = badge;
   // "Different person" turns this into a new player row, which may now
-  // need a gender picked — refresh the G column too.
+  // need a gender picked, and makes Type editable — refresh both.
   const genderCell = document.getElementById(`xlsx-gender-${idx}`);
   if (genderCell) genderCell.innerHTML = xlsxGenderCellHtml(idx);
+  const typeCell = document.getElementById(`xlsx-type-${idx}`);
+  if (typeCell) typeCell.innerHTML = xlsxTypeCellHtml(idx);
   updateImportBtn();
 }
 
