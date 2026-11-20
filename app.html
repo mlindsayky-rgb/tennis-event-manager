@@ -1572,7 +1572,16 @@ body { background: var(--surface); color: var(--ink); min-height: 100vh; font-fa
     </div>
     <div class="modal-body">
       <div class="alert alert-info" style="margin-bottom:16px">
-        Columns needed: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Gender</strong> (M/F), <strong>Type</strong> (AD/JR). Add one column per club with <strong>1</strong> for members, blank or 0 for non-members.
+        Columns needed: <strong>First Name</strong>, <strong>Last Name</strong>, <strong>Gender</strong> (M/F). Add one column per club with <strong>1</strong> for members, blank or 0 for non-members.
+      </div>
+      <div class="form-group">
+        <label class="form-label">Player Type</label>
+        <select class="form-select" id="xlsx-bulk-type">
+          <option value="mix">Mix — detect from a Type column, review each player</option>
+          <option value="all_jr">All Junior</option>
+          <option value="all_ad">All Adult</option>
+        </select>
+        <div class="form-hint">Most uploads are all one type — pick that here instead of setting it row by row. "Mix" keeps today's behavior: read a Type (AD/JR) column if the sheet has one, default to Adult if it doesn't, and let you fix any row in the preview either way.</div>
       </div>
       <div class="form-group">
         <input type="file" id="xlsx-file-input" accept=".xlsx,.xls" class="form-input" style="padding:8px">
@@ -10387,6 +10396,7 @@ document.getElementById('xlsx-file-input').addEventListener('change', async func
       xlsxClubCols = keys.filter(k => !KNOWN.some(kn => k.toLowerCase().replace(/[^a-z]/g,'').includes(kn.replace(/[^a-z]/g,''))));
 
       // Parse rows
+      const bulkType = document.getElementById('xlsx-bulk-type').value; // 'mix' | 'all_jr' | 'all_ad'
       xlsxParsedRows = rows.map(row => {
         const findCol = (patterns) => { for(const p of patterns){ const k=keys.find(k=>k.toLowerCase().replace(/[^a-z]/g,'').includes(p)); if(k) return row[k]; } return ''; };
         let firstName = String(findCol(['firstname','first','fname'])||'').trim();
@@ -10394,8 +10404,16 @@ document.getElementById('xlsx-file-input').addEventListener('change', async func
         if(!firstName && !lastName){ const n=String(findCol(['name','player'])||'').trim(); if(n){const p=n.split(' ');firstName=p[0];lastName=p.slice(1).join(' ');} }
         const gRaw = String(findCol(['gender','sex'])||'').trim().toUpperCase();
         const gender = gRaw.startsWith('M')?'MALE':gRaw.startsWith('F')?'FEMALE':'';
-        const tRaw = String(findCol(['type','playertype','category'])||'').trim().toUpperCase();
-        const type = tRaw.startsWith('J')?'JR':'AD';
+        // "All Junior"/"All Adult" skips column-sniffing entirely -- the
+        // whole batch is one type, no Type column needed. "Mix" keeps the
+        // existing per-row detection (still editable in the preview either way).
+        let type;
+        if (bulkType === 'all_jr') type = 'JR';
+        else if (bulkType === 'all_ad') type = 'AD';
+        else {
+          const tRaw = String(findCol(['type','playertype','category'])||'').trim().toUpperCase();
+          type = tRaw.startsWith('J')?'JR':'AD';
+        }
         // Club memberships from this row
         const clubs = {};
         xlsxClubCols.forEach(col => { clubs[col] = String(row[col]||'').trim() === '1'; });
