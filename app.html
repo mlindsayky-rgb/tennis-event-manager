@@ -7059,11 +7059,12 @@ async function loadMissingData(containerId) {
     sb.from('clubs').select('id,name').order('name'),
   ]);
   missingDataClubs = clubs || [];
-  // Juniors are excluded outright rather than flagged -- their phone reads
-  // as null through players_public regardless of what's really on file, so
-  // "missing" would be meaningless noise for them specifically.
+  // Juniors used to be excluded here because their phone read as null
+  // through players_public regardless of what was on file (back when JR
+  // phone/email were masked for everyone). That's no longer true -- email/
+  // phone are readable for every player type now, only notes stays masked
+  // for JR -- so juniors are checked the same as anyone else again.
   missingDataAllRows = (players || [])
-    .filter(p => p.player_type !== 'JR')
     .map(p => ({ ...p, missing: playerMissingFields(p) }))
     .filter(p => p.missing.length);
   renderMissingDataList();
@@ -9488,6 +9489,24 @@ async function saveLeaguePlayerNote(playerId, value) {
   toast('Note saved', 'success');
 }
 
+// Per-container (players-list / dir-players-list) UI state for the Type
+// filter, sort order, and the last-loaded rows an export pulls from —
+// keyed by container since admin and director screens share this same
+// render code but must never bleed state into each other.
+let playerTypeFilterByContainer = {};
+let playerSortByByContainer = {};
+let playerTableRowsByContainer = {};
+
+function setPlayerTypeFilter(containerId, type) {
+  playerTypeFilterByContainer[containerId] = type;
+  loadPlayers(containerId);
+}
+
+function setPlayerSortBy(containerId, sortBy) {
+  playerSortByByContainer[containerId] = sortBy;
+  loadPlayers(containerId);
+}
+
 async function loadPlayers(containerId, filterMode) {
   const el = document.getElementById(containerId);
   if(!el) return;
@@ -9496,11 +9515,15 @@ async function loadPlayers(containerId, filterMode) {
   // Determine filter mode — directors default to 'my_club', admins see all
   const isDirector = currentUser?.role === 'director';
   const mode = filterMode || (isDirector ? 'my_club' : 'all');
+  const typeFilter = playerTypeFilterByContainer[containerId] || 'all';
+  const sortBy = playerSortByByContainer[containerId] || 'rating';
 
-  // Load players
-  let query = sb.from('players')
-    .select('id,roster_name,gender,player_type,alias_memory')
+  // Load players — players_public, not players directly: notes is masked
+  // for JR there (see CLAUDE.md), email/phone/parent_name are not.
+  let query = sb.from('players_public')
+    .select('id,roster_name,gender,player_type,alias_memory,email,phone,notes,parent_name')
     .eq('is_active',true).order('roster_name').limit(200);
+  if (typeFilter !== 'all') query = query.eq('player_type', typeFilter);
 
   // For director my_club filter — get player IDs from player_clubs
   let clubPlayerIds = null;
@@ -9517,7 +9540,7 @@ async function loadPlayers(containerId, filterMode) {
 
   const {data,error} = await query;
   if(error){el.innerHTML=`<div class="empty-state"><div class="empty-title">Error: ${error.message}</div></div>`;return;}
-  if(!data?.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players yet</div><div class="empty-sub">Add players anytime — ratings looked up automatically</div></div>';return;}
+  if(!data?.length){el.innerHTML=renderPlayerTable([], {}, [], mode, containerId, false, {});return;}
 
   // Load clubs and player club memberships
   const {data:clubs} = await sb.from('clubs').select('id,name').order('name');
@@ -9539,27 +9562,42 @@ async function loadPlayers(containerId, filterMode) {
     if(!ex || new Date(r.fetched_at)>new Date(ex.fetched_at)) rm[r.player_id][r.source]=r;
   });
 
-  // Sort: NTRP bucket → TRR within bucket → no-TRR alpha at bottom
-  const NTRP_ORDER = [2.5,3.0,3.5,4.0,4.5,5.0,5.5,6.0,6.5,7.0];
-  data.sort((a,b) => {
-    const ra=rm[a.id]||{}, rb=rm[b.id]||{};
-    const na=ra['NTRP'], nb=rb['NTRP'];
-    const ta=ra['TRR']||ra['UTR'], tb=rb['TRR']||rb['UTR'];
-    // Both unrated — alphabetical
-    if(!na && !nb) return a.roster_name.localeCompare(b.roster_name);
-    // One unrated — unrated goes to bottom
-    if(!na) return 1;
-    if(!nb) return -1;
-    // Both rated — sort by NTRP bucket first
-    const nv_a=parseFloat(na.value), nv_b=parseFloat(nb.value);
-    if(nv_a !== nv_b) return nv_b - nv_a; // higher NTRP first
-    // Same NTRP bucket — sort by TRR descending
-    if(ta && tb) return parseFloat(tb.value) - parseFloat(ta.value);
-    if(ta) return -1; // has TRR goes above no-TRR
-    if(tb) return 1;
-    return a.roster_name.localeCompare(b.roster_name);
-  });
+  if (sortBy === 'name') {
+    data.sort((a,b) => a.roster_name.localeCompare(b.roster_name));
+  } else if (sortBy === 'wtn') {
+    // Lower WTN is the stronger player (it's a 1-40 scale, 1 = best) —
+    // unrated goes to the bottom same as every other sort here.
+    data.sort((a,b) => {
+      const wa=rm[a.id]?.['WTN'], wb=rm[b.id]?.['WTN'];
+      if(!wa && !wb) return a.roster_name.localeCompare(b.roster_name);
+      if(!wa) return 1;
+      if(!wb) return -1;
+      const va=parseFloat(wa.value), vb=parseFloat(wb.value);
+      return va !== vb ? va - vb : a.roster_name.localeCompare(b.roster_name);
+    });
+  } else {
+    // Default — NTRP bucket → TRR within bucket → no-TRR alpha at bottom
+    data.sort((a,b) => {
+      const ra=rm[a.id]||{}, rb=rm[b.id]||{};
+      const na=ra['NTRP'], nb=rb['NTRP'];
+      const ta=ra['TRR']||ra['UTR'], tb=rb['TRR']||rb['UTR'];
+      // Both unrated — alphabetical
+      if(!na && !nb) return a.roster_name.localeCompare(b.roster_name);
+      // One unrated — unrated goes to bottom
+      if(!na) return 1;
+      if(!nb) return -1;
+      // Both rated — sort by NTRP bucket first
+      const nv_a=parseFloat(na.value), nv_b=parseFloat(nb.value);
+      if(nv_a !== nv_b) return nv_b - nv_a; // higher NTRP first
+      // Same NTRP bucket — sort by TRR descending
+      if(ta && tb) return parseFloat(tb.value) - parseFloat(ta.value);
+      if(ta) return -1; // has TRR goes above no-TRR
+      if(tb) return 1;
+      return a.roster_name.localeCompare(b.roster_name);
+    });
+  }
 
+  playerTableRowsByContainer[containerId] = { data, rm };
   const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
   el.innerHTML = renderPlayerTable(data, rm, clubs||[], mode, containerId, false, pcMap||{});
 
@@ -9573,6 +9611,8 @@ async function loadPlayers(containerId, filterMode) {
 function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) {
   const isDirector = currentUser?.role === 'director';
   const unrated = data.filter(p=>!rm[p.id]||!Object.keys(rm[p.id]).length).length;
+  const typeFilter = playerTypeFilterByContainer[containerId] || 'all';
+  const sortBy = playerSortByByContainer[containerId] || 'rating';
 
   const toggleBar = isDirector ? `
     <div style="padding:10px 16px;background:white;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center">
@@ -9583,9 +9623,32 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
 
   if(empty) return `${toggleBar}<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players in your club yet</div><div class="empty-sub">Add players and assign them to your club using the 🏛 icon</div></div>`;
 
+  // Type filter, sort-by, and export — e.g. "build a list of eligible
+  // juniors for a program, sorted by WTN." Export pulls from whatever's
+  // currently filtered/sorted on screen (playerTableRowsByContainer),
+  // not a separate query, so what you see is exactly what you get.
+  const filterBar = `
+    <div style="padding:10px 16px;background:white;border-bottom:1px solid var(--border);display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-sm ${typeFilter==='all'?'btn-primary':'btn-ghost'}" onclick="setPlayerTypeFilter('${containerId}','all')">All</button>
+        <button class="btn btn-sm ${typeFilter==='AD'?'btn-primary':'btn-ghost'}" onclick="setPlayerTypeFilter('${containerId}','AD')">Adult</button>
+        <button class="btn btn-sm ${typeFilter==='JR'?'btn-primary':'btn-ghost'}" onclick="setPlayerTypeFilter('${containerId}','JR')">Junior</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <label style="font-size:12px;color:var(--ink-muted)">Sort</label>
+        <select class="form-select" style="font-size:12px;padding:4px 8px;width:auto" onchange="setPlayerSortBy('${containerId}',this.value)">
+          <option value="rating" ${sortBy==='rating'?'selected':''}>NTRP / TRR</option>
+          <option value="wtn" ${sortBy==='wtn'?'selected':''}>WTN</option>
+          <option value="name" ${sortBy==='name'?'selected':''}>Name</option>
+        </select>
+      </div>
+      <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="exportPlayers('${containerId}')">↓ Export</button>
+    </div>`;
+
   return `
     <div id="lp-${containerId}" style="display:none;padding:12px 16px;border-bottom:1px solid var(--border)"></div>
     ${toggleBar}
+    ${filterBar}
     ${unrated>0?`<div style="padding:12px 16px;background:var(--gold-light);border-bottom:1px solid #FFE082;display:flex;align-items:center;justify-content:space-between">
       <div style="font-size:13px;color:#5D4037"><strong>${unrated}</strong> player${unrated>1?'s':''} need rating lookup</div>
       <div style="display:flex;gap:8px">
@@ -9593,11 +9656,13 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
         <button class="btn btn-sm btn-primary" onclick="bulkLookup('${containerId}')">⚡ Look Up All</button>
       </div>
     </div>`:''}
+    ${!data.length?`<div class="empty-state"><div class="empty-icon">🎾</div><div class="empty-title">No players match</div><div class="empty-sub">Try a different Type filter</div></div>`:`
+    <div style="overflow-x:auto">
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Clubs</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Parent/Guardian</th><th>Clubs</th><th>Type</th><th>Gender</th><th>NTRP</th><th>TRR/UTR</th><th>WTN</th><th>Status</th><th></th></tr></thead>
       <tbody>${data.map(p=>{
         const r=rm[p.id]||{};
-        const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],primary=trr||utr;
+        const ntrp=r['NTRP'],trr=r['TRR'],utr=r['UTR'],wtn=r['WTN'],primary=trr||utr;
         const stale=primary&&(new Date()-new Date(primary.fetched_at))>365*24*60*60*1000;
         const playerClubIds = pcMap[p.id]||[];
         const playerClubNames = clubs.filter(c=>playerClubIds.includes(c.id)).map(c=>c.name);
@@ -9614,6 +9679,12 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
             </div>
             ${p.alias_memory?.length?`<div style="font-size:11px;color:var(--muted)">aka ${p.alias_memory[0]}</div>`:''}
           </td>
+          <td style="font-size:12px">
+            <div style="display:flex;align-items:center;gap:4px">
+              <span>${escQ(p.parent_name)||'<span style="color:var(--ghost)">—</span>'}</span>
+              <button class="btn btn-sm btn-ghost" style="padding:2px 4px;font-size:10px" onclick="editParentName('${p.id}','${escQ(p.parent_name||'')}')" title="Edit parent/guardian name">✏️</button>
+            </div>
+          </td>
           <td>
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
               ${playerClubNames.map(n=>`<span style="font-size:11px;background:var(--green-pale);color:var(--green);padding:2px 8px;border-radius:10px">${n}</span>`).join('')}
@@ -9624,6 +9695,7 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
           <td>${p.gender==='MALE'?'♂':'♀'}</td>
           <td class="nc">${ntrp?`${parseFloat(ntrp.value).toFixed(1)}<span style="color:var(--muted);font-size:11px"> ${ntrp.designation||''}</span>`:'—'}</td>
           <td class="tc">${primary?`${parseFloat(primary.value).toFixed(4)}${primary.is_manual?' <span class="badge badge-gold" style="font-size:10px;padding:1px 6px">M</span>':''}`:'<span style="color:var(--ghost)">—</span>'}</td>
+          <td>${wtn?parseFloat(wtn.value).toFixed(1):'<span style="color:var(--ghost)">—</span>'}</td>
           <td class="sc">${status}</td>
           <td><div style="display:flex;gap:4px">
             <button class="btn btn-sm btn-ghost" onclick="lookupRow(this)" title="Look up">🔍</button>
@@ -9631,7 +9703,50 @@ function renderPlayerTable(data, rm, clubs, mode, containerId, empty, pcMap={}) 
           </div></td>
         </tr>`;
       }).join('')}</tbody>
-    </table>`;
+    </table>
+    </div>`}`;
+}
+
+async function editParentName(playerId, currentName) {
+  const newName = prompt("Edit parent/guardian name:", currentName);
+  if (newName === null || newName.trim() === currentName) return;
+  const { error } = await sb.from('players').update({ parent_name: newName.trim() || null }).eq('id', playerId);
+  if (error) { toast('Error: '+error.message, 'error'); return; }
+  toast('Saved', 'success');
+  // Same club-scope-preserving refresh togglePlayerClub uses -- a bare
+  // loadPlayers(lid) would silently reset a director's "All Players" view
+  // back to "My Club" (loadPlayers defaults mode when none is passed).
+  const lid = currentUser?.role==='admin'?'players-list':'dir-players-list';
+  const mode = document.querySelector(`#${lid} .btn-primary`)?.textContent?.includes('My Club') ? 'my_club' : 'all';
+  loadPlayers(lid, mode);
+}
+
+function exportPlayers(containerId) {
+  const rows = playerTableRowsByContainer[containerId];
+  if (!rows || !rows.data.length) { toast('Nothing to export', 'error'); return; }
+  const { data, rm } = rows;
+  const sheetRows = data.map(p => {
+    const r = rm[p.id] || {};
+    const ntrp = r['NTRP'], trr = r['TRR'], utr = r['UTR'], wtn = r['WTN'];
+    return {
+      Name: p.roster_name,
+      Type: p.player_type === 'JR' ? 'Junior' : 'Adult',
+      Gender: p.gender === 'MALE' ? 'M' : 'F',
+      WTN: wtn ? parseFloat(wtn.value).toFixed(1) : '',
+      NTRP: ntrp ? parseFloat(ntrp.value).toFixed(1) : '',
+      'TRR/UTR': (trr||utr) ? parseFloat((trr||utr).value).toFixed(4) : '',
+      'Parent/Guardian': p.parent_name || '',
+      Phone: p.phone || '',
+      Email: p.email || '',
+      Notes: p.notes || '',
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(sheetRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Players');
+  const typeFilter = playerTypeFilterByContainer[containerId] || 'all';
+  const suffix = typeFilter === 'all' ? '' : `-${typeFilter==='JR'?'junior':'adult'}`;
+  XLSX.writeFile(wb, `players${suffix}-${toISODate(new Date())}.xlsx`);
 }
 
 // Open club membership modal
