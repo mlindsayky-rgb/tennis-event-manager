@@ -10551,6 +10551,19 @@ async function runXlsxImport() {
 
   const toProcess = xlsxAnalyzed.filter(r => r.status !== 'error');
 
+  // A fuzzy match's gender is never checked at classification time (it
+  // only matters if this row actually becomes a new player), so a blank
+  // Gender column slips through until here when resolved as "Different
+  // person" — catch it before attempting the insert, same as the team
+  // roster import's own missing-gender check.
+  const missingGenderForNew = toProcess.filter(r =>
+    (r.status === 'new' || (r.status === 'fuzzy' && r.fuzzyResolution === 'add_new')) && !r.gender);
+  if (missingGenderForNew.length) {
+    pgEl.innerHTML = `<div class="alert alert-error">Missing gender for ${missingGenderForNew.length} new player(s): ${missingGenderForNew.map(r=>escQ(`${r.firstName} ${r.lastName}`)).join(', ')} — fix the spreadsheet's Gender column, or resolve those as "Same person" instead, then try again.</div>`;
+    btn.disabled = false; btn.textContent = `Import All (${toProcess.length})`;
+    return;
+  }
+
   for(let i=0;i<toProcess.length;i++) {
     const r = toProcess[i];
     pgEl.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:4px">Processing ${i+1} of ${toProcess.length}…</div><div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${Math.round(((i+1)/toProcess.length)*100)}%"></div></div>`;
